@@ -41,6 +41,12 @@ coworker without its own endpoint is refused. A leftover token with no URL is ig
 one-container image has no Bot process, so leave the URL unset there. `scripts/start.sh` points it
 at `agent-langgraph` on a laptop.
 
+When starting the local API directly rather than through `scripts/start.sh`, set
+`MANAGED_AGENT_AG_UI_URL=http://localhost:4201/ag-ui` explicitly in the local `.env`.
+The script exports that default only for its own child processes. Without the URL, an existing
+managed coworker still points at its saved endpoint, but the API does not attach the managed
+token and the agent returns HTTP 401. Restart the API after changing this setting.
+
 ## General variables
 
 `VITE_PRIMARY_BOT_ID` optionally selects the Bot used by the Chat, Tasks and Make tabs for this
