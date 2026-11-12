@@ -1,0 +1,234 @@
+import { useForm } from "@tanstack/react-form";
+import { SkillTools } from "@/components/skills/skill-tools";
+import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { type SkillFormValues, skillFormSchema } from "@/lib/skills/form";
+
+/**
+ * The four things a person decides about a skill: what they type, what it is called, what it is
+ * for, and what the Bot is actually told.
+ *
+ * Written as its own component rather than inline in the panel because creating and editing a skill
+ * are the same four fields, and the second one is coming — a skill whose instructions can only be
+ * set once is a skill nobody will correct.
+ */
+export function SkillFields({
+  defaultValues,
+  submitLabel,
+  onSubmit,
+  error,
+  onCancel,
+  footer,
+  slugLocked = false,
+}: {
+  defaultValues: SkillFormValues;
+  submitLabel: string;
+  onSubmit: (values: SkillFormValues) => Promise<unknown>;
+  error?: Error | null;
+  onCancel?: () => void;
+  /** Anything that belongs with the skill but saves on its own, shown above the submit button. */
+  footer?: React.ReactNode;
+  /**
+   * Editing, where the command cannot change.
+   *
+   * THE SLUG IS THE KEY, so saving under a different one would not rename anything: it would write a
+   * SECOND skill and leave the first behind, and the person would be looking at a duplicate they did
+   * not ask for. Renaming is a create and a delete, which is a decision rather than a typo, so the
+   * field is read-only here and the form says why.
+   */
+  slugLocked?: boolean;
+}) {
+  const form = useForm({
+    defaultValues,
+    validators: { onSubmit: skillFormSchema },
+    onSubmit: async ({ value }) => {
+      await onSubmit(value);
+    },
+  });
+
+  return (
+    <form
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        form.handleSubmit();
+      }}
+    >
+      <FieldGroup>
+        <form.Field name="slug">
+          {(field) => {
+            const isInvalid =
+              field.state.meta.isTouched && !field.state.meta.isValid;
+            return (
+              <Field data-invalid={isInvalid}>
+                <FieldLabel htmlFor={field.name}>指令</FieldLabel>
+                <Input
+                  aria-invalid={isInvalid}
+                  disabled={slugLocked}
+                  id={field.name}
+                  name={field.name}
+                  onBlur={field.handleBlur}
+                  /*
+                   * Lower-cased as they type rather than refused afterwards. The server's pattern
+                   * has no capitals in it, and "Standup" is a reasonable thing to type and a
+                   * pointless thing to be told off for.
+                   */
+                  onChange={(event) =>
+                    field.handleChange(event.target.value.toLowerCase())
+                  }
+                  placeholder="standup"
+                  value={field.state.value}
+                />
+                {isInvalid ? (
+                  <FieldError errors={field.state.meta.errors} />
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    {slugLocked ? (
+                      "指令無法更改。如要改名，請建立新技能，再刪除這個技能。"
+                    ) : (
+                      <>
+                        What you type after a slash.{" "}
+                        <code>
+                          /{"{"}command{"}"}
+                        </code>
+                      </>
+                    )}
+                  </p>
+                )}
+              </Field>
+            );
+          }}
+        </form.Field>
+
+        <form.Field name="title">
+          {(field) => {
+            const isInvalid =
+              field.state.meta.isTouched && !field.state.meta.isValid;
+            return (
+              <Field data-invalid={isInvalid}>
+                <FieldLabel htmlFor={field.name}>標題</FieldLabel>
+                <Input
+                  aria-invalid={isInvalid}
+                  id={field.name}
+                  name={field.name}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="我的工作匯報技能"
+                  value={field.state.value}
+                />
+                {isInvalid ? (
+                  <FieldError errors={field.state.meta.errors} />
+                ) : null}
+              </Field>
+            );
+          }}
+        </form.Field>
+
+        <form.Field name="summary">
+          {(field) => {
+            const isInvalid =
+              field.state.meta.isTouched && !field.state.meta.isValid;
+            return (
+              <Field data-invalid={isInvalid}>
+                <FieldLabel htmlFor={field.name}>簡介</FieldLabel>
+                <Input
+                  aria-invalid={isInvalid}
+                  id={field.name}
+                  name={field.name}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="將昨天的工作整理成會議匯報"
+                  value={field.state.value}
+                />
+                {isInvalid ? (
+                  <FieldError errors={field.state.meta.errors} />
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    顯示在清單及 <code>/</code> 選單的指令旁邊，可留空。
+                  </p>
+                )}
+              </Field>
+            );
+          }}
+        </form.Field>
+
+        <form.Field name="instructions">
+          {(field) => {
+            const isInvalid =
+              field.state.meta.isTouched && !field.state.meta.isValid;
+            return (
+              <Field data-invalid={isInvalid}>
+                <FieldLabel htmlFor={field.name}>指示</FieldLabel>
+                <Textarea
+                  aria-invalid={isInvalid}
+                  className="min-h-40"
+                  id={field.name}
+                  name={field.name}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="總結我昨天在這段對話中完成的工作，再列出未完成的事項。"
+                  value={field.state.value}
+                />
+                {isInvalid ? (
+                  <FieldError errors={field.state.meta.errors} />
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    使用指令時機械人會收到的指示，請直接說明要它做甚麼。
+                  </p>
+                )}
+              </Field>
+            );
+          }}
+        </form.Field>
+        <form.Field name="tools">
+          {(field) => (
+            <SkillTools
+              onChange={field.handleChange}
+              selected={field.state.value}
+            />
+          )}
+        </form.Field>
+      </FieldGroup>
+
+      {/*
+       * Rendered by the caller, between the fields and the buttons, so granting sits with the rest
+       * of the skill rather than after the point where the form is finished with.
+       *
+       * IT IS NOT PART OF THE FORM'S STATE. Each toggle saves the moment it is pressed, while
+       * everything above waits for the submit button — so it must not look like a field, and
+       * pressing one is never undone by closing the panel without saving.
+       */}
+      {footer ? <div className="mt-6">{footer}</div> : null}
+
+      {error ? (
+        <p className="mt-4 text-sm text-destructive" role="alert">
+          {error.message}
+        </p>
+      ) : null}
+
+      <div className="mt-4 flex gap-2">
+        <form.Subscribe
+          selector={(state) => [state.canSubmit, state.isSubmitting]}
+        >
+          {([canSubmit, isSubmitting]) => (
+            <Button disabled={!canSubmit || isSubmitting} type="submit">
+              {isSubmitting ? "儲存中…" : submitLabel}
+            </Button>
+          )}
+        </form.Subscribe>
+        {onCancel ? (
+          <Button onClick={onCancel} type="button" variant="outline">
+            取消
+          </Button>
+        ) : null}
+      </div>
+    </form>
+  );
+}

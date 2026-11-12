@@ -1,0 +1,12 @@
+{
+  "name": "pdsduet",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "description": "PDSDuet, an independently maintained AI workstation for insurance agents. The application lives in openbot/.",
+  "scripts": {
+    "postinstall": "bun install --cwd openbot",
+    "start": "bash scripts/start.sh",
+    "stop": "bash scripts/stop.sh"
+  }
+}

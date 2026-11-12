@@ -1,0 +1,719 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* Composer chips/dropdown. Reads the shadcn tokens declared below, so it themes itself. */
+@import "prompt-area/tailwind.css";
+@import "@fontsource-variable/inter";
+
+/*
+ * Streamdown draws a Bot's prose, and Tailwind only ships classes it can see used. Its markup lives
+ * in a dependency, so without this the transcript renders unstyled markdown — correct HTML with none
+ * of the spacing that makes it readable. The path is relative to this file.
+ */
+@source "../node_modules/streamdown/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * NO ROOT FONT SIZE. It was `html { font-size: 15px }`, which shrank every rem by 6.25% (Tailwind's
+ * `h-11` drew 41.25px, not 44) and froze the text at one size whatever the person set their phone or
+ * browser to. The root is the browser's own now, 16px by default, and the type scale below is in rem
+ * so it follows the person's text size.
+ */
+
+:root {
+  color-scheme: light;
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --success: oklch(0.6 0.118 184.704);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.55rem;
+  --sidebar: oklch(0.97 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.5 0 0);
+  --sidebar-accent: oklch(0.95 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /*
+   * OpenDuet's tokens (parity-spec Part 2). Neutral greys with a cool bias, one accent used in a few
+   * fixed places, and four status colours for how work stands. Every token here has a dark value in
+   * `.dark` below; `tests/visual-system.test.ts` fails if one is missing or a colour falls under its
+   * contrast floor, and `lib/theme-tokens.ts` carries the same values to the generated-UI prompt.
+   */
+  --duet-surface: #f6f6f8;
+  --duet-card: #ffffff;
+  --duet-bubble: #ececf0;
+  --duet-user: #e7e3f7;
+  --duet-ink: #18181b;
+  --duet-ink-2: #55555e;
+  --duet-ink-3: #6b6b75;
+  --duet-hair: rgb(24 24 27 / 9%);
+  --duet-hair-2: rgb(24 24 27 / 6%);
+  --duet-tile: #f1f1f4;
+  /*
+   * The one accent: the Tasks badge, the unread dot, the + button, a selected chip, a link to a
+   * task, the focus ring, the Everything icon. Not a heading colour. `on-accent` is what sits on it.
+   */
+  --duet-accent: #6430ab;
+  --duet-accent-soft: #f0ebfa;
+  --duet-on-accent: #ffffff;
+  /* How work stands: ready for review, needs you, working, couldn't finish. Only on status. */
+  --duet-status-done: #147a3a;
+  --duet-status-done-soft: #e6f4ea;
+  --duet-status-needs: #a34a06;
+  --duet-status-needs-soft: #fdf3e1;
+  --duet-status-working: #1d4ed8;
+  --duet-status-working-soft: #eaf0fd;
+  --duet-status-problem: #b91c1c;
+  --duet-status-problem-soft: #fbeaea;
+  /* The primary button: near-black on light, white on dark. */
+  --duet-black: #111114;
+  --duet-on-black: #ffffff;
+  /*
+   * The names the components were written against, kept as aliases of the roles so a screen that
+   * still says `violet` or `green` draws the role's colour. New code names the role.
+   */
+  --duet-violet: var(--duet-accent);
+  --duet-violet-soft: var(--duet-accent-soft);
+  --duet-green: var(--duet-status-done);
+  --duet-green-soft: var(--duet-status-done-soft);
+  --duet-amber: var(--duet-status-needs);
+  --duet-amber-soft: var(--duet-status-needs-soft);
+  --duet-blue: var(--duet-status-working);
+  --duet-blue-soft: var(--duet-status-working-soft);
+  --duet-red: var(--duet-status-problem);
+  --duet-red-soft: var(--duet-status-problem-soft);
+  --duet-shadow-float:
+    0 0 0 0.5px rgb(1 5 7 / 10%), 0 1px 1.5px rgb(1 5 7 / 6%),
+    0 4px 12px -4px rgb(1 5 7 / 12%);
+  --duet-shadow-card:
+    0 0 0 1px var(--duet-hair), 0 6px 18px -12px rgb(1 5 7 / 18%);
+  --duet-shadow-raised:
+    0 0 0 1px var(--duet-hair), 0 10px 26px -14px rgb(1 5 7 / 20%);
+  /*
+   * Glass: the chrome that floats over a screen (the tab bar, the composer, the header's discs)
+   * lets what scrolls under it show through, frosted. Translucent enough to read as a layer, opaque
+   * enough that text under it never competes with the controls on it: at 66% and 62% a message
+   * passing under the composer could still be read through it (parity finding 18), so about 80%.
+   * `--duet-veil` is the same material laid over a whole screen, for a sheet that the screen stays
+   * visible behind.
+   */
+  --duet-glass: rgb(255 255 255 / 80%);
+  --duet-veil: rgb(246 246 248 / 74%);
+  --duet-glass-edge: inset 0 0.5px 0 rgb(255 255 255 / 80%);
+  --duet-shadow-glass: var(--duet-glass-edge), var(--duet-shadow-float);
+  /* Shape (parity-spec 2.4) and the smallest thing a finger can hit (2.11). */
+  --duet-radius-bubble: 20px;
+  --duet-radius-card: 20px;
+  --duet-radius-field: 22px;
+  --duet-radius-tile: 10px;
+  --duet-target: 44px;
+  /* Motion (parity-spec 2.10). */
+  --duet-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --duet-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --duet-dur-tap: 120ms;
+  --duet-dur-swap: 200ms;
+  --duet-dur-enter: 250ms;
+  --duet-dur-sheet: 350ms;
+
+  /*
+   * A channel's colour: its icon in the drawer and the sheet, and its tag on a task. Nine, by the
+   * names shared/channel-look.ts stores. Each at least 4:1 on the light surface, so an icon passes 3:1.
+   */
+  --duet-ch-berry: #9e3b66;
+  --duet-ch-blush: #b0606f;
+  --duet-ch-peach: #ad6550;
+  --duet-ch-amber: #a8650f;
+  --duet-ch-sage: #5f7a4c;
+  --duet-ch-green: #3f7d61;
+  --duet-ch-sky: #4f7f99;
+  --duet-ch-blue: #3f6fa8;
+  --duet-ch-lavender: #6f63a3;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.704 0.14 182.503);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  /*
+   * Duet's dark is near-black and neutral (it samples #0E0E0E behind, #232323 for the Bot's bubble).
+   * These keep the same roles, and the primary action turns light.
+   */
+  --duet-surface: #111113;
+  --duet-card: #1c1c1f;
+  --duet-bubble: #26262b;
+  --duet-user: #2f2845;
+  --duet-ink: #f4f4f5;
+  --duet-ink-2: #a1a1aa;
+  --duet-ink-3: #8e8e98;
+  --duet-hair: rgb(255 255 255 / 10%);
+  --duet-hair-2: rgb(255 255 255 / 7%);
+  --duet-tile: #26262b;
+  --duet-accent: #b49ae8;
+  --duet-accent-soft: #2a2140;
+  /* Dark text on the light lilac: white on it was 2.4:1. */
+  --duet-on-accent: #1a1033;
+  --duet-status-done: #4ade80;
+  --duet-status-done-soft: #14301f;
+  --duet-status-needs: #fbbf24;
+  --duet-status-needs-soft: #3a2a0c;
+  --duet-status-working: #7aa2ff;
+  --duet-status-working-soft: #18233d;
+  --duet-status-problem: #f87171;
+  --duet-status-problem-soft: #3a1717;
+  --duet-black: #f4f4f5;
+  --duet-on-black: #111114;
+  --duet-shadow-float:
+    0 0 0 0.5px rgb(255 255 255 / 10%), 0 4px 12px -4px rgb(0 0 0 / 50%);
+  --duet-shadow-card: 0 0 0 1px var(--duet-hair);
+  --duet-shadow-raised:
+    0 0 0 1px var(--duet-hair), 0 10px 26px -14px rgb(0 0 0 / 60%);
+  --duet-glass: rgb(28 28 31 / 82%);
+  --duet-veil: rgb(17 17 19 / 72%);
+  --duet-glass-edge: inset 0 0.5px 0 rgb(255 255 255 / 8%);
+  --duet-shadow-glass: var(--duet-glass-edge), var(--duet-shadow-float);
+  --duet-ch-berry: #d0709a;
+  --duet-ch-blush: #e5c0c5;
+  --duet-ch-peach: #e5bcae;
+  --duet-ch-amber: #e4a04c;
+  --duet-ch-sage: #c6d1ba;
+  --duet-ch-green: #6fb093;
+  --duet-ch-sky: #bdcfda;
+  --duet-ch-blue: #7fa6d6;
+  --duet-ch-lavender: #c1bdd3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  position: relative;
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * THERE IS DELIBERATELY NO `button, input, textarea, select { font: inherit }` HERE.
+ *
+ * Form controls do need it — Chrome otherwise draws them in its own ~13.3px system font — and
+ * Tailwind's Preflight already does exactly that, inside `@layer base`, where a utility can still
+ * override it. A second copy written here would sit in NO layer, and an unlayered rule outranks
+ * every layered one no matter how specific: a bare `input` selector beats `.text-sm`. That is not a
+ * specificity fight anybody wins, because layers are resolved before specificity is even consulted.
+ *
+ * One was here, and it silently disabled every `text-*` on every button, input, textarea and select
+ * in the app. Nothing looked broken; the sizes were simply never applied, and the labels — which are
+ * not in that selector list — rendered a size smaller than the fields they belonged to.
+ */
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Inter Variable", sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-duet-surface: var(--duet-surface);
+  --color-duet-card: var(--duet-card);
+  --color-duet-bubble: var(--duet-bubble);
+  --color-duet-user: var(--duet-user);
+  --color-duet-ink: var(--duet-ink);
+  --color-duet-ink-2: var(--duet-ink-2);
+  --color-duet-ink-3: var(--duet-ink-3);
+  --color-duet-hair: var(--duet-hair);
+  --color-duet-hair-2: var(--duet-hair-2);
+  --color-duet-tile: var(--duet-tile);
+  --color-duet-accent: var(--duet-accent);
+  --color-duet-accent-soft: var(--duet-accent-soft);
+  --color-duet-on-accent: var(--duet-on-accent);
+  --color-duet-status-done: var(--duet-status-done);
+  --color-duet-status-done-soft: var(--duet-status-done-soft);
+  --color-duet-status-needs: var(--duet-status-needs);
+  --color-duet-status-needs-soft: var(--duet-status-needs-soft);
+  --color-duet-status-working: var(--duet-status-working);
+  --color-duet-status-working-soft: var(--duet-status-working-soft);
+  --color-duet-status-problem: var(--duet-status-problem);
+  --color-duet-status-problem-soft: var(--duet-status-problem-soft);
+  --color-duet-violet: var(--duet-violet);
+  --color-duet-violet-soft: var(--duet-violet-soft);
+  --color-duet-green: var(--duet-green);
+  --color-duet-green-soft: var(--duet-green-soft);
+  --color-duet-red: var(--duet-red);
+  --color-duet-red-soft: var(--duet-red-soft);
+  --color-duet-blue: var(--duet-blue);
+  --color-duet-blue-soft: var(--duet-blue-soft);
+  --color-duet-amber: var(--duet-amber);
+  --color-duet-amber-soft: var(--duet-amber-soft);
+  --color-duet-black: var(--duet-black);
+  --color-duet-on-black: var(--duet-on-black);
+  --shadow-duet-float: var(--duet-shadow-float);
+  --shadow-duet-card: var(--duet-shadow-card);
+  --shadow-duet-raised: var(--duet-shadow-raised);
+  --shadow-duet-glass: var(--duet-shadow-glass);
+  /*
+   * A bare `transition-colors` or `transition-opacity` takes the motion tokens, not Tailwind's own
+   * 150ms on its weak built-in curve. Hover and press states were written as bare utilities all over
+   * the app, so this is where they learn the tap duration and the strong ease-out, all at once. A
+   * class that names its own `duration-*` or `ease-*` still wins.
+   */
+  --default-transition-duration: var(--duet-dur-tap);
+  --default-transition-timing-function: var(--duet-ease-out);
+}
+
+/*
+ * The type scale (parity-spec 2.3): five sizes, in rem so they follow the person's text size. Inter's
+ * tracking tightens as it grows, and cv11/ss03 (`duet-face`) are the single-storey a and the
+ * flat-topped 3 the film is set with. Weights are not part of a size: 600 for titles and the pill's
+ * status line, 500 for row titles, chips and buttons, 400 otherwise.
+ *
+ *   type-display  24/28  screen titles, a task page's title
+ *   type-nav      18/22  drawer rows, Settings rows
+ *   type-body     17/23  messages, task and card titles
+ *   type-sub      15/20  status lines, chips, the composer, section headers, buttons
+ *   type-caption  13/16  captions, the pill, tab labels, the footer, "Seen", timestamps, tags
+ */
+@utility type-display {
+  font-size: 1.5rem;
+  line-height: 1.75rem;
+  letter-spacing: -0.018em;
+}
+@utility type-nav {
+  font-size: 1.125rem;
+  line-height: 1.375rem;
+  letter-spacing: -0.011em;
+}
+@utility type-body {
+  font-size: 1.0625rem;
+  line-height: 1.4375rem;
+  letter-spacing: -0.011em;
+}
+@utility type-sub {
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
+  letter-spacing: -0.006em;
+}
+@utility type-caption {
+  font-size: 0.8125rem;
+  line-height: 1rem;
+  letter-spacing: 0;
+}
+/*
+ * The film's names for the same sizes, each now one of the five, so a screen written against them
+ * lands on the scale without being edited. New code uses the five names above.
+ */
+@utility type-big {
+  font-size: 1.5rem;
+  line-height: 1.75rem;
+  letter-spacing: -0.018em;
+}
+@utility type-title {
+  font-size: 1.5rem;
+  line-height: 1.75rem;
+  letter-spacing: -0.018em;
+}
+@utility type-row {
+  font-size: 1.0625rem;
+  line-height: 1.4375rem;
+  letter-spacing: -0.011em;
+}
+@utility type-label {
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
+  letter-spacing: -0.006em;
+}
+/*
+ * Frosted chrome over a scrolling screen. The blur is what makes the translucency readable: without
+ * it, a message passing under the composer would sit legibly behind its placeholder. A browser that
+ * cannot blur gets the opaque card instead, never a see-through bar.
+ */
+@utility duet-glass {
+  background-color: var(--duet-card);
+  @supports (backdrop-filter: blur(1px)) or
+    (-webkit-backdrop-filter: blur(1px)) {
+    background-color: var(--duet-glass);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+  }
+}
+@utility duet-veil {
+  background-color: var(--duet-surface);
+  @supports (backdrop-filter: blur(1px)) or
+    (-webkit-backdrop-filter: blur(1px)) {
+    background-color: var(--duet-veil);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    backdrop-filter: blur(28px) saturate(160%);
+  }
+}
+@utility duet-face {
+  font-feature-settings: "cv11", "ss03";
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 5px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+
+/*
+ * A tool line that is still running.
+ *
+ * A light band sweeps left to right across the words. `background-clip: text` with a transparent
+ * colour is what confines the gradient to the glyphs, and the band is built from the line's own
+ * colour so it reads the same in either theme. Only `background-position` animates, which the
+ * compositor handles without laying the text out again on every frame.
+ */
+.tool-line-running {
+  background-image: linear-gradient(
+    100deg,
+    currentColor 40%,
+    color-mix(in oklab, currentColor 25%, transparent) 50%,
+    currentColor 60%
+  );
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  /*
+   * THE GLYPH FILL, NOT `color`. This was `color: transparent`, which blanked the gradient too —
+   * `currentColor` resolves against this element's own `color` — so nothing was ever drawn. This
+   * rule is unlayered and beats the `text-*` utility it is given, so the reduced-motion branch
+   * below, which puts `color` back, was the only place the text was readable.
+   */
+  -webkit-text-fill-color: transparent;
+  animation: tool-line-sweep 1.6s linear infinite;
+}
+
+@keyframes tool-line-sweep {
+  to {
+    background-position: -150% 0;
+  }
+}
+
+/* Preserve running-state text without shimmer for reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  .tool-line-running {
+    animation: none;
+    background-image: none;
+    color: inherit;
+  }
+}
+
+/* The film's typing dots: each rises a little and brightens, one after another. */
+.duet-typing-dot {
+  opacity: 0.4;
+  animation: duet-typing 1.1s ease-in-out infinite;
+}
+
+@keyframes duet-typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.4;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 0.85;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .duet-typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/*
+ * A task checked off on Tasks: the check pops in a little past full size and settles. 320ms, longer
+ * than any token on purpose: it is two movements in one, the overshoot in its first 60% and the
+ * settle after it, and each needs its own share of the time to be seen.
+ */
+.duet-check-land {
+  display: block;
+  animation: duet-check-land 320ms var(--duet-ease-out) both;
+}
+
+@keyframes duet-check-land {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .duet-check-land {
+    animation: none;
+  }
+}
+
+/*
+ * Menus, selects and tooltips grow out of what opened them and shrink back into it: a fade with a
+ * small zoom from the trigger's side (`origin-(--transform-origin)`), in at the swap duration and
+ * out at the tap one. With reduced motion they keep the fade and lose the zoom and the slide.
+ *
+ * Unlayered on purpose: the zoom and slide utilities live in Tailwind's utilities layer, and an
+ * unlayered rule wins over any layered one, so this needs no `!important` to undo them.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="combobox-content"],
+    [data-slot="tooltip-content"]
+  ) {
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+  }
+}
+
+/*
+ * A thumbnail still being made on Make: a soft band of the card's own colour sweeps across the
+ * tile. Only `background-position` moves. Held still with reduced motion.
+ */
+.duet-making {
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in oklab, var(--duet-card) 70%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  animation: tool-line-sweep 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .duet-making {
+    animation: none;
+    background-image: none;
+  }
+}
+
+.tool-line[open] .tool-line-chevron {
+  transform: rotate(90deg);
+}
+
+/*
+ * Row descriptions wrap on sense rather than on width.
+ *
+ * Here rather than on the `ItemDescription` primitive, which is where this started. The reason was
+ * that the primitive was vendored and the next `shadcn add item` would silently remove anything put
+ * inside it; the primitives are the repository's own now, so that is no longer true. It stays here
+ * because it belongs with the other layout rules rather than inside one primitive.
+ *
+ * The primitive already emits the attribute this selects, so nothing has to be edited for it to
+ * apply, and nothing upstream can take it away.
+ */
+[data-slot="item-description"] {
+  text-wrap: pretty;
+}
+
+/*
+ * A generated interface is never allowed to occupy nothing.
+ *
+ * The SDK sizes the frame it draws into from a single measurement taken inside the sandbox, and it
+ * writes the result as an inline height on the frame's own container. Two races in that code make
+ * the number wrong, and both were reproduced against @copilotkit/react-core 1.69.0:
+ *
+ *   - The measurement is queued alongside the expressions that build the interface. When it runs
+ *     first the body it measures is still empty, the container is set to `height: 0px`, and because
+ *     the container also clips, the interface is invisible. Nothing retries: the measurement is
+ *     one-shot and its listener is removed after the first reply.
+ *   - The effect that measures bails out when the sandbox has not finished loading, and its only
+ *     dependency is "generation finished". An interface restored from thread history is already
+ *     finished on its first render, while the sandbox is still being imported, so the effect bails
+ *     and never runs again.
+ *
+ * A floor is the smallest thing that removes the failure that matters. `min-height` clamps above an
+ * inline `height`, so a collapsed measurement can no longer render nothing, and a measurement that
+ * came back correct and larger is left alone. The reader gets an interface that is present and may
+ * be cut off, instead of a turn that looks like the Bot said nothing at all.
+ *
+ * Selected through the frame rather than through a class of ours because both chat surfaces render
+ * this container and only one of them is ours: the packaged chat builds it too, and a rule that
+ * needed our wrapper would fix the transcript and leave the other surface broken. `websandbox__frame`
+ * is the class the sandbox library puts on the frame it creates.
+ *
+ * DELETE THIS WHEN THE SDK IS FIXED. It compensates for someone else's arithmetic, so it should not
+ * outlive the bug: once the measurement re-runs on sandbox-ready and after the queue drains, this
+ * rule can only make small interfaces taller than they asked to be.
+ */
+:where(div:has(> iframe.websandbox__frame)) {
+  min-height: 200px;
+}
+
+/*
+ * The buttons Streamdown draws on a code block or a table (Copy, Download, Full screen) are 24px
+ * icons. A finger needs 44 (parity-spec 2.11), so each gets that much room around its icon. They live
+ * in a dependency's markup, which is why this is a rule on its attribute rather than a class.
+ */
+[data-streamdown] button {
+  min-width: var(--duet-target);
+  min-height: var(--duet-target);
+  display: inline-grid;
+  place-items: center;
+}
+
+/*
+ * Every control a screen in the app's shell draws is at least 44px to tap (parity-spec 2.11): the
+ * configuration pages were built with 28px and 36px buttons, selects and fields for a desktop
+ * pointer, and they all open inside the shell on a phone now. The shared primitives mark themselves
+ * with `data-slot`, so one rule covers every page without a class on each control. A link drawn as
+ * a button sits inside a sentence and keeps its line height. A switch keeps its look and gets a 44px
+ * hit area of its own (`components/ui/switch.tsx`).
+ */
+.duet-touch
+:is(
+  [data-slot="button"]:not([data-variant="link"]),
+  [data-slot="select-trigger"],
+  [data-slot="input"],
+  [data-slot="input-group"]
+) {
+  min-height: var(--duet-target);
+}
+.duet-touch [data-slot="button"][data-size^="icon"] {
+  min-width: var(--duet-target);
+}
+
+/* PromptArea's placeholder is an overlay. Keep it on the same scalable line as the editor. */
+.duet-composer-editor > .relative {
+  min-height: 1lh;
+}
+.duet-composer-editor > .relative > [aria-hidden="true"] {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

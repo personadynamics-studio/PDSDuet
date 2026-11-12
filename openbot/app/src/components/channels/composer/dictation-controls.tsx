@@ -1,0 +1,240 @@
+import {
+  IconArrowUp,
+  IconLoader2,
+  IconPlayerStopFilled,
+  IconX,
+} from "@tabler/icons-react";
+import { motion, useReducedMotion } from "motion/react";
+import { type ReactNode, useEffect, useRef } from "react";
+import { DuetIcon } from "@/components/duet/icons";
+import { Button } from "@/components/ui/button";
+import { LiveWaveform } from "@/components/ui/live-waveform";
+import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
+import { cn } from "@/lib/utils";
+import type { useDictation } from "./use-dictation";
+
+type Dictation = ReturnType<typeof useDictation>;
+
+export function DictationButton({
+  dictation,
+  disabled,
+  onStart,
+}: {
+  dictation: Dictation;
+  disabled: boolean;
+  /** Start somewhere other than inline: Chat's composer opens its voice sheet from an empty draft. */
+  onStart?: () => void;
+}) {
+  if (!dictation.available) return null;
+  return (
+    <Button
+      aria-label="語音輸入訊息"
+      title={
+        dictation.supported
+          ? "語音輸入訊息"
+          : "語音輸入需要相容的瀏覽器及安全連線（HTTPS）"
+      }
+      className="size-[44px] shrink-0 self-end rounded-full text-duet-ink-2"
+      // Opening the voice sheet, it stays enabled under it, so × can hand the focus back.
+      disabled={
+        disabled || !dictation.supported || (dictation.busy && !onStart)
+      }
+      onClick={onStart ?? (() => void dictation.session.start())}
+      size="icon"
+      type="button"
+      variant="ghost"
+    >
+      <DuetIcon name="mic" size={21} />
+    </Button>
+  );
+}
+
+/** Keep the editor mounted and its footprint stable while recording takes its place. */
+export function DictationSurface({
+  dictation,
+  canSend,
+  children,
+  className,
+  inSheet = false,
+}: {
+  dictation: Dictation;
+  canSend: boolean;
+  children: ReactNode;
+  className?: string;
+  /**
+   * The voice sheet is showing this recording over the whole screen, with its own controls. The
+   * editor then stays as it was underneath, rather than giving its place to a second set of them.
+   */
+  inSheet?: boolean;
+}) {
+  const recording = dictation.busy && !inSheet;
+  return (
+    <div className={cn("min-w-0", className)}>
+      <div className="relative min-w-0">
+        <div
+          aria-hidden={recording || undefined}
+          inert={recording}
+          className={cn(
+            "min-w-0 transition-[opacity,transform] duration-[var(--duet-dur-swap)] motion-reduce:transform-none motion-reduce:transition-none",
+            recording
+              ? "pointer-events-none -translate-y-1 opacity-0"
+              : "translate-y-0 opacity-100",
+          )}
+        >
+          {children}
+        </div>
+        {recording && (
+          <RecordingControls dictation={dictation} canSend={canSend} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RecordingControls({
+  dictation,
+  canSend,
+}: {
+  dictation: Dictation;
+  canSend: boolean;
+}) {
+  const { state, session } = dictation;
+  const reduceMotion = useReducedMotion();
+  const cancel = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    cancel.current?.focus();
+  }, []);
+  const recording = state.phase === "recording";
+  const transcribing = state.phase === "transcribing";
+  const transition = {
+    duration: reduceMotion ? 0 : ENTRANCE_SECONDS,
+    ease: EASE_OUT,
+  };
+  const arrive = { opacity: reduceMotion ? 1 : 0, y: reduceMotion ? 0 : 3 };
+  const time = `${Math.floor(state.seconds / 60)}:${String(state.seconds % 60).padStart(2, "0")}`;
+  return (
+    <motion.div
+      initial={{ opacity: reduceMotion ? 1 : 0, y: reduceMotion ? 0 : 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={transition}
+      className="absolute inset-0 flex min-w-0 items-center gap-3"
+    >
+      <Button
+        ref={cancel}
+        aria-label="取消語音輸入"
+        title="取消語音輸入"
+        size="icon"
+        type="button"
+        variant="ghost"
+        className="size-8 shrink-0 rounded-full"
+        onClick={session.cancel}
+      >
+        <IconX className="size-4" />
+      </Button>
+      <motion.div
+        key={
+          state.phase === "error" || state.phase === "requesting"
+            ? state.phase
+            : "waveform"
+        }
+        initial={arrive}
+        animate={{ opacity: 1, y: 0 }}
+        transition={transition}
+        className="max-h-full min-w-0 flex-1 overflow-y-auto"
+      >
+        {state.phase === "error" ? (
+          <p className="text-sm text-destructive" role="alert">
+            {state.error}
+          </p>
+        ) : state.phase === "requesting" ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            等待咪高峰授權…
+          </p>
+        ) : (
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="sr-only" role="status">
+              {transcribing ? "正在轉成文字…" : "聆聽中"}
+            </span>
+            <LiveWaveform
+              stream={state.stream}
+              processing={transcribing}
+              height={28}
+              className="flex-1 text-foreground"
+            />
+            <span
+              role="timer"
+              aria-label="錄音時間"
+              className="shrink-0 text-xs text-muted-foreground tabular-nums"
+            >
+              {time}
+            </span>
+          </div>
+        )}
+      </motion.div>
+      <motion.div
+        key={state.phase === "error" ? "recovery" : "actions"}
+        initial={arrive}
+        animate={{ opacity: 1, y: 0 }}
+        transition={transition}
+        className="shrink-0"
+      >
+        {state.phase === "error" ? (
+          <Button
+            size="sm"
+            type="button"
+            variant="ghost"
+            onClick={() =>
+              void (state.canRetry ? session.retry() : session.start())
+            }
+          >
+            {state.canRetry ? "重試" : "重新錄音"}
+          </Button>
+        ) : (
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              aria-label="停止並轉成文字"
+              title="停止並加入草稿"
+              disabled={!recording}
+              size="icon"
+              type="button"
+              variant="ghost"
+              className="size-8 rounded-full"
+              onClick={() => void session.finish("draft")}
+            >
+              <IconPlayerStopFilled className="size-3.5" />
+            </Button>
+            <Button
+              aria-label="轉成文字並傳送"
+              title="轉成文字並傳送"
+              disabled={!recording || !canSend}
+              size="icon"
+              type="button"
+              className="size-8 rounded-full"
+              onClick={() => void session.finish("send")}
+            >
+              <motion.span
+                key={transcribing ? "transcribing" : "send"}
+                initial={{
+                  opacity: reduceMotion ? 1 : 0,
+                  scale: reduceMotion ? 1 : 0.85,
+                }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={transition}
+                className="flex"
+              >
+                {transcribing ? (
+                  <IconLoader2
+                    aria-hidden="true"
+                    className="size-4 motion-safe:animate-spin"
+                  />
+                ) : (
+                  <IconArrowUp className="size-4" />
+                )}
+              </motion.span>
+            </Button>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}

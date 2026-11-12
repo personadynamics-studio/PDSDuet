@@ -1,0 +1,34 @@
+import { appConfig } from "@/lib/generated/application-config";
+import { defaultAgentProfile } from "./default-agent";
+import type { AgentProfile } from "./queries";
+
+/**
+ * Whether this is the product's own Bot: the one that shares the tenant's id.
+ *
+ * `examples/openduet/agents.yaml` declares `openduet` for tenant `openduet`. The id comes from the
+ * tenant package at build time, so a fork that renames its tenant and its Bot together gets the same
+ * Bot back, under its own name. It is the Bot drawn as the mic orb and the one the tabs are about.
+ */
+export function isTenantBot(
+  agentId: string,
+  tenantId: string = appConfig.brand.tenantId,
+): boolean {
+  return agentId === tenantId;
+}
+
+/**
+ * The Bot the Chat, Tasks and Activity tabs are about.
+ *
+ * A configured primary Bot, otherwise the tenant's own Bot (see `isTenantBot`), then the default.
+ * Only the accessible roster is considered, so a missing or inaccessible setting keeps the fallback.
+ */
+export function primaryBot(
+  agents: readonly AgentProfile[] | undefined,
+  preferredAgentId = import.meta.env.VITE_PRIMARY_BOT_ID?.trim(),
+): AgentProfile | undefined {
+  return (
+    agents?.find((agent) => agent.id === preferredAgentId) ??
+    agents?.find((agent) => isTenantBot(agent.id)) ??
+    defaultAgentProfile(agents)
+  );
+}
