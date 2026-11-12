@@ -1,5 +1,6 @@
 import {
   classifyAttachment,
+  MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_DOCUMENT_BYTES,
   MAX_FILE_BYTES,
@@ -113,13 +114,13 @@ export function screenPickedFiles(
     }
 
     // The LOOSE ceiling for a file nobody has named yet, because this screen does not know which
-    // of the two limits applies to it. Guessing the tight one would put back exactly the refusal
+    // of the file limits applies to it. Guessing the tight one would put back exactly the refusal
     // this branch exists to remove; the server applies the right limit once it has the bytes.
-    if (unnamed && file.size > MAX_IMAGE_BYTES) {
+    if (unnamed && file.size > MAX_ATTACHMENT_BYTES) {
       rejected.push(
         reject(
           file,
-          `檔案「${file.name}」過大，上限為 ${formatBytes(MAX_IMAGE_BYTES)}。`,
+          `檔案「${file.name}」過大，上限為 ${formatBytes(MAX_ATTACHMENT_BYTES)}。`,
         ),
       );
       continue;

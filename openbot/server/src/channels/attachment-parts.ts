@@ -250,17 +250,15 @@ function unreadableNote(
 /**
  * How many STORED bytes one run may put in front of the model.
  *
- * `MAX_IMAGE_BYTES` bounds one file; until this existed nothing bounded a
+ * The per-file upload limits bound one file; until this existed nothing bounded a
  * turn. History is replayed in full on every turn, so a channel that has seen
  * four messages of eight 8 MB images cost every later turn ~256 MB read out of
  * `bytea` and ~340 MB of base64 on top of it, all live at once — and the way
  * that fails is not a refusal anybody can read, it is the pod's heap, which
  * takes every other person's in-flight run down with it.
  *
- * 32 MiB of stored bytes is about 43 MB once base64'd. Four files at the
- * `MAX_IMAGE_BYTES` ceiling, or thirty-two at the `MAX_FILE_BYTES` one: well
- * past what a conversation refers back to, and far short of what exhausts a
- * process.
+ * 32 MiB of stored bytes is about 43 MB once base64'd. It can hold four images at the 8 MiB
+ * ceiling or any one PDF/text upload at the 20 MiB ceiling, while bounding memory across history.
  *
  * SPENT NEWEST-FIRST, WHICH IS WHY THE ASKED MESSAGE IS SERVED WHOLE.
  * `inlineAttachments` walks the history backwards, so the message being asked

@@ -51,6 +51,8 @@ The output is prepared **for the broker to use with customers**. The phone provi
 
 The current insurance workflow focuses on uploaded documents. General-purpose features inherited from OpenDuet, such as email onboarding and web research, are outside this MVP's core use case.
 
+PDF and Markdown/text uploads allow **20 MiB per file**. PDFs reach the model as original files; Markdown/text files are stored whole, with the first 120,000 characters sent to the model and a partial-read warning shown for large text attachments. A run can include up to 32 MiB of attachment data in total.
+
 ## 中文簡介
 
 **PDSDuet 是供保險經紀使用的 AI 助理：把保險計劃書或產品小冊子 PDF，整理成香港繁體中文的產品賣點、重點數字及客戶溝通話術，支援電腦與手機同步使用，並允許多人接入。**

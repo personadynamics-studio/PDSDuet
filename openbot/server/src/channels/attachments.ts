@@ -514,12 +514,12 @@ const LEGACY_UPLOAD_GROUP = "legacy";
  *   more bytes per bucket, still unbounded.
  *
  * ROWS RATHER THAN BYTES, which was the harder call. A row here is at most
- * `MAX_IMAGE_BYTES` (8 MiB), so counting rows bounds bytes too, at 32 x 8 MiB = 256 MiB of staged
+ * `MAX_ATTACHMENT_BYTES` (20 MiB), so counting rows bounds bytes too, at 32 x 20 MiB = 640 MiB of staged
  * blobs per person — a real bound, derived rather than declared. A separate `sum(size_bytes)`
  * ceiling was written and dropped: it buys a tighter storage number at the cost of a second limit
  * to keep honest, a second refusal sentence for a person to make sense of, and a test that has to
  * push a quarter of a gigabyte through the route to prove it. If the byte ceiling ever needs to be
- * independent of the file ceiling — an attachment kind larger than 8 MiB, say — that is the moment
+ * independent of the file ceiling, that is the moment
  * to add it, and this comment is where to say so.
  *
  * FOUR MESSAGES' WORTH, deliberately loose. Ordinary work never comes near it: the composer refuses

@@ -14,6 +14,7 @@ export {
   type AttachmentSource,
   attachmentUrl,
   classifyAttachment,
+  MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_DOCUMENT_BYTES,
   MAX_EXTRACTED_CHARACTERS,

@@ -2,7 +2,7 @@ import type { Hono as HonoApp, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
-import { MAX_IMAGE_BYTES } from "@openbot/shared/attachments";
+import { MAX_ATTACHMENT_BYTES } from "@openbot/shared/attachments";
 import { enterpriseControls } from "./admin/controls";
 import { createEnterpriseGate } from "./admin/gate";
 import { createEnterpriseAdminRoutes } from "./admin/routes";
@@ -173,16 +173,13 @@ const MULTIPART_FRAMING_ALLOWANCE = 64 * 1024;
 /**
  * The ceiling on the whole POST body of a channel attachment upload.
  *
- * THIS IS NOT `MAX_IMAGE_BYTES`, AND THE DIFFERENCE IS THE POINT. Every other gate on this path —
+ * THIS IS NOT `MAX_ATTACHMENT_BYTES`, AND THE DIFFERENCE IS THE POINT. Every other gate on this path —
  * the composer's pre-check, `attachmentsConfigFor`'s `maxSize`, the handler's own 413 — measures
  * THE FILE. This one measures THE ENVELOPE: `bodyLimit` runs before anything has parsed the
  * multipart body, so all it can count is bytes on the wire, file and framing together.
  *
- * Set to `MAX_IMAGE_BYTES` exactly, those two units were silently treated as one, and the ~360
- * bytes of boundary and headers wrapped around a file at the documented ceiling were enough to push
- * the body over it: an 8,388,608-byte image — the exact number the composer publishes as the limit —
- * was refused 413, while 8,388,308 bytes went through. A limit nobody can reach is a limit that is
- * wrong, so the envelope's ceiling is the file's ceiling plus room for the envelope.
+ * The largest supported file needs room for multipart boundaries and headers as well, so the
+ * envelope's ceiling is the file's ceiling plus room for the envelope.
  *
  * The slack costs nothing it was protecting against. A body between the two numbers is still read
  * into memory, and then still refused by the handler once `file.size` is a thing anybody can look
@@ -190,7 +187,7 @@ const MULTIPART_FRAMING_ALLOWANCE = 64 * 1024;
  * door exists to stop is the 2GB body, and it still does.
  */
 export const UPLOAD_BODY_LIMIT_BYTES =
-  MAX_IMAGE_BYTES + MULTIPART_FRAMING_ALLOWANCE;
+  MAX_ATTACHMENT_BYTES + MULTIPART_FRAMING_ALLOWANCE;
 
 /**
  * One row for something an administrator did to somebody's access.
@@ -1568,7 +1565,7 @@ export function createApp(
      * once the sniffed type is known — so refusing anything larger at the door costs nothing a real
      * upload was ever going to use.
      *
-     * The ceiling is `UPLOAD_BODY_LIMIT_BYTES` and not `MAX_IMAGE_BYTES` itself because THIS GATE
+     * The ceiling is `UPLOAD_BODY_LIMIT_BYTES` and not `MAX_ATTACHMENT_BYTES` itself because THIS GATE
      * MEASURES A DIFFERENT THING FROM EVERY OTHER ONE. See that constant.
      */
     const channelAttachments = new Hono<{ Variables: AppVariables }>();

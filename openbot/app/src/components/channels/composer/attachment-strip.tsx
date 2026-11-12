@@ -236,8 +236,8 @@ function RemoveButton({
 }
 
 /**
- * Whole kilobytes below a megabyte and one decimal above it. A staged attachment is capped at 8MB
- * (`shared/attachments.ts`), so this never has to reach gigabytes, and "0.1MB" for a 100KB text
+ * Whole kilobytes below a megabyte and one decimal above it. Attachments are capped below a gigabyte
+ * (`shared/attachments.ts`), and "0.1MB" for a 100KB text
  * file tells the reader less than "98KB" does.
  */
 function formatBytes(bytes: number): string {

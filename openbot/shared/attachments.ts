@@ -31,69 +31,27 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 8;
  */
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-/** PDFs are passed whole to the model, within the existing 8 MiB upload ceiling. */
-export const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
+/** PDFs are stored and passed whole to the model, up to 20 MiB per file. */
+export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 
 /**
- * How large a text file may be UPLOADED. Not how much of it the model reads.
- *
- * Text files are not downscaled, so this is a hard refusal like `MAX_IMAGE_BYTES`.
- *
- * THIS IS NOT THE LIMIT THAT DECIDES WHAT REACHES THE MODEL, AND THE TWO NUMBERS ARE FAR APART.
- * `MAX_EXTRACTED_CHARACTERS` below is 120,000, and this is 1,048,576. A file accepted at this
- * ceiling is stored whole and then handed to the model as its first 120,000 characters — for
- * ASCII-ish text, where a byte is a character, roughly its first EIGHTH, with about 89% cut. Text
- * in a script that costs several bytes per character loses proportionally less, because the
- * ceilings are counted in different units, but a file anywhere near this size is cut.
- *
- * The two are deliberately different numbers because they bound different things, and neither can
- * stand in for the other:
- *
- *   - this one bounds what is UPLOADED, STORED and SERVED — bandwidth, disk, and the size of the
- *     response `/api/attachments/:id` has to produce;
- *   - `MAX_EXTRACTED_CHARACTERS` bounds what one attachment may spend of a shared CONTEXT WINDOW,
- *     which is a budget split with the conversation and with up to seven other attachments.
- *
- * REJECTED: lowering this to 120,000 so the two agree. It would refuse files the app can already
- * do something useful with — the first 120,000 characters of a large CSV usually answers the
- * question that was asked of it — and would trade a partial read for no read at all.
- *
- * REJECTED: raising `MAX_EXTRACTED_CHARACTERS` to match this. A megabyte of text is a few hundred
- * thousand tokens, which is the context window this deployment targets spent entirely on one
- * attachment. That is the outcome that constant exists to prevent.
- *
- * So the gap stays, and what it costs is stated here rather than left for somebody to derive by
- * dividing one constant by the other. What is NOT yet resolved is that the person who uploads the
- * file is not told — see `MAX_EXTRACTED_CHARACTERS`.
+ * MD and other text uploads are stored whole, up to 20 MiB per file.
+ * `MAX_EXTRACTED_CHARACTERS` separately bounds the prefix sent to the model;
+ * the composer warns when a text attachment may be truncated.
  */
-export const MAX_FILE_BYTES = 1024 * 1024;
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+/** The upload ceiling before the file's format is known. */
+export const MAX_ATTACHMENT_BYTES = Math.max(
+  MAX_IMAGE_BYTES,
+  MAX_DOCUMENT_BYTES,
+  MAX_FILE_BYTES,
+);
 
 /**
- * How much extracted text may reach the model from one file.
- *
- * The real limit on a text attachment is tokens, not bytes: a one-megabyte file is a few hundred
- * thousand tokens and would fill the window on its own. 120,000 characters is roughly 30,000
- * tokens, which every model this deployment targets can hold alongside a conversation. Text past
- * this point is cut and the part says so, rather than being silently dropped.
- *
- * THE PART SAYS SO TO THE MODEL. NOBODY SAYS SO TO THE PERSON WHO ATTACHED THE FILE.
- *
- * `extractDocumentText` (`server/src/channels/attachment-parts.ts`) appends
- * `[attachment truncated at 120000 characters]` to what it sends, so the model is never left
- * answering questions about a file it read only part of without knowing. That is half the promise.
- * The other half is not kept: this ceiling is 120,000 while `MAX_FILE_BYTES` above is 1,048,576, so
- * a 1 MB CSV is accepted at pick time, uploaded whole, shown as a `1.0MB` tile — and then read by
- * the model as roughly its first eighth, with nothing anywhere in the UI saying so. Somebody who
- * asks "how many rows have status=failed" gets a confident answer about the part that fit.
- *
- * That is a real gap and it is recorded rather than fixed here, because the fix is a composer
- * change and this file is only where the number lives. What the composer needs is already exported:
- * a file whose SIZE IN BYTES exceeds this constant may be truncated, and one at or under it cannot
- * be. That direction is exact rather than approximate — UTF-8 spends at least one byte per code
- * point, so a file of N bytes can never decode to more than N characters — which makes
- * `file.size > MAX_EXTRACTED_CHARACTERS` a warning that never fires on a file that will arrive
- * whole. It is deliberately a "may", since the same byte count is fewer characters in any script
- * that costs more than a byte each.
+ * How much text from one attachment reaches the model, independently of its upload size.
+ * The original remains downloadable. The composer warns about a possible partial read, and
+ * `extractDocumentText` marks a truncated prefix for the model.
  */
 export const MAX_EXTRACTED_CHARACTERS = 120_000;
 

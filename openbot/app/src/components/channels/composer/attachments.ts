@@ -4,7 +4,7 @@ import {
   ACCEPTED_IMAGE_MIME,
   ACCEPTED_TEXT_MIME,
   attachmentUrl,
-  MAX_IMAGE_BYTES,
+  MAX_ATTACHMENT_BYTES,
 } from "@/lib/channels/attachments";
 
 /**
@@ -206,13 +206,8 @@ export const FILE_PICKER_ACCEPT = [
  * not — and phrases its refusals for a person. The narrow list is kept where it is honest about
  * being a hint: `FILE_PICKER_ACCEPT`, above, on the file dialog.
  *
- * `maxSize` is `MAX_IMAGE_BYTES`, the larger of the two ceilings: the SDK config has only one
- * number for every kind of file. The tighter `MAX_FILE_BYTES` limit for text attachments is
- * enforced by our own pre-check ahead of upload, and again by the server on arrival — which is
- * the authority either way, so letting a text file past this one number costs nothing. It is left
- * in place, unlike `accept`, because it can only ever agree with the screen: the loosest thing
- * `screenPickedFiles` passes is a file of exactly `MAX_IMAGE_BYTES`, so this backstop cannot fire
- * on a file we accepted.
+ * The SDK has one `maxSize` for every format, so it uses the largest supported file ceiling.
+ * `screenPickedFiles` and the server enforce the individual image, PDF and text limits.
  */
 export function attachmentsConfigFor(
   channelId: string,
@@ -241,7 +236,7 @@ export function attachmentsConfigFor(
   return {
     enabled: true,
     accept: "*/*",
-    maxSize: MAX_IMAGE_BYTES,
+    maxSize: MAX_ATTACHMENT_BYTES,
     onUpload: async (file) => {
       const uploaded = await upload(file);
       const rowId = stagedRowId(uploaded);
