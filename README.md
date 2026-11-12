@@ -8,7 +8,7 @@ PDSDuet is an independently maintained AI workstation with a focused sales-prepa
 
 Development continues in [personadynamics-studio/PDSDuet](https://github.com/personadynamics-studio/PDSDuet), with a fresh Git history beginning from the existing PDSDuet code and modifications. Future features and architecture are maintained independently of OpenDuet.
 
-**Project status:** Personal MVP in active development. The insurance-broker application changes are included here; the latest mobile recovery and interface changes await deployment.
+**Project status:** Personal MVP in active development. The web frontend was built and deployed to the self-hosted installation on 13 November 2026, with a 20 MiB upload limit per PDF or Markdown/text file.
 
 ## The problem it addresses
 
