@@ -1,0 +1,33 @@
+{
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    },
+    "80": {
+      "HTTP": true
+    }
+  },
+  "Web": {
+    "100.109.68.123.tailaa226c.ts.net:80": {
+      "Handlers": {
+        "/": {
+          "Redirect": "307:https://m920q.tailaa226c.ts.net${REQUEST_URI}"
+        }
+      }
+    },
+    "m920q.tailaa226c.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:3010"
+        }
+      }
+    },
+    "m920q.tailaa226c.ts.net:80": {
+      "Handlers": {
+        "/": {
+          "Redirect": "307:https://m920q.tailaa226c.ts.net${REQUEST_URI}"
+        }
+      }
+    }
+  }
+}
