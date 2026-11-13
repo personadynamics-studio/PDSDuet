@@ -20,9 +20,8 @@ import type { SCIMOptions } from "@better-auth/scim";
 import { eq } from "drizzle-orm";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { Database } from "../db/client";
-import { revokedAccess, userRoles, users } from "../db/schema";
+import { revokedAccess, users } from "../db/schema";
 import { enterpriseControls } from "../admin/controls";
-import { roleForEmail } from "./roles";
 
 export const SCIM_REVOKED_BY_PREFIX = "scim:";
 
@@ -40,7 +39,6 @@ export function scimStatus(env: Record<string, string | undefined>) {
 export type ScimDeps = {
   database: Database;
   auditStore?: AuditStore;
-  initialAdminEmails: readonly string[];
 };
 
 async function emailOf(database: Database, userId: string) {
@@ -182,30 +180,3 @@ export function scimOptions(
   };
 }
 
-/**
- * A person SCIM just created: give them their role, and say so.
- *
- * Better Auth's `user.create.after` hook seeds the role for every new user, SCIM ones included; this
- * only writes the trail row, called from that hook when the user arrived with no provider account.
- */
-export async function recordProvisioned(
-  deps: ScimDeps,
-  user: { id: string; email: string },
-): Promise<void> {
-  if (!deps.auditStore) return;
-  const [role] = await deps.database
-    .select({ role: userRoles.role })
-    .from(userRoles)
-    .where(eq(userRoles.userId, user.id))
-    .limit(1);
-  await recordAuditEvent(deps.auditStore, {
-    eventType: "person.provisioned",
-    targetType: "person",
-    targetId: user.id,
-    payload: {
-      email: user.email,
-      via: "SCIM",
-      role: role?.role ?? roleForEmail(user.email, deps.initialAdminEmails),
-    },
-  }).catch(() => undefined);
-}

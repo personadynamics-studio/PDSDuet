@@ -56,7 +56,7 @@ export const capabilitySettings = pgTable(
 /**
  * Deployment-wide enterprise switches that are one value each.
  *
- * Keys: `sso_required`, `action_recording`, `inactive_computer_days`, `model_allowlist`,
+ * Keys: `action_recording`, `inactive_computer_days`, `model_allowlist`,
  * `mcp_allowlist`. The value is `{ value: ... }` so every key stores a JSON object.
  */
 export const enterpriseSettings = pgTable("enterprise_settings", {

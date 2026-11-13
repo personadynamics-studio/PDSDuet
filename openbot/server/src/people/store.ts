@@ -75,7 +75,6 @@ export type PeopleStore = {
   retireOwned: (userId: string, revokedBy: string) => Promise<void>;
   restore: (userId: string) => Promise<void>;
   find: (userId: string) => Promise<Person | undefined>;
-  isRevoked: (email: string) => Promise<boolean>;
 };
 
 /** How many people a page holds when the caller does not say. */
@@ -342,13 +341,5 @@ export function createPeopleStore(
         .where(eq(revokedAccess.email, normalize(user.email)));
     },
 
-    async isRevoked(email) {
-      const rows = await database
-        .select({ email: revokedAccess.email })
-        .from(revokedAccess)
-        .where(inArray(revokedAccess.email, [normalize(email)]))
-        .limit(1);
-      return rows.length > 0;
-    },
   };
 }

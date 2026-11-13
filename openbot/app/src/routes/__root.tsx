@@ -13,8 +13,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootComponent,
   /*
    * An address this build does not know goes home rather than to a dead end. Home sits behind the
-   * auth gate, so the guard decides what that means: /sign for a visitor, /onboarding for somebody
-   * who has not finished it, the app for everyone else.
+   * auth gate, so the guard decides what that means: /sign for a visitor, the app for a signed-in person.
    */
   notFoundComponent: () => <Navigate replace to="/" />,
 });
@@ -36,11 +35,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
  * app-wide guard could not be installed by a leaf: several composers can be mounted at once, so a
  * `document` listener owned by one of them would be installed once per composer and torn down by
  * whichever unmounted first. The leaf approach also cannot reach every surface even in principle.
- * The onboarding poster (`_authed/onboarding.tsx`) wraps its decorative composer in
- * `pointer-events-none` on purpose, so that composer can never receive a drop at all: the event
- * goes straight past it to the document. So do the transcript, the sidebar, the page margin, and
- * every screen that will ever be added without thinking about drag and drop. The root is the one
- * place where "once" is a fact rather than a hope: `RootComponent` mounts once per app.
+ * Drops on the transcript, sidebar and page margin reach the document. RootComponent owns the
+ * listener once for the app.
  *
  * WHAT MAKES THIS SAFE TO INSTALL APP-WIDE — `defaultPrevented` IS NOT A HEURISTIC, IT IS THE
  * BROWSER'S OWN PREDICATE. An element becomes a drop target only by calling `preventDefault` on

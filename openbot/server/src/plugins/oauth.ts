@@ -61,17 +61,10 @@ const CALLBACK_PATH = "/api/plugins/oauth/callback";
 export type ConnectOrigin =
   | "settings"
   | "admin"
-  /** Onboarding's setup checklist, its last step. */
-  | "onboarding"
-  /** Onboarding's Connect your apps step. */
-  | "onboarding-apps"
-  /** Settings › Setup, the same checklist opened again after onboarding. */
   | "settings-setup";
 
 const ORIGINS: ReadonlySet<string> = new Set<ConnectOrigin>([
   "admin",
-  "onboarding",
-  "onboarding-apps",
   "settings-setup",
 ]);
 
@@ -146,20 +139,6 @@ export function connectedAccountsUrlFor(
 ): string {
   const origin = appUrl?.replace(/\/+$/, "") ?? "";
 
-  /*
-   * Onboarding offers Connect twice: on its Connect your apps step, and on the setup checklist at
-   * its end. Onboarding is the only page somebody who has not finished it may open (every other one
-   * sends them back to its first step), so both outcomes land on the step that started the flow,
-   * which reads the connection again on arrival and says how it went.
-   */
-  if (returnTo === "onboarding" || returnTo === "onboarding-apps") {
-    const step = returnTo === "onboarding" ? "setup" : "apps";
-    return "serverId" in where
-      ? `${origin}/onboarding?step=${step}`
-      : `${origin}/onboarding?step=${step}&connected=failed`;
-  }
-
-  // Settings › Setup reads the connection again on arrival, as onboarding's steps do.
   if (returnTo === "settings-setup") {
     return "serverId" in where
       ? `${origin}/settings/setup`

@@ -43,7 +43,6 @@ export type NetworkPolicy = {
 };
 
 export type EnterpriseSettings = {
-  ssoRequired: boolean;
   actionRecording: boolean;
   inactiveComputerDays: number;
   modelAllowlist: { enabled: boolean; models: string[] };

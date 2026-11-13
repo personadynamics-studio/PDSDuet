@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import { MicOrb } from "@/components/duet/mic-orb";
@@ -7,19 +7,13 @@ import { ProviderLogo } from "@/components/auth/provider-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import {
-  providerName,
-  signInWith,
-  signInWithEmailDomain,
-} from "@/lib/auth/client";
-import { resumeUrlFor, verifierPathFor } from "@/lib/auth/resume";
+import { authClient } from "@/lib/auth/client";
+import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 import { appConfig } from "@/lib/generated/application-config";
 import { searchTextEntry } from "@/lib/search-text";
-import {
-  type AuthProviderId,
-  authProvidersQueryOptions,
-  currentUserQueryOptions,
-} from "../lib/auth/queries";
+import type { AuthProviderId } from "../lib/auth/queries";
+
+const PROVIDER_NAMES = { google: "Google", microsoft: "Microsoft", okta: "Okta" };
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
@@ -30,7 +24,7 @@ const ENTRANCE_OFFSET = "translateY(12px)";
 export const Route = createFileRoute("/sign")({
   /*
    * `?flow_id=` is the handle a brokered authorization arrived with, sent here when its session had
-   * lapsed. It is a value to carry back, never a place to go: see `resumeUrlFor`.
+   * lapsed. It is carried back as an encoded query value on this app's verifier.
    *
    * READ AS TEXT WHATEVER THE ROUTER PARSED IT INTO, which is what `searchText` is for: a handle
    * made of digits arrives here as a number and a JSON-shaped one as an object, so a `typeof`
@@ -43,44 +37,17 @@ export const Route = createFileRoute("/sign")({
    */
   validateSearch: (search: Record<string, unknown>): { flow_id?: string } =>
     searchTextEntry("flow_id", search.flow_id),
-  beforeLoad: async ({ context, search }) => {
-    const user = await context.queryClient.ensureQueryData(
-      currentUserQueryOptions(),
-    );
-    if (user) {
-      /*
-       * Signed in already, so the handle has nowhere to be lost between here and the verifier.
-       *
-       * `href` rather than `to` because the verifier is an API path, not a router route — and
-       * `reloadDocument` because of what follows from that. A redirect the router is left to
-       * handle is a navigation INSIDE the app: it resolves the href against the route tree, finds
-       * nothing (there is no route for `/api/…`, and there cannot be — the verifier is served by
-       * the server, not this build), and `__root.tsx` sends an address it does not know home. The
-       * person who was part-way through connecting an app would be dropped on the home screen with
-       * the authorization they started abandoned and nothing said about it, because no request for
-       * the verifier was ever made. `reloadDocument` makes this a document navigation, which is
-       * the only kind that leaves the app and therefore the only kind that arrives.
-       */
-      const verifier = verifierPathFor(search.flow_id);
-      throw verifier
-        ? redirect({ href: verifier, reloadDocument: true })
-        : redirect({ to: "/" });
-    }
-    // Loaded here so the screen paints with its buttons rather than painting empty and then
-    // growing them, which reads as "no providers" for exactly as long as the request takes.
-    await context.queryClient.ensureQueryData(authProvidersQueryOptions());
-  },
   component: SignScreen,
 });
 
 function SignScreen() {
   const { flow_id: flowId } = Route.useSearch();
-  // Which provider is being opened, rather than whether one is: with three buttons, a single
-  // boolean would put "正在開啟…" on all of them.
-  const [opening, setOpening] = useState<AuthProviderId | "sso" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { data: options } = useQuery(authProvidersQueryOptions());
-  const providers = options?.providers ?? [];
+  const options = useQuery(deploymentCapabilitiesQueryOptions());
+  const providers = options.data?.authProviders ?? [];
+  const callbackURL = flowId
+    ? `${window.location.origin}/api/plugins/arcade/verify?flow_id=${encodeURIComponent(flowId)}`
+    : window.location.origin;
   const [email, setEmail] = useState("");
 
   /**
@@ -92,41 +59,31 @@ function SignScreen() {
   async function handleDomainSignIn(submission: React.FormEvent) {
     submission.preventDefault();
     setError(null);
-    setOpening("sso");
 
     try {
-      await signInWithEmailDomain(
-        email,
-        undefined,
-        resumeUrlFor(window.location.origin, flowId),
-      );
+      const result = await authClient.signIn.sso({ email, callbackURL });
+      if (result.error) setError(result.error.message ?? "無法開啟公司登入。");
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
           ? caughtError.message
           : "這個電郵地址尚未設定公司登入。",
       );
-      setOpening(null);
     }
   }
 
   async function handleSignIn(provider: AuthProviderId) {
     setError(null);
-    setOpening(provider);
 
     try {
-      await signInWith(
-        provider,
-        undefined,
-        resumeUrlFor(window.location.origin, flowId),
-      );
+      const result = await authClient.signIn.social({ provider, callbackURL });
+      if (result.error) setError(result.error.message ?? "無法開啟登入。");
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
           ? caughtError.message
-          : `無法開啟 ${providerName(provider)} 登入，請重試。`,
+          : `無法開啟 ${PROVIDER_NAMES[provider]} 登入，請重試。`,
       );
-      setOpening(null);
     }
   }
 
@@ -143,7 +100,6 @@ function SignScreen() {
          */
         <Button
           className="h-10 w-full justify-start gap-3 px-3 tracking-tight"
-          disabled={opening !== null}
           key={provider}
           onClick={() => handleSignIn(provider)}
           size="lg"
@@ -152,9 +108,7 @@ function SignScreen() {
           <ProviderLogo provider={provider} />
           {/* Centred against the button, not against the space left of the mark. */}
           <span className="flex-1 text-center">
-            {opening === provider
-              ? `正在開啟 ${providerName(provider)}…`
-              : `使用 ${providerName(provider)} 繼續`}
+            使用 {PROVIDER_NAMES[provider]} 繼續
           </span>
           {/* Balances the mark so the label sits in the middle of the button. */}
           <span aria-hidden="true" className="size-[18px]" />
@@ -203,25 +157,19 @@ function SignScreen() {
           transition={{ duration: ENTRANCE_SECONDS, ease: EASE_OUT }}
           variants={{ hidden, shown }}
         >
-          {options?.ssoRequired ? (
-            <p className="mb-3 text-center text-sm text-muted-foreground">
-              你的機構要求你使用公司帳戶登入。
-            </p>
+          {options.isPending ? <p role="status">正在讀取登入方式…</p> : null}
+          {options.error ? <p role="alert">{options.error.message}</p> : null}
+          {providerButtons}
+          {options.data && providers.length === 0 && !options.data.ssoConfigured ? (
+            <p className="text-center text-sm text-muted-foreground">尚未設定登入。</p>
           ) : null}
-          {providers.length > 0 && !options?.ssoRequired ? (
-            providerButtons
-          ) : options?.sso || options?.ssoRequired ? null : (
-            <p className="text-center text-sm text-muted-foreground">
-              尚未設定登入，須由管理員先行設定。
-            </p>
-          )}
           {/*
            * The way in for a company that runs its own identity provider.
            *
            * Below the buttons, because a deployment with both has more people arriving through the
            * buttons: the registered providers are for the companies whose IdP was added by hand.
            */}
-          {options?.sso ? (
+          {options.data?.ssoConfigured ? (
             <form className="mt-3" onSubmit={handleDomainSignIn}>
               {providers.length > 0 ? (
                 <div className="mb-3 flex items-center gap-3">
@@ -240,25 +188,13 @@ function SignScreen() {
               />
               <Button
                 className="mt-2 h-10 w-full tracking-tight"
-                disabled={opening !== null || email.trim().length === 0}
                 size="lg"
                 type="submit"
                 variant="outline"
               >
-                {opening === "sso"
-                  ? "正在開啟…"
-                  : "使用公司帳戶繼續"}
+                使用公司帳戶繼續
               </Button>
             </form>
-          ) : null}
-          {/* The administrators' audited break-glass while SSO is required; everybody else is refused. */}
-          {options?.ssoRequired && providers.length > 0 ? (
-            <details className="mt-4 text-sm">
-              <summary className="cursor-pointer text-center text-muted-foreground">
-                管理員登入
-              </summary>
-              <div className="mt-3">{providerButtons}</div>
-            </details>
           ) : null}
           {error ? (
             <p className="mt-3 text-sm text-destructive" role="alert">

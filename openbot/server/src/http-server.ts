@@ -4,7 +4,6 @@ import { serve } from "bun";
 import { computerAccessCheck } from "./agents/computer-access";
 import type { AgentProfileStore } from "./agents/profile-store";
 import type { OpenBotRole } from "./auth/roles";
-import { appOrigins, crossSiteRefusal } from "./auth/same-origin";
 import { websocket as channelSocket } from "./channels/socket";
 import type { ComputerGateway } from "./computer/gateway";
 import { streamPathBotId } from "./computer/stream-path";
@@ -100,9 +99,6 @@ export function startHttpServer(deps: {
   const asChannelSocket = (ws: { data: SocketData }) =>
     ws as unknown as ChannelSocket;
 
-  // The origins the app's own guard admits (app.ts), for the one upgrade that never reaches it.
-  const own = appOrigins(config);
-
   const options: Parameters<typeof serve<SocketData>>[0] = {
     port,
     async fetch(request, server) {
@@ -117,15 +113,6 @@ export function startHttpServer(deps: {
         streamBotId !== null &&
         request.headers.get("upgrade")?.toLowerCase() === "websocket"
       ) {
-        /*
-         * A page on another site may not open somebody's live screen, which shows what the Bot's
-         * browser shows and takes input into it. A WebSocket has no CORS, so this is the only thing
-         * that asks where the page is. Before sign-in, because the cookie rides along regardless.
-         */
-        const refusal = crossSiteRefusal(request, own);
-        if (refusal) {
-          return new Response(refusal.error, { status: refusal.status });
-        }
         if (!config.computer) {
           return new Response("No computer is configured.", { status: 503 });
         }

@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { client } from "@/lib/client";
+import type { AuthProviderId } from "@/lib/auth/queries";
 
 /**
  * What this deployment can do, as the server is willing to say it.
@@ -24,11 +25,9 @@ export type DeploymentCapabilities = {
    * for a deployment on a paid Intelligence plan.
    */
   selfHostBanner: boolean;
-  /**
-   * Whether this is somebody trying OpenBot on their own machine rather than an organization's
-   * deployment: single-user mode on the server, which only a local, unreachable install can be in.
-   */
   localEvaluation: boolean;
+  authProviders: AuthProviderId[];
+  ssoConfigured: boolean;
   transcription?: boolean;
   voice?: boolean;
 };
@@ -68,6 +67,8 @@ export function deploymentCapabilitiesQueryOptions() {
         generativeUi?: boolean;
         selfHostBanner?: boolean;
         localEvaluation?: boolean;
+        authProviders?: AuthProviderId[];
+        ssoConfigured?: boolean;
         transcription?: boolean;
         voice?: boolean;
       };
@@ -76,6 +77,8 @@ export function deploymentCapabilitiesQueryOptions() {
         generativeUi: body.generativeUi === true,
         selfHostBanner: body.selfHostBanner === true,
         localEvaluation: body.localEvaluation === true,
+        authProviders: body.authProviders ?? [],
+        ssoConfigured: body.ssoConfigured === true,
         transcription: body.transcription === true,
         voice: body.voice === true,
       };

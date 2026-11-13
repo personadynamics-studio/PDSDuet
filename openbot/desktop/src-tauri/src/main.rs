@@ -1251,7 +1251,6 @@ async fn start_stack<R: tauri::Runtime>(
     model: ChosenModel,
     // The row the person picked, with the address only for the bring-your-own row.
     harness: Option<harness::HarnessChoice>,
-    organization_auth_url: Option<String>,
     // Both registers on the way out: see `problem.rs`. Anything that still returns a bare string
     // converts to the plain half, so a path without its own sentence reads as it always did.
 ) -> Result<(), openbot_desktop_lib::problem::Problem> {
@@ -1264,7 +1263,6 @@ async fn start_stack<R: tauri::Runtime>(
         api_key,
         model,
         harness,
-        organization_auth_url,
     )
     .await
 }
@@ -1281,22 +1279,7 @@ async fn start_stack_inner<R: tauri::Runtime>(
     api_key: String,
     model: ChosenModel,
     harness: Option<harness::HarnessChoice>,
-    organization_auth_url: Option<String>,
 ) -> Result<(), Problem> {
-    let organization_auth_url = organization_auth_url.map(|url| url.trim().to_string());
-    if let Some(url) = organization_auth_url.as_ref().filter(|url| !url.is_empty()) {
-        if !reqwest::Url::parse(url).is_ok_and(|url| {
-            matches!(url.scheme(), "http" | "https")
-                && url.has_host()
-                && url.username().is_empty()
-                && url.password().is_none()
-        }) {
-            return Err(Problem::plain(
-                "Enter a valid http:// or https:// organization OpenBot URL.",
-            )
-            .connection(openbot_desktop_lib::problem::Connection::Organization));
-        }
-    }
     let shell = app.state::<Shell>();
     let attempt = StartAttempt::begin(&shell)?;
     {
@@ -1476,9 +1459,6 @@ async fn start_stack_inner<R: tauri::Runtime>(
             // new KEY_ENCRYPTION_KEY and orphans everything the server had encrypted under the old one.
             &existing_secrets,
         );
-        if let Some(authority) = organization_auth_url {
-            settings.insert("OPENBOT_ORGANIZATION_AUTH_URL".into(), authority);
-        }
         seed_learning_default(
             &root,
             &mut settings,
@@ -2431,49 +2411,19 @@ fn show_openbot_on<R: tauri::Runtime>(
     let shell = app.state::<Shell>();
     let _startup = shell.startup.lock().unwrap();
     let root = cleanup_root(&shell, &stack::default_root());
-    let organization_recovery = !quit_cleanup_notice_path(&root).exists()
-        && shell
-            .recovery_required
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|recovery| {
-                recovery.root == root
-                    && recovery.connection
-                        == Some(openbot_desktop_lib::problem::Connection::Organization)
-            });
-    if recovery_required_or_pending_quit_notice(&shell, &root) && !organization_recovery {
+    if recovery_required_or_pending_quit_notice(&shell, &root) {
         return Err("Part of OpenBot needs recovery. Try starting OpenBot once more.".into());
     }
     let url = owned_app_url(&root, ports).ok_or_else(|| {
         format!("OpenBot could not verify its app on port {port} belongs to this installation. Try starting OpenBot again.")
     })?;
-    let authority =
-        openbot_env::already_set(&root.join(".env"), &["OPENBOT_ORGANIZATION_AUTH_URL"])
-            .remove("OPENBOT_ORGANIZATION_AUTH_URL")
-            .unwrap_or_default();
-    let destination = if authority.is_empty() {
-        if organization_recovery {
-            return Err(Problem::plain(
-                "Restore this installation's organization OpenBot URL before signing in.",
-            )
-            .connection(openbot_desktop_lib::problem::Connection::Organization));
-        }
-        url
-    } else {
-        openbot_desktop_lib::organization_auth::session_destination(&root, &authority, &url)?
-    };
-    if organization_recovery {
-        clear_recovery_required(&shell, &root);
-    }
-    // Organization destinations can contain a one-use session ticket; never log them.
     eprintln!("[show] navigating to the owned OpenBot app");
     let window = app
         .get_webview_window("main")
         .ok_or("the OpenBot window is not there to show it in")?;
     let outcome = window
         .navigate(
-            destination
+            url
                 .parse()
                 .map_err(|_| "OpenBot returned an invalid app destination.".to_string())?,
         )
@@ -2852,7 +2802,6 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
             "INTELLIGENCE_API_KEY",
             "INTELLIGENCE_API_URL",
             "INTELLIGENCE_GATEWAY_WS_URL",
-            "OPENBOT_ORGANIZATION_AUTH_URL",
             /*
              * The model credentials too, so the wizard never asks twice for one of these either.
              *
@@ -3231,76 +3180,6 @@ async fn intelligence_key_for(
     Ok(key)
 }
 
-#[tauri::command]
-async fn begin_organization_sign_in(
-    app: tauri::AppHandle,
-    root: String,
-    authority_url: String,
-    provider: String,
-) -> Result<String, Problem> {
-    let root = stack::root_from(&root);
-    let handle = app.clone();
-    let url = tauri::async_runtime::spawn_blocking(move || {
-        let shell = handle.state::<Shell>();
-        let _startup = shell.startup.lock().unwrap();
-        if shell.root.lock().unwrap().as_deref() != Some(root.as_path()) {
-            return Err(Problem::plain(
-                "Start this OpenBot installation before signing in to its organization.",
-            ));
-        }
-        let configured =
-            openbot_env::already_set(&root.join(".env"), &["OPENBOT_ORGANIZATION_AUTH_URL"])
-                .remove("OPENBOT_ORGANIZATION_AUTH_URL")
-                .unwrap_or_default();
-        if configured.trim() != authority_url.trim() {
-            return Err(Problem::plain(
-                "Save this organization's OpenBot URL before signing in.",
-            ));
-        }
-        openbot_desktop_lib::organization_auth::begin(&root, &authority_url, &provider)
-    })
-    .await
-    .map_err(|_| Problem::plain("Organization sign-in could not start."))??;
-    if tauri_plugin_opener::OpenerExt::opener(&app)
-        .open_url(&url, None::<&str>)
-        .is_err()
-    {
-        eprintln!(
-            "[organization] browser could not open; use the sign-in address shown in the window"
-        );
-    }
-    Ok(url)
-}
-
-#[tauri::command]
-async fn finish_organization_sign_in(
-    app: tauri::AppHandle,
-    root: String,
-) -> Result<openbot_desktop_lib::organization_auth::OrganizationUser, Problem> {
-    let root = stack::root_from(&root);
-    tauri::async_runtime::spawn_blocking(move || {
-        let shell = app.state::<Shell>();
-        let generation = shell.generation.load(std::sync::atomic::Ordering::SeqCst);
-        let user = openbot_desktop_lib::organization_auth::finish(&root)?;
-        let _startup = shell.startup.lock().unwrap();
-        if shell.generation.load(std::sync::atomic::Ordering::SeqCst) != generation
-            || shell.root.lock().unwrap().as_deref() != Some(root.as_path())
-        {
-            return Err(Problem::plain(
-                "That sign-in belongs to a previous OpenBot run. Open this installation again.",
-            ));
-        }
-        Ok(user)
-    })
-    .await
-    .map_err(|_| Problem::plain("Organization sign-in did not finish."))?
-}
-
-#[tauri::command]
-fn cancel_organization_sign_in(root: String) {
-    openbot_desktop_lib::organization_auth::cancel(&stack::root_from(&root));
-}
-
 /// The model screen's rows. Independent of the picker above, and required to stay that way: no
 /// harness on that list is tied to a vendor's models, so choosing one may not narrow this.
 #[tauri::command]
@@ -3383,7 +3262,6 @@ fn publish_connection_failure<R: tauri::Runtime>(
     let said = match connection {
         openbot_desktop_lib::problem::Connection::Model => "Your AI connection was refused. Refresh it to continue using your existing OpenBot.",
         openbot_desktop_lib::problem::Connection::Intelligence => "Your CopilotKit connection was refused. Refresh it to continue using your existing OpenBot.",
-        openbot_desktop_lib::problem::Connection::Organization => "Your organization sign-in needs to be refreshed to continue using your existing OpenBot.",
     };
     mark_recovery_required(&shell, root, generation);
     if let Some(recovery) = shell.recovery_required.lock().unwrap().as_mut() {
@@ -3786,9 +3664,6 @@ fn main() {
             finish_intelligence_sign_in,
             intelligence_key_for,
             create_intelligence_project,
-            begin_organization_sign_in,
-            finish_organization_sign_in,
-            cancel_organization_sign_in,
             ask_the_bot,
         ])
         // A packaged application is not a browser tab. Left alone, WebView2 answers a right-click

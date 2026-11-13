@@ -6,7 +6,6 @@ import {
   IconKey,
   IconNetwork,
   IconPlug,
-  IconShieldLock,
   IconTerminal2,
   IconToggleRight,
   IconUsersGroup,
@@ -192,33 +191,8 @@ function EnterpriseSections({
 
   return (
     <>
-      <PageSection
-        description="Addresses in INITIAL_ADMIN_EMAILS can always use social sign-in as an emergency way in. Each of those sign-ins shows in Audit."
-        title="Sign-in"
-      >
+      <PageSection title="Directory provisioning">
         <PageRows>
-          <Item size="sm">
-            <ItemMedia variant="icon">
-              <IconShieldLock />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>Require SSO</ItemTitle>
-              <ItemDescription>
-                {settings.ssoRequired
-                  ? "People can only sign in through a registered SAML or OpenID Connect provider."
-                  : "People can also sign in with Google, Microsoft or Okta."}
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Switch
-                aria-label="Require SSO"
-                checked={settings.ssoRequired}
-                disabled={saving}
-                onCheckedChange={(checked) => onSetting("ssoRequired", checked)}
-              />
-            </ItemActions>
-          </Item>
-          <Separator />
           <Item size="sm">
             <ItemMedia variant="icon">
               <IconFingerprint />

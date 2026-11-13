@@ -4,7 +4,6 @@ import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
 import { MAX_ATTACHMENT_BYTES } from "@openbot/shared/attachments";
 import { enterpriseControls } from "./admin/controls";
-import { createEnterpriseGate } from "./admin/gate";
 import { createEnterpriseAdminRoutes } from "./admin/routes";
 import {
   authoriseAgentCall,
@@ -23,7 +22,6 @@ import { createAgentRoutes } from "./agents/routes";
 import { createApprovalRoutes } from "./approvals/routes";
 import type { ApprovalService } from "./approvals/service";
 import {
-  type AuditEventType,
   type AuditInitiator,
   auditEventsToCsv,
   AuditQueryError,
@@ -44,7 +42,6 @@ import {
 } from "./auth/guards";
 import type { IdentityProviderStore } from "./auth/identity-provider-store";
 import { desktopAuthPage } from "./auth/native-browser";
-import { createSameOriginGuard } from "./auth/same-origin";
 import {
   createAttachmentRoutes,
   createChannelAttachmentRoutes,
@@ -96,7 +93,6 @@ import type { MemoryStore } from "./memory/store";
 import { parsePageLimit } from "./paging";
 import { createPasswordRoutes, createSignInRoutes } from "./passwords/routes";
 import type { SignInService } from "./passwords/service";
-import type { OnboardingStore } from "./people/onboarding";
 import { MAX_PAGE, type PeopleStore } from "./people/store";
 import type { AccountModeSwitch } from "./plugins/account-mode";
 import type { ComposioBroker } from "./plugins/broker";
@@ -347,17 +343,6 @@ export function createApp(
    */
   routineStore?: RoutineStore,
   /**
-   * Where each person is in first-run onboarding.
-   *
-   * Appended last, like everything above it: these are positional, so inserting one anywhere else
-   * silently shifts every existing call site's arguments by one.
-   *
-   * Absent leaves /api/me reporting no onboarding to track, which is the correct degraded
-   * behaviour: a deployment that cannot read the status must not lock everybody behind a gate
-   * nothing can finish.
-   */
-  onboardingStore?: OnboardingStore,
-  /**
    * One person's standing instructions, which every built-in coworker they run is told.
    *
    * Appended last, like everything above it: these are positional, so inserting one anywhere else
@@ -450,7 +435,7 @@ export function createApp(
     /**
      * What OpenDuet made for the person, and the tasks it is working on: the Pages tab and the viewer,
      * and Chat's task cards, the task page and Tasks. See openduet/pages.ts and openduet/task-store.ts.
-     * And the setup checklist onboarding ends on, read from this server's own configuration and
+     * And the optional setup checklist, read from this server's own configuration and
      * state. See openduet/setup.ts. Absent, the checklist route is not mounted.
      */
     openduet?: {
@@ -476,14 +461,6 @@ export function createApp(
   identityGithubCallback?: Hono<{ Variables: AppVariables }>,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
-  /*
-   * First, in front of every route: a state-changing `/api` request, or a WebSocket upgrade, from a
-   * page that is not this deployment's is refused here, and so is a body that is not JSON or an
-   * upload. One rule for every route rather than a check each route has to remember; see
-   * auth/same-origin.ts for what it admits and why. Registered before anything else, because a
-   * route registered ahead of a middleware in Hono never passes through it.
-   */
-  app.use("*", createSameOriginGuard(config));
   mountDesktopConnectionFailure(app, desktopHostToken);
   mountProviderOAuthProxy(app, modelProviderProxy);
 
@@ -513,21 +490,12 @@ export function createApp(
        * both halves, so off means off.
        */
       generativeUi: config.generativeUi,
+      localEvaluation: config.singleUser,
       // Whether to offer help self-hosting OpenBot. A fork running it for its own people turns it off,
       // and a deployment that pays for Intelligence never sees it. See self-host-banner.ts.
       selfHostBanner: selfHostBanner
         ? await selfHostBanner.shown()
         : config.selfHostBanner,
-      /*
-       * Whether this is somebody trying OpenBot on their own machine, not an organization's
-       * deployment. Onboarding reads it to explain where OpenBot can run, which only the person
-       * evaluating it needs and an organization's employees should never be pitched.
-       *
-       * Single-user mode, not a new switch: it is already true only with no identity provider and
-       * no address anybody else can reach (see `singleUserAllowed` in config.ts), which is exactly
-       * a local trial, and an operator cannot forget to set it.
-       */
-      localEvaluation: config.singleUser,
       transcription: Boolean(config.transcription),
       voice: Boolean(config.voice),
       /*
@@ -549,105 +517,16 @@ export function createApp(
        * companies use this deployment, which is not theirs to have before they sign in.
        */
       ssoConfigured: ((await identityProviders?.list()) ?? []).length > 0,
-      /*
-       * Whether an administrator requires SSO. The screen then leads with SSO and keeps social
-       * sign-in only as the administrators' audited break-glass; the server refuses everybody else.
-       */
-      ssoRequired:
-        enterpriseControls()?.snapshot()?.settings.ssoRequired === true,
+
     }),
   );
-  /*
-   * Registering an identity provider is an administrator's decision, not a signed-in one.
-   *
-   * Better Auth's SSO plugin guards these with `sessionMiddleware`, which asks only that somebody is
-   * signed in. That is the wrong bar here: registering an IdP for a domain means anybody it vouches
-   * for can sign in, so a plain user reaching this could mint themselves colleagues. The routes are
-   * mounted through this handler, so the check goes in front of it.
-   */
-  const ADMIN_ONLY_AUTH_ROUTES = new Set([
-    "/api/auth/sso/register",
-    "/api/auth/sso/update-provider",
-    "/api/auth/sso/delete-provider",
-  ]);
-
-  const AUTH_ROUTE_EVENTS: Record<string, AuditEventType | undefined> = {
-    "/api/auth/sso/register": "identity_provider.registered",
-    "/api/auth/sso/delete-provider": "identity_provider.removed",
-  };
-
-  app.on(["GET", "POST"], "/api/auth/*", async (context) => {
-    if (
-      context.req.method === "GET" &&
-      new URL(context.req.url).pathname === "/api/auth/desktop" &&
-      !config.organizationAuthUrl
-    ) {
-      return desktopAuthPage(
-        context.req.raw,
-        configuredAuthProviders(config.auth),
-      );
+  app.on(["GET", "POST"], "/api/auth/*", (context) => {
+    if (context.req.method === "GET" && new URL(context.req.url).pathname === "/api/auth/desktop") {
+      return desktopAuthPage(context.req.raw, configuredAuthProviders(config.auth));
     }
-    if (!auth) {
-      return context.json(
-        { error: "No identity provider is configured." },
-        503,
-      );
-    }
-
-    if (ADMIN_ONLY_AUTH_ROUTES.has(new URL(context.req.url).pathname)) {
-      const session = await auth.api.getSession({
-        headers: context.req.raw.headers,
-        // Fresh, not the cookie cache: a role changed a moment ago has to apply to this request.
-        query: { disableCookieCache: true },
-      });
-      const roles = session?.user
-        ? ((await roleRepository?.rolesForUser(session.user.id)) ?? [])
-        : [];
-      if (!roles.includes("admin")) {
-        return context.json(
-          { error: "Only an admin can change identity providers." },
-          403,
-        );
-      }
-    }
-
-    const eventType =
-      AUTH_ROUTE_EVENTS[new URL(context.req.url).pathname] ?? undefined;
-
-    // Read before the handler runs, because it consumes the stream: a clone taken afterwards is of
-    // a request whose body is already gone, and the row would name no provider.
-    const named =
-      auditStore && eventType
-        ? ((await context.req.raw
-            .clone()
-            .json()
-            .catch(() => null)) as { providerId?: unknown } | null)
-        : null;
-
-    const answer = await auth.handler(context.req.raw);
-
-    if (auditStore && eventType && answer.ok) {
-      const session = await auth.api.getSession({
-        headers: context.req.raw.headers,
-        query: { disableCookieCache: true },
-      });
-      await recordAuditEvent(auditStore, {
-        eventType,
-        targetType: "identity_provider",
-        ...(typeof named?.providerId === "string"
-          ? { targetId: named.providerId }
-          : {}),
-        ...(session?.user ? { actorUserId: session.user.id } : {}),
-        payload: {
-          ...(typeof named?.providerId === "string"
-            ? { providerId: named.providerId }
-            : {}),
-          ...(session?.user?.email ? { by: session.user.email } : {}),
-        },
-      });
-    }
-
-    return answer;
+    return auth
+      ? auth.handler(context.req.raw)
+      : context.json({ error: "No identity provider is configured." }, 503);
   });
 
   const authenticationUnavailable: MiddlewareHandler<{
@@ -661,9 +540,6 @@ export function createApp(
     : auth && roleRepository
       ? createRequireUser(auth, roleRepository)
       : authenticationUnavailable;
-  // Enterprise controls: capability switches and the model allowlist in front of the routes they
-  // govern, the admin screen's API, and the SCIM verbs the GET/POST auth handler above does not take.
-  app.use("/api/*", createEnterpriseGate(requireUser));
   app.route("/api/admin/enterprise", createEnterpriseAdminRoutes(requireUser));
   app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/*", (context) =>
     auth
@@ -695,52 +571,9 @@ export function createApp(
     ),
   );
 
-  app.get("/api/me", requireUser, async (context) =>
-    context.json({
-      user: {
-        ...context.var.actor,
-        /*
-         * Read here rather than in the guard, so only this route pays the extra query. Null means
-         * this deployment does not track onboarding, which the app reads as nothing to finish;
-         * a not-yet-completed status is what sends it to /onboarding.
-         */
-        onboarding: onboardingStore
-          ? await onboardingStore.status(context.var.actor.id)
-          : null,
-      },
-    }),
+  app.get("/api/me", requireUser, (context) =>
+    context.json({ user: context.var.actor }),
   );
-  app.post("/api/me/onboarding", requireUser, async (context) => {
-    if (!onboardingStore) {
-      return context.json({ error: "Onboarding is not available." }, 503);
-    }
-
-    const body = (await context.req.json().catch(() => undefined)) as
-      | { step?: unknown; completed?: unknown }
-      | undefined;
-
-    if (body?.completed === true) {
-      await onboardingStore.complete(context.var.actor.id);
-    } else if (
-      typeof body?.step === "number" &&
-      Number.isInteger(body.step) &&
-      body.step >= 0 &&
-      // The column's range — the only bound the server knows, since the wizard's length is the
-      // app's fact rather than the deployment's.
-      body.step <= 2_147_483_647
-    ) {
-      await onboardingStore.setStep(context.var.actor.id, body.step);
-    } else {
-      return context.json(
-        { error: "Send the step to move to, or completed: true." },
-        400,
-      );
-    }
-
-    return context.json({
-      onboarding: await onboardingStore.status(context.var.actor.id),
-    });
-  });
   /*
    * A person's own standing instructions, read and written by the person they belong to.
    *

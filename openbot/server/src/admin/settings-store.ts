@@ -23,8 +23,6 @@ import type { CapabilityRow, Member } from "./capabilities";
 export const ENTERPRISE_TOPIC = "enterprise_settings_changed";
 
 export type EnterpriseSettings = {
-  /** Only a registered enterprise identity provider may sign anybody in. */
-  ssoRequired: boolean;
   /** Record scrubbed shell commands Bots run, kept 90 days. */
   actionRecording: boolean;
   /** Stop computers nobody has used for this many days. 0 turns it off. */
@@ -34,7 +32,6 @@ export type EnterpriseSettings = {
 };
 
 export const DEFAULT_ENTERPRISE_SETTINGS: EnterpriseSettings = {
-  ssoRequired: false,
   actionRecording: false,
   inactiveComputerDays: 30,
   modelAllowlist: { enabled: false, models: [] },
@@ -42,7 +39,6 @@ export const DEFAULT_ENTERPRISE_SETTINGS: EnterpriseSettings = {
 };
 
 const SETTING_KEYS = {
-  ssoRequired: "sso_required",
   actionRecording: "action_recording",
   inactiveComputerDays: "inactive_computer_days",
   modelAllowlist: "model_allowlist",

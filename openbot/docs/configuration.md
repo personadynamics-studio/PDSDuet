@@ -365,8 +365,6 @@ policies apply. See [OpenAI WebRTC](https://developers.openai.com/api/docs/guide
 | `INITIAL_ADMIN_EMAILS`       | Comma-separated administrators. **Required** with any provider.                        |
 | `OPENBOT_PUBLIC_URL`         | Public address of this API. Defaults to `BETTER_AUTH_URL`.                              |
 | `OPENBOT_APP_URL`            | Where the browser app is served. Defaults to the first `TRUSTED_ORIGINS` entry.          |
-| `SIGNIN_ALLOWED_EMAIL_DOMAINS` | Comma-separated email domains admitted at sign-in. Empty means no opinion. Exact, no wildcards. |
-| `OPENBOT_ORGANIZATION_AUTH_URL` | An OpenBot deployment that verifies employee identity and roles. Decides sign-in ahead of `OPENBOT_SINGLE_USER`. |
 
 ### PDSDuet Google sign-in
 
@@ -382,8 +380,8 @@ users; a private Bot belongs to its creator and follows the existing owner, admi
 and team-sharing rules. Conversations and attachments follow their own membership
 rules. Computers are allocated per Bot: people using the same public Bot share its
 browser logins and workspace, while separate private Bots have separate computers.
-Users share the deployment's backend and model API. New users follow the native
-onboarding flow; login and listing Bots do not provision copies or complete it for them.
+Users share the deployment's backend and model API. Google sign-in opens the app directly;
+login and listing Bots do not provision copies or require an onboarding wizard.
 
 Before converting an existing single-user installation, back up PostgreSQL,
 credentials, browser profiles and workspaces. Retaining the original administrator's
@@ -421,30 +419,14 @@ address and a `.local` name are what this flag is mostly used for, and anybody o
 the administrator. A value that cannot be parsed as a URL counts as public, because nobody checked
 it.
 
-**`SIGNIN_ALLOWED_EMAIL_DOMAINS` decides who may sign in**, as distinct from who is an
-administrator once in. Matching is exact with no wildcards, so `example.com` admits neither
-`sub.example.com` nor `evil-example.com`, and both sides go through the same IDNA normalisation, so
-a rule may be written `@Example.COM.` or in punycode and still mean what it says. Two arrangements
-are refused at start-up rather than documented and hoped for: a list that normalises to nothing,
-which `@` and a stray `.` both produce, because it is a non-empty list no address can match; and a
-list combined with a `MICROSOFT_OAUTH_TENANT_ID` that names no directory (`common`, `organizations`
-or `consumers`), because there the address the list is checked against is one the signing-in tenant
-writes for itself. A production deployment that names no domains and leaves the tenant multi-tenant
-is warned rather than refused.
-
-**`OPENBOT_ORGANIZATION_AUTH_URL` names an authority, not a provider.** It must be an HTTPS OpenBot
-origin, or HTTP on loopback, and a bare origin: a username, password, query, fragment or any path
-other than `/` is refused at start-up. Naming one settles sign-in by itself, ahead of
-`OPENBOT_SINGLE_USER`.
-
 **Any one provider turns sign-in on**, and several may be configured at once. Each provider's id and
 secret must be set together, Okta additionally needs its issuer, and any of them requires
-`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` and `INITIAL_ADMIN_EMAILS`. Every incomplete combination is
+`BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`. Every incomplete combination is
 refused at start-up rather than at somebody's first attempt to sign in.
 
-`INITIAL_ADMIN_EMAILS` is required because nothing else grants the administrator role at first: an
-address it names becomes an administrator at every sign-in and cannot be demoted from the People
-screen, which is what guarantees a way back in. Everybody else's role is decided there instead.
+`INITIAL_ADMIN_EMAILS` optionally assigns administrators when new accounts are created.
+Other Google accounts start as ordinary users. Sign-in does not require this list and does
+not reapply it on every session.
 
 SAML and OpenID Connect providers are not configured here. They are registered while the deployment
 runs, under Admin → Identity providers, and routed by email domain.

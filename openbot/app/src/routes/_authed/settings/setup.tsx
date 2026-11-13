@@ -19,13 +19,7 @@ export const Route = createFileRoute("/_authed/settings/setup")({
   component: SetupPage,
 });
 
-/**
- * The checklist onboarding ends on, open again whenever somebody wants to see what is set up.
- *
- * Drawn in the Duet card rather than `PageRows`, unlike its neighbours in Settings: it is the same
- * list as onboarding's last step, and one list drawn two ways is two lists to keep in step. Its
- * Connect comes back here, not to Connections.
- */
+/** Optional setup information. */
 function SetupPage() {
   const router = useRouter();
   const navigate = useNavigate();

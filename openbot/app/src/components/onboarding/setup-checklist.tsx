@@ -33,29 +33,16 @@ const ICONS: Record<SetupRowId, DuetIconName> = {
 
 const PRODUCT = appConfig.brand.productName;
 
-/**
- * What this deployment has, and what still needs setting up: one row each, Ready or Needs setup.
- *
- * Onboarding ends on it and Settings opens it again. The rows, their sentences and their fixes are
- * the server's (see `lib/setup/queries.ts`): this draws them, and holds the two things only a browser
- * can do, which are starting a connection and checking again.
- *
- * NOTHING HERE BLOCKS ANYTHING. A required gap is drawn plainly, in red, and the page around it still
- * lets the person carry on: they cannot set a server's environment from a browser, and keeping them
- * out of the app would not set it either.
- *
- * DRAWN IN THE DUET CARD ON BOTH SCREENS, INCLUDING SETTINGS, which otherwise lays its rows out with
- * `PageRows`. It is one list in two places, and drawing it twice would be two lists to keep in step.
- */
+/** Optional setup information shown in Settings. */
 export function SetupChecklist({
   returnTo,
   openPage,
   leaveFor = (url) => window.location.assign(url),
   notice,
 }: {
-  /** Which screen a connection's consent comes back to: onboarding's checklist, or Settings › Setup. */
-  returnTo: "onboarding" | "settings-setup";
-  /** Opens one of the app's own screens. Onboarding finishes first, since it cannot be left open. */
+  /** The settings screen a connection returns to. */
+  returnTo: "settings-setup";
+  /** Opens one of the app's own screens. */
   openPage: (path: string) => void;
   /** Where the browser goes to approve a connection: the vendor's own page. */
   leaveFor?: (url: string) => void;

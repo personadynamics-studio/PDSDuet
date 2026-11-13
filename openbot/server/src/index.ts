@@ -76,8 +76,6 @@ import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { AuthService } from "./auth/guards";
 import { createRoleRepository } from "./auth/guards";
 import { createIdentityProviderStore } from "./auth/identity-provider-store";
-import { createOrganizationAuth } from "./auth/organization";
-import { organizationUserStore } from "./auth/organization-store";
 import type { OpenBotRole } from "./auth/roles";
 import {
   loadAttachmentForTurn,
@@ -192,7 +190,6 @@ import { appAccessTools } from "./plugins/app-access-tool";
 import { createSignInNotifier, createSignInResumer } from "./passwords/resume";
 import { createSignInService } from "./passwords/service";
 import { createPasswordStore } from "./passwords/store";
-import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { createAccountModeSwitch } from "./plugins/account-mode";
 import { assertActivatable, providerDecision } from "./plugins/broker";
@@ -314,12 +311,7 @@ async function resolveRequestActor(request: Request): Promise<{
   if (!user) {
     throw new Error("A CopilotKit run requires a signed-in user.");
   }
-  const roles = user.role
-    ? [user.role]
-    : await roleRepository.rolesForUser(user.id);
-  if (!roles.includes("admin") && !roles.includes("user")) {
-    throw new Error("A CopilotKit run requires an authorized user.");
-  }
+  const roles = await roleRepository.rolesForUser(user.id);
   return {
     id: user.id,
     name: user.name ?? user.email ?? user.id,
@@ -508,11 +500,6 @@ const loadAgentsForActor = createRuntimeAgentLoader(
   config.managedAgent,
 );
 await synchronizeTenantPackage(database, tenantPackage);
-/*
- * Built before `auth`, because the deny list is consulted during sign-in and the store is what
- * holds it. It needs the administrator list too, so it can tell the screen which people the
- * deployment's configuration has already decided about.
- */
 const peopleStore = createPeopleStore(
   database,
   config.auth?.initialAdminEmails ?? [],
@@ -542,24 +529,9 @@ const peopleStore = createPeopleStore(
     }),
 );
 const identityProviderStore = createIdentityProviderStore(database);
-/*
- * Built before `auth` for the same reason the people store is: sign-in writes to the trail, and the
- * store that receives those rows has to exist before anything can sign in.
- */
-const signInAuditStore = createAuditStore(database);
-const auth: AuthService | undefined = config.organizationAuthUrl
-  ? createOrganizationAuth({
-      authorityUrl: config.organizationAuthUrl,
-      materializeUser: organizationUserStore(database),
-    })
-  : config.auth
-    ? createAuth(
-        config,
-        database,
-        (email) => peopleStore.isRevoked(email),
-        signInAuditStore,
-      )
-    : undefined;
+const auth: AuthService | undefined = config.auth
+  ? createAuth(config, database)
+  : undefined;
 // Each computer is pushed its network policy on the way to the action that woke it, because a
 // computer refuses every connection until one arrives (see `withPolicyPushOnWake`).
 const computerProvider = config.computer
@@ -2605,8 +2577,6 @@ const app = createApp(
   routineRunner,
   // A person's own standing instructions: the list, and a switch to stop one.
   routineStore,
-  // Where each person is in first-run onboarding, read by /api/me and written by the wizard.
-  createOnboardingStore(database),
   // The same store every run reads through `loadInstructionsForActor`, so the screen a person edits
   // and the prompt their coworker is built from can never be two different pieces of text.
   userInstructionsStore,
@@ -2724,7 +2694,7 @@ const app = createApp(
     openduet: {
       pages: openDuetPages,
       tasks: openDuetTasks,
-      // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
+      // The optional setup checklist. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,
         config,

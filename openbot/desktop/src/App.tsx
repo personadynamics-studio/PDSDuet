@@ -9,7 +9,6 @@ import {
   HarnessPicker,
 } from "./HarnessPicker";
 import { isHttpEndpointUrl } from "./http-endpoint-url";
-import { OrganizationSignIn } from "./OrganizationSignIn";
 import { asProblem, Failure, type Problem } from "./Problem";
 import {
   type HeldConfiguration,
@@ -84,10 +83,6 @@ export function App() {
   const [root, setRoot] = useState("");
   const [reuseIntelligence, setReuseIntelligence] = useState(false);
   const [apiKey, setApiKey] = useState("");
-  const [organizationAuthorityUrl, setOrganizationAuthorityUrl] = useState<
-    string | null
-  >(null);
-  const [refreshOrganization, setRefreshOrganization] = useState(false);
   /*
    * Which Bot and which model, as two separate answers.
    *
@@ -293,7 +288,6 @@ export function App() {
       setRefreshIntelligence(true);
       setStep("connect");
     }
-    if (problem.connection === "organization") setRefreshOrganization(true);
   }, []);
   const displayedFailure = failure ?? recoveryFailure;
   const credentialContext = useRef([
@@ -330,8 +324,6 @@ export function App() {
     setIntelligenceSignInKind("managed");
     savedLaunch.current = null;
     setRefreshIntelligence(false);
-    setRefreshOrganization(false);
-    setOrganizationAuthorityUrl(null);
     setApiKey("");
     setReuseIntelligence(false);
     setApiUrl(MANAGED_INTELLIGENCE_API_URL);
@@ -358,9 +350,6 @@ export function App() {
         if (values.INTELLIGENCE_GATEWAY_WS_URL)
           setWsUrl(values.INTELLIGENCE_GATEWAY_WS_URL);
         setAlreadyHeld({ ...values, saved });
-        setOrganizationAuthorityUrl(
-          values.OPENBOT_ORGANIZATION_AUTH_URL ?? null,
-        );
         return configured;
       } catch {
         if (configuredRunRef.current === run) {
@@ -470,12 +459,6 @@ export function App() {
               MANAGED_INTELLIGENCE_GATEWAY_WS_URL,
             model: resumedModel,
             harness: resumedHarness,
-            ...(configured.values.OPENBOT_ORGANIZATION_AUTH_URL
-              ? {
-                  organizationAuthUrl:
-                    configured.values.OPENBOT_ORGANIZATION_AUTH_URL,
-                }
-              : {}),
           });
           if (!active) return;
           setSteps((current) => settleProgress(current));
@@ -564,18 +547,12 @@ export function App() {
         // By id only. The image, the port and how it is dialled are facts about the harness, and
         // the window carrying them would be a second list to keep in step with the catalogue.
         harness,
-        ...(organizationAuthorityUrl !== null
-          ? { organizationAuthUrl: organizationAuthorityUrl }
-          : {}),
       });
       setSteps((current) => settleProgress(current));
       setRunning(true);
       setRecoveryFailure(null);
       // Refreshing credentials does not turn an existing installation into a first run.
-      if (
-        savedLaunch.current === installationKey ||
-        organizationAuthorityUrl?.trim()
-      ) {
+      if (savedLaunch.current === installationKey) {
         savedLaunch.current = installationKey;
         setStep("connect");
         setRefreshIntelligence(false);
@@ -701,33 +678,6 @@ export function App() {
             : "Checking your saved setup…"}
         </p>
         <SetupProgress steps={steps} />
-      </main>
-    );
-  }
-
-  if (refreshOrganization) {
-    return (
-      <main>
-        <OrganizationSignIn
-          root={root}
-          authorityUrl={organizationAuthorityUrl ?? ""}
-          onBack={() => {
-            setRefreshOrganization(false);
-            setRefreshIntelligence(true);
-            setRunning(false);
-          }}
-          onSignedIn={async () => {
-            try {
-              await invoke("show_openbot");
-              setRefreshOrganization(false);
-              setRecoveryFailure(null);
-              setRunning(true);
-            } catch (error) {
-              recoverFromStart(error);
-            }
-          }}
-        />
-        {displayedFailure && <Failure problem={displayedFailure} />}
       </main>
     );
   }
@@ -1233,27 +1183,6 @@ export function App() {
                   Finish signing in in the Intelligence browser window…
                 </p>
               )}
-            </details>
-            <details>
-              <summary>Sign in through your organization</summary>
-              <p className="footnote">
-                Enter your organization’s OpenBot address to use its sign-in and
-                access rules.
-              </p>
-              <div className="field">
-                <label htmlFor="organization-authority">
-                  Organization OpenBot URL
-                </label>
-                <input
-                  id="organization-authority"
-                  value={organizationAuthorityUrl ?? ""}
-                  onChange={(event) =>
-                    setOrganizationAuthorityUrl(event.target.value)
-                  }
-                  placeholder="https://openbot.your-company.com"
-                  spellCheck={false}
-                />
-              </div>
             </details>
           </fieldset>
         )}
