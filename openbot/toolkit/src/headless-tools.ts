@@ -57,6 +57,7 @@ export class HeadlessToolsMiddleware extends Middleware {
   constructor(
     private readonly tools: HeadlessTool[],
     private readonly initiator?: AuditInitiator,
+    private readonly rejectUnknownComputerTools = true,
   ) {
     super();
     const names = tools.map((tool) => tool.definition.name);
@@ -161,7 +162,8 @@ export class HeadlessToolsMiddleware extends Middleware {
           const owned = pending.filter(
             (call) =>
               tools.has(call.function.name) ||
-              call.function.name.startsWith("computer_"),
+              (this.rejectUnknownComputerTools &&
+                call.function.name.startsWith("computer_")),
           );
           if (owned.length === 0) {
             subscriber.next(terminal);

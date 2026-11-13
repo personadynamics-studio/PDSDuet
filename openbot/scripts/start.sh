@@ -75,20 +75,28 @@ SECRETS_ROTATED=false
 
 SUPERVISOR_TOKEN="$(setting SUPERVISOR_TOKEN openbot-dev-supervisor-token)"
 COMPUTER_TOKEN="$(setting COMPUTER_TOKEN openbot-dev-computer-token)"
-# Keep the file and Compose in agreement even when someone later starts Bun directly.
-# An empty example value used to leave the API unauthenticated after that restart.
-STORED_COMPUTER_TOKEN="$(grep -E '^COMPUTER_TOKEN=' "$ROOT/.env" | tail -1 | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/" || true)"
-if [ "$STORED_COMPUTER_TOKEN" != "$COMPUTER_TOKEN" ]; then
-  token_env="$(mktemp)"
-  grep -vE '^COMPUTER_TOKEN=' "$ROOT/.env" > "$token_env" || true
-  printf '\nCOMPUTER_TOKEN=%s\n' "$COMPUTER_TOKEN" >> "$token_env"
-  chmod 600 "$token_env"
-  mv "$token_env" "$ROOT/.env"
+if [ "$ONE_COMPUTER_EACH" = "true" ]; then
+  COMPUTER_SUPERVISOR_URL="$(setting COMPUTER_SUPERVISOR_URL "http://127.0.0.1:$SUPERVISOR_PORT")"
+else
+  COMPUTER_SUPERVISOR_URL=""
 fi
-unset STORED_COMPUTER_TOKEN
+export COMPUTER_SUPERVISOR_URL
+# Direct API and worker starts must use the same provider and credentials as Compose.
+for computer_setting in COMPUTER_TOKEN SUPERVISOR_TOKEN COMPUTER_SUPERVISOR_URL; do
+  stored_setting="$(grep -E "^$computer_setting=" "$ROOT/.env" | tail -1 | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/" || true)"
+  if [ "$stored_setting" != "${!computer_setting}" ]; then
+    token_env="$(mktemp)"
+    grep -vE "^$computer_setting=" "$ROOT/.env" > "$token_env" || true
+    printf '\n%s=%s\n' "$computer_setting" "${!computer_setting}" >> "$token_env"
+    chmod 600 "$token_env"
+    mv "$token_env" "$ROOT/.env"
+    SECRETS_ROTATED=true
+  fi
+done
+unset stored_setting computer_setting
 # File equality cannot detect a token edited before this run. Record only its digest, tied below
 # to the owned API listener's PID and start time; a direct restart cannot inherit an old stamp.
-COMPUTER_TOKEN_FINGERPRINT="$(printf '%s' "$COMPUTER_TOKEN" | openssl dgst -sha256 -r | cut -d ' ' -f1)"
+COMPUTER_TOKEN_FINGERPRINT="$(printf '%s\n' "$COMPUTER_TOKEN" "$SUPERVISOR_TOKEN" "$COMPUTER_SUPERVISOR_URL" | openssl dgst -sha256 -r | cut -d ' ' -f1)"
 COMPUTER_STATE_FILE="$LOGS/server-computer.state"
 
 # A fixed default is fine here, unlike `AGENT_TOOL_TOKEN` below, but not because of where the server
@@ -440,7 +448,7 @@ if ! identifies_as_openbot "$SERVER_PORT" server; then
   SERVER_LAUNCHED=true
   if [ "$ONE_COMPUTER_EACH" = "true" ]; then
     (cd server && PORT="$SERVER_PORT" \
-      COMPUTER_SUPERVISOR_URL="http://localhost:$SUPERVISOR_PORT" \
+      COMPUTER_SUPERVISOR_URL="$COMPUTER_SUPERVISOR_URL" \
       SUPERVISOR_TOKEN="$SUPERVISOR_TOKEN" \
       COMPUTER_TOKEN="$COMPUTER_TOKEN" \
       WORKER_SHARED_SECRET="$WORKER_SHARED_SECRET" \

@@ -1598,7 +1598,7 @@ export function createApp(
             {
               // The same rounding as `megabytes` in channels/attachments.ts, so the door and the
               // handler name one limit in one voice.
-              error: `That upload is larger than the ${(MAX_IMAGE_BYTES / (1024 * 1024)).toFixed(0)}MB limit.`,
+              error: `That upload is larger than the ${(MAX_ATTACHMENT_BYTES / (1024 * 1024)).toFixed(0)}MB limit.`,
             },
             413,
           ),

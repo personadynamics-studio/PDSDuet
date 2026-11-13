@@ -2,7 +2,7 @@
 
 **Turn an insurance proposal PDF into clear selling points and client conversation scripts, written in Hong Kong Traditional Chinese.**
 
-**One agent across phones and computers, with synced conversations and progress and access for multiple authorised users.**
+**Private bots across phones and computers, with Google sign-in, synced progress and separate personal workspaces.**
 
 PDSDuet is an independently maintained AI workstation with a focused sales-preparation workflow for insurance brokers. A broker uploads a product brochure or proposal from a phone or computer; the assistant reads the document and drafts material the broker can use when explaining the plan to a customer.
 
@@ -28,7 +28,8 @@ The output is prepared **for the broker to use with customers**. The phone provi
 - **Phone and desktop, one agent:** Open the agent's web interface on either device and continue with the same conversations and uploaded documents.
 - **Synced progress:** Conversation history and task state are managed by the backend, so devices can retrieve progress when they reconnect.
 - **Host-managed work:** The phone sends documents and requests; the host manages the agent workflow. Document-processing runs continue independently of the phone's screen or connection.
-- **Multiple authorised users:** Several people can connect from their own phones or computers to the same deployment through Tailscale. The current MVP uses a shared application identity, with access controlled through Tailscale.
+- **Multiple accounts:** People sign in with their own Google accounts through the same Tailscale-connected deployment. They share the backend and model API, while private Bots, conversations, documents, browser profiles and workspaces belong to each person. Administrators retain management access.
+- **Choose a Bot:** The menu opens the Bot roster directly. General-purpose and insurance Bots can coexist; configured templates provision private copies without copying another person's conversations, credentials or browser logins.
 
 ## PDSDuet features
 
@@ -40,7 +41,7 @@ The output is prepared **for the broker to use with customers**. The phone provi
 | Readable replies | Complete-message bubbles and explicit completion of streamed Markdown rendering. |
 | Hong Kong interface | Localised navigation, conversation controls, attachment handling, settings and administration text. |
 | Cross-device use | Phone and desktop browsers connect to the same agent, conversations and backend-managed progress. |
-| Shared access | Multiple authorised people can access the same self-hosted deployment through Tailscale. |
+| Multiple accounts and Bots | Google sign-in, administrator/user roles and private Bots on the same host, with separate browser profiles and workspaces. |
 
 ## Technical approach
 
@@ -59,7 +60,9 @@ PDF and Markdown/text uploads allow **20 MiB per file**. PDFs reach the model as
 
 經紀可以在手機或電腦上載 PDF，取得用於準備客戶面談及產品介紹的初稿。手機負責上載、傳送及顯示訊息；主機負責管理代理工作流程，再透過模型 API 處理文件。
 
-同一個 agent 可在電腦及手機之間接續使用，共用對話、文件及工作進度。處理文件的工作由主機管理，手機熄屏或斷線後，重新連接即可取回進度；多位獲授權人士亦可從各自裝置接入同一部署。目前 MVP 採共用應用身分，接入由 Tailscale 管理。
+每位使用者可透過自己的 Google 帳號登入，在電腦及手機之間接續使用私人 Bot、對話及文件。多位使用者共用同一主機、後端及模型 API，各自的私人 Bot 使用獨立瀏覽器資料及工作目錄；管理員保留管理權限。Tailscale 管理網絡接入，應用程式本身另行驗證使用者身分。
+
+選單提供機械人清單，通用助理與保險 Bot 可以並存，使用者亦可自行建立 Bot。保險 PDF 文案工作流程及原有指令保留。
 
 這個專案的重點，是將通用代理平台改造成貼近保險經紀工作場景的工具，包括原生 PDF 傳遞、跨裝置使用、多人接入、對話進度恢復、完整回覆排版及香港中文介面。
 

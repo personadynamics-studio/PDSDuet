@@ -407,6 +407,7 @@ export function createAgentProfileStore(
    * agent with a key then simply cannot be created, which is better than storing it in the clear.
    */
   vault?: { store: CredentialStore; encryptionKey: string },
+  personalBotTemplateIds: readonly string[] = [],
 ): AgentProfileStore {
   const managedConfiguration = managedAgentAgUiUrl
     ? { endpoint: managedAgentAgUiUrl.toString() }
@@ -414,6 +415,70 @@ export function createAgentProfileStore(
 
   return {
     async list(actor, hidden = false) {
+      if (personalBotTemplateIds.length > 0 && !hidden) {
+        await database.transaction(async (transaction) => {
+          await transaction.execute(
+            sql`select pg_advisory_xact_lock(hashtext(${`personal-bot:${actor.id}`}))`,
+          );
+          for (const templateId of personalBotTemplateIds) {
+            const [existing] = await transaction
+              .select({ id: agentProfiles.agentId })
+              .from(agentProfiles)
+              .innerJoin(agents, eq(agents.id, agentProfiles.agentId))
+              .where(
+                and(
+                  eq(agentProfiles.ownerUserId, actor.id),
+                  eq(agentProfiles.visibility, "private"),
+                  or(
+                    eq(agents.id, templateId),
+                    sql`${agents.configuration}->>'personalTemplateId' = ${templateId}`,
+                  ),
+                ),
+              )
+              .limit(1);
+            if (existing) continue;
+            const [template] = await transaction
+              .select({
+                name: agents.name,
+                title: agentProfiles.title,
+                roleDescription: agentProfiles.roleDescription,
+                type: agents.type,
+                configuration: agents.configuration,
+              })
+              .from(agents)
+              .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
+              .where(
+                and(eq(agents.id, templateId), isNull(agentProfiles.deletedAt)),
+              )
+              .limit(1);
+            const run =
+              template && runForDuplicate(template, managedConfiguration);
+            if (!template || !run) {
+              throw new Error(
+                "The configured personal Bot template is unavailable.",
+              );
+            }
+            const id = newAgentId();
+            await transaction.insert(agents).values({
+              id,
+              name: template.name,
+              type: run.type,
+              configuration: {
+                ...run.configuration,
+                personalTemplateId: templateId,
+              },
+            });
+            await transaction.insert(agentProfiles).values({
+              agentId: id,
+              ownerUserId: actor.id,
+              title: template.title,
+              roleDescription: template.roleDescription,
+              avatarSeed: id,
+              visibility: "private",
+            });
+          }
+        });
+      }
       const rows = await joinedProfiles(database, actor).where(
         and(
           isNull(agentProfiles.deletedAt),

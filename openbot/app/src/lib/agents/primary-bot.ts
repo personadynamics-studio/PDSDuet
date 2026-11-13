@@ -19,7 +19,7 @@ export function isTenantBot(
 /**
  * The Bot the Chat, Tasks and Activity tabs are about.
  *
- * A configured primary Bot, otherwise the tenant's own Bot (see `isTenantBot`), then the default.
+ * A configured primary Bot, otherwise the person's private Bot, then the tenant Bot and default.
  * Only the accessible roster is considered, so a missing or inaccessible setting keeps the fallback.
  */
 export function primaryBot(
@@ -28,6 +28,7 @@ export function primaryBot(
 ): AgentProfile | undefined {
   return (
     agents?.find((agent) => agent.id === preferredAgentId) ??
+    agents?.find((agent) => agent.mine && agent.visibility === "private") ??
     agents?.find((agent) => isTenantBot(agent.id)) ??
     defaultAgentProfile(agents)
   );

@@ -183,6 +183,7 @@ export function createAuth(
    * write below is guarded and its failure is logged rather than raised.
    */
   auditStore?: AuditStore,
+  onUserCreated?: (user: { id: string; email: string }) => Promise<void>,
 ) {
   const authConfig = config.auth;
   if (!authConfig) {
@@ -439,6 +440,7 @@ export function createAuth(
               user.email,
               authConfig.initialAdminEmails,
             );
+            await onUserCreated?.(user);
             if (context?.path?.startsWith("/scim")) {
               await recordProvisioned(scimDeps, user);
             }
