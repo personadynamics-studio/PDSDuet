@@ -39,6 +39,7 @@ type Page = {
  * and comes back rarely, so these wait under Manage, closed until somebody opens it.
  */
 const MANAGE_PAGES: Page[] = [
+  { label: "機械人", to: "/bots", icon: "bolt", badge: <BotsNavBadge /> },
   { label: "連接", to: "/connections", icon: "plug" },
   { label: "功能", to: "/capabilities", icon: "box" },
   { label: "例行工作", to: "/routines", icon: "repeat" },
@@ -196,16 +197,6 @@ export function MenuSheet({
             </span>
             <RowText line={EVERYTHING_LINE} name="全部對話" wrap />
           </Link>
-          <Link
-            activeProps={{ className: "bg-duet-tile" }}
-            className={ROW}
-            onClick={close}
-            to="/bots"
-          >
-            <RowIcon name="bolt" />
-            選擇機械人
-            <BotsNavBadge />
-          </Link>
           {/*
            * Only the channels scroll (parity-spec 1.1), and Archived's rows once it is open. New
            * channel and Archived stay put right under the channels however many there are, so New
@@ -310,7 +301,10 @@ export function MenuSheet({
                       >
                         以往對話
                       </p>
-                      <ul aria-label="以往對話" className="flex flex-col">
+                      <ul
+                        aria-label="以往對話"
+                        className="flex flex-col"
+                      >
                         {earlier.map((conversation) => (
                           <li key={conversation.id}>
                             <EarlierLink
@@ -349,6 +343,8 @@ export function MenuSheet({
                   size={22}
                 />
                 管理
+                {/* Closed, the group would hide the Bots badge, so the badge rides on Manage instead. */}
+                {manage.open ? null : <BotsNavBadge />}
               </button>
             </h2>
             <div className="flex flex-col" hidden={!manage.open} id={manage.id}>

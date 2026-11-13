@@ -359,9 +359,8 @@ policies apply. See [OpenAI WebRTC](https://developers.openai.com/api/docs/guide
 | `OPENBOT_APP_URL`            | Where the browser app is served. Defaults to the first `TRUSTED_ORIGINS` entry.          |
 | `SIGNIN_ALLOWED_EMAIL_DOMAINS` | Comma-separated email domains admitted at sign-in. Empty means no opinion. Exact, no wildcards. |
 | `OPENBOT_ORGANIZATION_AUTH_URL` | An OpenBot deployment that verifies employee identity and roles. Decides sign-in ahead of `OPENBOT_SINGLE_USER`. |
-| `PDSDUET_PRIVATE_BOT_TEMPLATES` | Optional comma-separated Bot IDs. Each signed-in person receives private copies, retaining instructions and using their own browser profile and workspace. Conversations, credentials, logins and files are not copied. |
 
-### PDSDuet accounts and private Bots
+### PDSDuet Google sign-in
 
 Set `OPENBOT_SINGLE_USER=false` and configure Google sign-in, `BETTER_AUTH_SECRET`,
 `BETTER_AUTH_URL` and `INITIAL_ADMIN_EMAILS`. Use the same HTTPS origin for
@@ -369,12 +368,6 @@ Set `OPENBOT_SINGLE_USER=false` and configure Google sign-in, `BETTER_AUTH_SECRE
 `<origin>/api/auth/callback/google` on the Google Web application client. Google
 sign-in requests only `openid`, `email` and `profile`; Gmail, Calendar and Drive
 connections keep their own credentials and grants.
-
-`PDSDUET_PRIVATE_BOT_TEMPLATES` can name several templates, such as `your-agent`,
-`openduet` and a deployment's insurance Bot. Private copies run through the same
-backend and model API. The Bot roster remains available for choosing and creating
-Bots. A public Bot is deliberately shared; private copies provide personal browser
-and workspace isolation. Administrators retain their existing management access.
 
 Before converting an existing single-user installation, back up PostgreSQL,
 credentials, browser profiles and workspaces. Retaining the original administrator's

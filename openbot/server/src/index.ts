@@ -143,7 +143,6 @@ import {
   channelMemberships,
   channels,
   intelligenceChannelMappings,
-  users,
 } from "./db/schema";
 import { createDeliveryRouter, DELIVERY_WORK_KINDS } from "./delivery/router";
 import {
@@ -441,9 +440,6 @@ const agentProfileStore = createAgentProfileStore(
   database,
   config.managedAgent?.endpoint,
   agentVault,
-  process.env.PDSDUET_PRIVATE_BOT_TEMPLATES?.split(",")
-    .map((id) => id.trim())
-    .filter(Boolean),
 );
 // Read here rather than beside the synchronise below, because the package names the deployment and
 // the channel store needs that name before it can mint a thread id.
@@ -562,15 +558,6 @@ const auth: AuthService | undefined = config.organizationAuthUrl
         database,
         (email) => peopleStore.isRevoked(email),
         signInAuditStore,
-        process.env.PDSDUET_PRIVATE_BOT_TEMPLATES?.trim()
-          ? async (user) => {
-              await agentProfileStore.list({ id: user.id, role: "user" });
-              await database
-                .update(users)
-                .set({ onboardingStep: 9, onboardingCompletedAt: new Date() })
-                .where(eq(users.id, user.id));
-            }
-          : undefined,
       )
     : undefined;
 // Each computer is pushed its network policy on the way to the action that woke it, because a

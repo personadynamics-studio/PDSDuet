@@ -90,13 +90,12 @@ for computer_setting in COMPUTER_TOKEN SUPERVISOR_TOKEN COMPUTER_SUPERVISOR_URL;
     printf '\n%s=%s\n' "$computer_setting" "${!computer_setting}" >> "$token_env"
     chmod 600 "$token_env"
     mv "$token_env" "$ROOT/.env"
-    SECRETS_ROTATED=true
   fi
 done
 unset stored_setting computer_setting
 # File equality cannot detect a token edited before this run. Record only its digest, tied below
 # to the owned API listener's PID and start time; a direct restart cannot inherit an old stamp.
-COMPUTER_TOKEN_FINGERPRINT="$(printf '%s\n' "$COMPUTER_TOKEN" "$SUPERVISOR_TOKEN" "$COMPUTER_SUPERVISOR_URL" | openssl dgst -sha256 -r | cut -d ' ' -f1)"
+COMPUTER_TOKEN_FINGERPRINT="$(printf '%s' "$COMPUTER_TOKEN" | openssl dgst -sha256 -r | cut -d ' ' -f1)"
 COMPUTER_STATE_FILE="$LOGS/server-computer.state"
 
 # A fixed default is fine here, unlike `AGENT_TOOL_TOKEN` below, but not because of where the server

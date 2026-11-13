@@ -30,3 +30,6 @@ credentials.local.*
 *.key
 *.p12
 *.pfx
+
+# Local reference rules copied for source review.
+/local-review-rules/

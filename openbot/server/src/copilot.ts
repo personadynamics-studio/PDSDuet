@@ -1488,8 +1488,6 @@ function remoteAgentWithStandingRole(
             execute: (args) => tool.execute(args),
           })),
           initiator,
-          // Computer calls belong to the browser or the outer headless runner.
-          false,
         ).run(prepared, next);
       }),
     );

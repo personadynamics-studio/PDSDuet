@@ -57,7 +57,6 @@ export class HeadlessToolsMiddleware extends Middleware {
   constructor(
     private readonly tools: HeadlessTool[],
     private readonly initiator?: AuditInitiator,
-    private readonly rejectUnknownComputerTools = true,
   ) {
     super();
     const names = tools.map((tool) => tool.definition.name);
@@ -159,12 +158,7 @@ export class HeadlessToolsMiddleware extends Middleware {
                 )
               : [],
           );
-          const owned = pending.filter(
-            (call) =>
-              tools.has(call.function.name) ||
-              (this.rejectUnknownComputerTools &&
-                call.function.name.startsWith("computer_")),
-          );
+          const owned = pending.filter((call) => tools.has(call.function.name));
           if (owned.length === 0) {
             subscriber.next(terminal);
             return;
@@ -180,11 +174,7 @@ export class HeadlessToolsMiddleware extends Middleware {
             let content: string;
             let error: string | undefined;
             try {
-              const tool = tools.get(call.function.name);
-              if (!tool)
-                throw new Error(
-                  `The tool ${call.function.name} is unavailable for this headless turn.`,
-                );
+              const tool = tools.get(call.function.name)!;
               const args: unknown = JSON.parse(call.function.arguments || "{}");
               const continuation = {
                 runId: request.runId,

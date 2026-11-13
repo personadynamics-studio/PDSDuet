@@ -1555,53 +1555,11 @@ export function createApp(
   }
 
   if (attachmentDatabase) {
-    /*
-     * `bodyLimit` sits in front of the upload route itself, not beside the mount below: the handler
-     * in channels/attachments.ts calls `file.arrayBuffer()` before it has looked at a single byte of
-     * size, so an unbounded body is read into memory in full before anything gets the chance to
-     * refuse it. A person (or an attacker) posting a 2GB body would have it buffered in RAM before
-     * the 413 the handler already knows how to return. `MAX_IMAGE_BYTES` is the largest thing this
-     * route could ever legitimately accept — a text upload is refused smaller, inside the handler,
-     * once the sniffed type is known — so refusing anything larger at the door costs nothing a real
-     * upload was ever going to use.
-     *
-     * The ceiling is `UPLOAD_BODY_LIMIT_BYTES` and not `MAX_ATTACHMENT_BYTES` itself because THIS GATE
-     * MEASURES A DIFFERENT THING FROM EVERY OTHER ONE. See that constant.
-     */
     const channelAttachments = new Hono<{ Variables: AppVariables }>();
     channelAttachments.use(
       "*",
       bodyLimit({
         maxSize: UPLOAD_BODY_LIMIT_BYTES,
-        /*
-         * THE REFUSAL AT THE DOOR HAS TO LOOK LIKE THE HANDLER'S OWN.
-         *
-         * hono's default `onError` answers with the plain string "Payload Too Large". The composer
-         * (app/src/components/channels/composer/attachments.ts) reads `{ error }` off every failed
-         * upload and falls back to a generic `Could not upload "<name>"` when the body will not
-         * parse as JSON — so the default body cost the person the one sentence that would have told
-         * them what went wrong, on the single refusal where the reason is both knowable and
-         * actionable. This is the same `{ error }` shape and the same number the handler's own 413
-         * names, so the two paths are indistinguishable from the outside.
-         *
-         * THE FILENAME AND THE KIND ARE BOTH DELIBERATELY ABSENT, and for the same reason: nothing
-         * has parsed the multipart body at this point, which is the entire reason this middleware
-         * runs ahead of the handler. The handler's sentences can say `'notes.txt' is larger than the
-         * 1MB limit for files` because by then it has sniffed the bytes. This one cannot, and must
-         * not guess — a 9MB text file refused here as being over "the 8MB limit for images" would
-         * send somebody off to shrink it to 7MB, whereupon the handler would refuse it a second time
-         * with a different number. So the sentence names the only thing that is true of every body
-         * this gate rejects: none of them can be under the largest ceiling the route has.
-         */
-        onError: (context) =>
-          context.json(
-            {
-              // The same rounding as `megabytes` in channels/attachments.ts, so the door and the
-              // handler name one limit in one voice.
-              error: `That upload is larger than the ${(MAX_ATTACHMENT_BYTES / (1024 * 1024)).toFixed(0)}MB limit.`,
-            },
-            413,
-          ),
       }),
     );
     channelAttachments.route(

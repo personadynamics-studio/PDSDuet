@@ -34,10 +34,6 @@ if (!serverPort.ok) {
 }
 const PORT = appPort.port;
 const SERVER = `http://127.0.0.1:${serverPort.port}`;
-const canonicalAppUrl =
-  process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() && process.env.OPENBOT_APP_URL?.trim()
-    ? new URL(process.env.OPENBOT_APP_URL.trim())
-    : undefined;
 
 /**
  * Which file answers a path, or `null` when the app's own router should.
@@ -232,16 +228,6 @@ if (import.meta.main) {
     },
     async fetch(request, server) {
       const url = new URL(request.url);
-      if (
-        canonicalAppUrl &&
-        !isApiCall(url.pathname) &&
-        url.host !== canonicalAppUrl.host
-      ) {
-        const destination = new URL(canonicalAppUrl);
-        destination.pathname = url.pathname;
-        destination.search = url.search;
-        return Response.redirect(destination, 302);
-      }
       if (url.pathname === "/api/audio/transcriptions") {
         server.timeout(request, DICTATION_HTTP_IDLE_SECONDS);
       }
