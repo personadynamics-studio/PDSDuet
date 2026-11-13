@@ -1,6 +1,5 @@
 """Langroid as a Bot, through `ag-ui-langroid`, which AG-UI maintains."""
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -11,14 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from model_providers import bot_settings
 
 from ag_ui_langroid import create_langroid_app
-from fastapi import Request
-from fastapi.responses import JSONResponse
 from langroid import ChatAgent, ChatAgentConfig
 from langroid.language_models import OpenAIGPTConfig
 
 from .frontend_tools import FrontendToolsAgent
-
-TOKEN_HEADER = "x-openbot-agent-token"
 
 
 def _model_id() -> str:
@@ -60,16 +55,6 @@ agent = ChatAgent(
 )
 
 app = create_langroid_app(FrontendToolsAgent(name="openbot", agent=agent))
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

@@ -265,7 +265,7 @@ export function ComputerView({
   const [sendingSecret, setSendingSecret] = useState(false);
   const pageVisible = usePageVisible();
   const [previewRef, previewIntersecting] = useElementVisible<HTMLElement>();
-  const driving = control?.holder === "human" && !control.transitioning;
+  const driving = control?.holder === "human";
   /** Read by the polling loop without restarting it on control changes. */
   const drivingRef = useRef(false);
   drivingRef.current = driving;
@@ -507,20 +507,12 @@ export function ComputerView({
             </button>
           </div>
         ) : null}
-        {!settled && control?.transitioning ? (
-          <p className="px-3 py-2 text-sm">
-            正在完成機械人目前的操作，然後將控制權交給你…
-          </p>
-        ) : null}
+
         {/*
           The request's own interruption reason is written for the assistant, so the person gets
           their own sentence, and is only asked to act when the assistant is actually waiting on them.
         */}
-        {!settled && control?.recoveryRequired ? (
-          <p className="px-3 py-2 text-sm">
-            你接管期間電腦已停止。請重新接管並查看網頁，再交回機械人。
-          </p>
-        ) : !settled && control?.request?.status === "interrupted" ? (
+        {!settled && control?.request?.status === "interrupted" ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">
             電腦在有人接管前已停止。如仍需你處理，機械人會再次提出要求。
           </p>
@@ -605,9 +597,7 @@ export function ComputerView({
             <span className="text-xs text-muted-foreground">
               {!control
                 ? "正在讀取控制權狀態…"
-                : control.transitioning
-                  ? "正在完成目前的操作…"
-                  : driving
+                : driving
                     ? "你已取得控制權，請開啟畫面操作及輸入。"
                     : "機械人現正控制電腦。"}
             </span>
@@ -715,11 +705,7 @@ export function ComputerView({
                   offering control of whatever the Bot has open now. Those sentences are about the
                   present and this view is a record; a record does not get a steering wheel.
                 */}
-                {control?.transitioning ? (
-                  <p className="mt-3 text-center text-sm">
-                    正在完成目前的操作，然後將控制權交給你…
-                  </p>
-                ) : null}
+
                 {settled ? null : (
                   <div className="mt-4 flex items-center justify-center gap-4">
                     <span className="flex min-w-0 items-center gap-2 text-sm">

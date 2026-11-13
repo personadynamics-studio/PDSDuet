@@ -142,7 +142,6 @@ export function ProviderPicker({
   root,
   onChoose,
   onBack,
-  returning = false,
   busy: starting = false,
 }: {
   chosen: ModelChoice | null;
@@ -156,7 +155,6 @@ export function ProviderPicker({
   root: string;
   onChoose: (choice: ModelChoice) => void;
   onBack: () => void;
-  returning?: boolean;
   busy?: boolean;
 }) {
   const initialChoice = chosen ?? recordedModel(held);
@@ -473,8 +471,8 @@ export function ProviderPicker({
 
   return (
     <div className="sheet">
-      {!returning && <p className="steps-of">Step 3 of 4</p>}
-      <h1>{returning ? "Refresh your AI connection" : "Connect your AI"}</h1>
+      <p className="steps-of">Step 3 of 4</p>
+      <h1>Connect your AI</h1>
       <p className="lede">
         Connect your provider with a supported plan or an API key.
       </p>

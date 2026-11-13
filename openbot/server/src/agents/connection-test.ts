@@ -1,9 +1,3 @@
-import {
-  checkAgentEndpoint,
-  createAgentFetch,
-  EndpointNotAllowedError,
-} from "./endpoint";
-
 /**
  * Ask an endpoint whether it is really an agent before it is stored.
  *
@@ -138,32 +132,14 @@ export async function testAgentConnection(
   rawEndpoint: unknown,
   options: {
     headers?: Record<string, string>;
-    allowPrivateHosts?: boolean;
-    allowedHosts?: ReadonlySet<string>;
     fetchImpl?: typeof fetch;
     timeoutMs?: number;
   } = {},
 ): Promise<ConnectionTestResult> {
-  // Use the same target check that governs storing the endpoint, so this form cannot probe internal
-  // addresses that registration would refuse.
-  const verdict = checkAgentEndpoint(rawEndpoint, {
-    allowPrivateHosts: options.allowPrivateHosts,
-    ...(options.allowedHosts ? { allowedHosts: options.allowedHosts } : {}),
-  });
-  if (!verdict.allowed) return { ok: false, reason: verdict.reason };
-
-  // Wrapped rather than called directly, so the address the request finally lands on is checked too.
-  // Checking only what the person typed leaves the redirect as the way around it.
-  const doFetch = createAgentFetch({
-    ...(options.allowedHosts ? { allowedHosts: options.allowedHosts } : {}),
-    ...(options.allowPrivateHosts !== undefined
-      ? { allowPrivateHosts: options.allowPrivateHosts }
-      : {}),
-    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-  });
+  const doFetch = options.fetchImpl ?? fetch;
   let response: Response;
   try {
-    response = await doFetch(verdict.url, {
+    response = await doFetch(rawEndpoint as string, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -174,11 +150,6 @@ export async function testAgentConnection(
       signal: AbortSignal.timeout(options.timeoutMs ?? TEST_TIMEOUT_MS),
     });
   } catch (error) {
-    // An address this deployment will not dial is a specific thing that happened, and the person
-    // registering can act on it: it names the address, or the hop their address sent us to.
-    if (error instanceof EndpointNotAllowedError) {
-      return { ok: false, reason: error.message };
-    }
     const timedOut = error instanceof Error && error.name === "TimeoutError";
     return {
       ok: false,

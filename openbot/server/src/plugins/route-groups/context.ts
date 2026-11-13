@@ -1,5 +1,4 @@
 import type { Hono, MiddlewareHandler } from "hono";
-import type { BotAccessCheck } from "../../agents/profile-policy";
 import type { AppVariables } from "../../auth/guards";
 import { BROKERED_PROFILE, type BrokerProvider } from "../access";
 import type { AccountModeSwitch } from "../account-mode";
@@ -383,7 +382,6 @@ export type PluginRouteContext = {
   routes: Hono<{ Variables: AppVariables }>;
   store: PluginStore;
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
-  canUseBot: BotAccessCheck;
   connect: PluginConnectOptions | undefined;
   composio: { broker: ComposioBroker; provider: BrokerProvider } | undefined;
   shared: { modes: AccountModeSwitch; use: SharedUseStore } | undefined;

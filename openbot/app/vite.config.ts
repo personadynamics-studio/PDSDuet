@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
-import { LISTEN_HOST_VARIABLE, listenHosts } from "@openbot/shared/listen-host";
+import { LISTEN_HOST_VARIABLE } from "@openbot/shared/listen-host";
 import { listenPort } from "@openbot/shared/listen-port";
 
 /*
@@ -68,24 +68,8 @@ function announceServerPort(port: number): Plugin {
  * serves the build, and without this every call it makes returns the app's own HTML.
  */
 const appPort = listenPort(process.env.APP_PORT, 3010);
-if (!appPort.ok) {
-  throw new Error(appPort.reason.replace(/^PORT /, "APP_PORT "));
-}
 const apiPort = listenPort(process.env.SERVER_PORT, 3001);
-if (!apiPort.ok) {
-  throw new Error(apiPort.reason.replace(/^PORT /, "SERVER_PORT "));
-}
-/*
- * Loopback unless OPENBOT_HOST says otherwise (shared/listen-host.ts), whatever the server's own
- * mode: this proxies `/api` to the server from this machine, so a dev server open to the network
- * hands the server to the network too, and with OPENBOT_SINGLE_USER that is its administrator.
- *
- * One address, because Vite listens on one. 127.0.0.1 for loopback, and a browser told `localhost`
- * tries it after ::1; every interface is `::`, the dual-stack socket this listened on before.
- */
-const appHosts = listenHosts(process.env[LISTEN_HOST_VARIABLE], "loopback");
-if (!appHosts.ok) throw new Error(appHosts.reason);
-const appHost = appHosts.hosts[0]?.host ?? "::";
+const appHost = process.env[LISTEN_HOST_VARIABLE];
 
 const serving = {
   // An address, never `localhost`: left to itself Vite binds whichever address this runtime
@@ -93,11 +77,11 @@ const serving = {
   // no way to know which they were given. See `appHost` above for which one and why.
   // Empty APP_PORT=/SERVER_PORT= is unset (compose / leftover .env), not NaN — same trap as Bot PORT.
   host: appHost,
-  port: appPort.port,
+  port: appPort,
   strictPort: true,
   proxy: {
     "/api": {
-      target: `http://localhost:${apiPort.port}`,
+      target: `http://localhost:${apiPort}`,
     },
   },
 };
@@ -165,10 +149,7 @@ export function selectOpenBotManualChunk(id: string): string | undefined {
   if (routePath.startsWith("_authed/settings/")) {
     return "route-settings";
   }
-  if (
-    routePath.startsWith("_authed/_app/") ||
-    routePath === "_authed/onboarding.tsx"
-  ) {
+  if (routePath.startsWith("_authed/_app/")) {
     return "route-app-secondary";
   }
   return undefined;
@@ -181,7 +162,7 @@ export const routeBuildRollupOutputOptions = {
 
 export default defineConfig({
   plugins: [
-    announceServerPort(apiPort.port),
+    announceServerPort(apiPort),
     tanstackRouter({
       autoCodeSplitting: true,
       codeSplittingOptions: routeCodeSplittingOptions,

@@ -32,12 +32,6 @@ import {
   type PolicyDecision,
   setPolicyOverlay,
 } from "../computer/policy";
-import {
-  type EgressPolicy,
-  effectiveNetworkPolicy,
-  egressDecision,
-  pushEgressPolicies,
-} from "../computer/policy-network";
 import type { ComputerProvider } from "../computer/provider";
 import type { Database } from "../db/client";
 import { agentProfiles, agents, auditEvents } from "../db/schema";
@@ -56,9 +50,7 @@ import {
   ENTERPRISE_TOPIC,
   type EnterpriseSettings,
   type EnterpriseStore,
-  type NetworkPolicyRow,
 } from "./settings-store";
-import type { WebBotAuth } from "../web-bot-auth";
 
 /** Action Recording keeps 90 days, as Grok Bot's does. */
 export const ACTION_RECORD_RETENTION_DAYS = 90;
@@ -68,7 +60,6 @@ type Snapshot = {
   admins: Set<string>;
   groupsByUser: Map<string, string[]>;
   settings: EnterpriseSettings;
-  network: NetworkPolicyRow[];
   loadedAt: Date;
 };
 
@@ -77,9 +68,6 @@ export type EnterpriseDeps = {
   databaseUrl: string;
   auditStore: AuditStore;
   provider?: ComputerProvider;
-  computerToken?: string;
-  /** Pushed to every computer with its policy; see `computer/policy-network.ts`. */
-  webBotAuth?: WebBotAuth;
   /** `provider/model` the built-in Bot runs on, for the model allowlist and usage view. */
   builtInModel?: string;
   /** Offboarding: ends sessions and deny-lists, and retires what a person granted. */
@@ -108,8 +96,6 @@ export type EnterpriseControls = {
     failed: { botId: string; reason: string }[];
   }>;
   terminateInactiveComputers: () => Promise<{ stopped: string[] } | null>;
-  pushNetworkPolicies: () => Promise<void>;
-  policyForBot: (botId: string) => Promise<EgressPolicy>;
   offboard: (userId: string, by: string) => Promise<void>;
   stop: () => Promise<void>;
 };
@@ -186,36 +172,7 @@ export function decideFromSnapshot(
     }
   }
 
-  /*
-   * A navigation is checked against the network policy here as well as on the computer, so the
-   * refusal is a sentence in the conversation rather than a browser error page. Only where it can be
-   * decided without DNS: an IP-range rule needs the resolved address, which the computer's filter has
-   * and this server does not.
-   */
-  if (context.intent === "navigate" && context.page.host) {
-    const policy = effectiveNetworkPolicy(snapshot.network, member, true);
-    const hasRanges = policy.rules.some((rule) => rule.type === "cidr");
-    if (!hasRanges || /^[\d.:[\]]+$/.test(context.page.host)) {
-      const port = portOf(context.page.url);
-      const decision = egressDecision(policy, context.page.host, port);
-      if (!decision.allowed) {
-        return refusal(
-          `network:${policy.from}`,
-          `${decision.reason} An admin can add it.`,
-        );
-      }
-    }
-  }
   return null;
-}
-
-function portOf(url: string): number {
-  try {
-    const parsed = new URL(url);
-    return Number(parsed.port || (parsed.protocol === "http:" ? 80 : 443));
-  } catch {
-    return 443;
-  }
 }
 
 async function loadSnapshot(store: EnterpriseStore): Promise<Snapshot> {
@@ -227,13 +184,9 @@ async function loadSnapshot(store: EnterpriseStore): Promise<Snapshot> {
   const rows = await store.capabilityRows();
   const admins = await store.adminIds();
   const settings = await store.settings();
-  const network = await store.networkPolicies();
   const groups = [
     ...new Set([
       ...rows
-        .filter((row) => row.scopeKind === "group")
-        .map((row) => row.scopeId),
-      ...network
         .filter((row) => row.scopeKind === "group")
         .map((row) => row.scopeId),
     ]),
@@ -244,7 +197,6 @@ async function loadSnapshot(store: EnterpriseStore): Promise<Snapshot> {
     admins,
     groupsByUser,
     settings,
-    network,
     loadedAt: new Date(),
   };
 }
@@ -351,64 +303,6 @@ export async function installEnterpriseControls(
         }),
       ),
     );
-
-  const policyForBot = async (botId: string): Promise<EgressPolicy> => {
-    const current = snapshot;
-    if (!current) return { mode: "deny_all", rules: [] };
-    const [profile] = await deps.database
-      .select({ owner: agentProfiles.ownerUserId })
-      .from(agentProfiles)
-      .where(eq(agentProfiles.agentId, botId))
-      .limit(1);
-    const member: Member = profile?.owner
-      ? await store.member(profile.owner)
-      : { role: "user", groups: [] };
-    const cloudNetwork = resolveCapability(
-      current.rows,
-      member,
-      "cloudNetwork",
-    ).allowed;
-    const { from: _from, ...policy } = effectiveNetworkPolicy(
-      current.network,
-      member,
-      cloudNetwork,
-    );
-    return policy;
-  };
-
-  let pushing: Promise<void> | undefined;
-  const pushNetworkPolicies = async () => {
-    if (!deps.provider) return;
-    if (pushing) return pushing;
-    pushing = (async () => {
-      try {
-        const report = await pushEgressPolicies({
-          provider: deps.provider as ComputerProvider,
-          token: deps.computerToken,
-          policyForBot,
-          ...(deps.webBotAuth ? { webBotAuth: deps.webBotAuth } : {}),
-        });
-        if (report.failed.length > 0) {
-          console.warn(
-            JSON.stringify({
-              type: "egress-policy-push-incomplete",
-              ...report,
-            }),
-          );
-        }
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            type: "egress-policy-push-failed",
-            error: String(error),
-          }),
-        );
-      } finally {
-        pushing = undefined;
-      }
-    })();
-    return pushing;
-  };
 
   const ownedBots = async (userId: string) =>
     (
@@ -557,7 +451,7 @@ export async function installEnterpriseControls(
   // Every server hears a change, including the one that made it.
   const connection = postgres(deps.databaseUrl, { max: 1 });
   const onChange = () => {
-    void refresh().then(() => pushNetworkPolicies());
+    void refresh();
   };
   await connection
     .listen(ENTERPRISE_TOPIC, onChange, onChange)
@@ -573,7 +467,6 @@ export async function installEnterpriseControls(
 
   const timers = [
     setInterval(() => void refresh(), 60_000),
-    setInterval(() => void pushNetworkPolicies(), 30_000),
     setInterval(() => {
       void terminateInactiveComputers().catch((error) =>
         console.error(
@@ -600,7 +493,6 @@ export async function installEnterpriseControls(
     }, 60 * 60_000),
   ];
   for (const timer of timers) timer.unref?.();
-  void pushNetworkPolicies();
 
   installed = {
     store,
@@ -621,8 +513,6 @@ export async function installEnterpriseControls(
       ),
     terminateMemberComputers,
     terminateInactiveComputers,
-    pushNetworkPolicies,
-    policyForBot,
     offboard,
     stop: async () => {
       for (const timer of timers) clearInterval(timer);

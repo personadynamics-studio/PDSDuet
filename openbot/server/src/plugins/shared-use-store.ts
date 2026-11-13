@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { AuditInitiator } from "../audit";
 import { type AuditStore, recordAuditEvent } from "../audit";
-import { createRoleRepository } from "../auth/guards";
-import type { OpenBotRole } from "../auth/roles";
 import type { Database } from "../db/client";
 import {
   agentProfiles,
@@ -19,6 +17,7 @@ import {
   teamBotAudience,
   teamBotPublications,
   users,
+  userRoles,
 } from "../db/schema";
 import { BROKERED_PROFILE, type BrokerProvider, toolkitOfFor } from "./access";
 import {
@@ -97,7 +96,6 @@ export function createSharedUseStore(
   database: Database,
   provider: BrokerProvider,
 ) {
-  const roles = createRoleRepository(database);
   const scheme = schemeOf(provider);
   const appOfUrl = (url: string) => toolkitOfFor(provider, url);
   const canonicalUrlOf = (toolkit: string) => `${scheme}${toolkit}`;
@@ -380,12 +378,14 @@ export function createSharedUseStore(
       .from(users)
       .where(eq(users.id, actorId))
       .limit(1);
-    const held = await roles
-      .rolesForUser(actorId)
-      .catch((): OpenBotRole[] => []);
+    const held = await database
+      .select({ role: userRoles.role })
+      .from(userRoles)
+      .where(eq(userRoles.userId, actorId))
+      .catch(() => []);
     return {
       actorId,
-      isAdmin: held.includes("admin"),
+      isAdmin: held.some((record) => record.role === "admin"),
       groups: row?.groups ?? [],
     };
   }

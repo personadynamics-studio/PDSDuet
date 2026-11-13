@@ -1,6 +1,4 @@
-import type { HandoffRequest } from "@openbot/shared/computer-control";
 import type { NavigateResult } from "./schema";
-import { checkNavigationTarget } from "./target";
 
 /** The computer did not accept or answer a request. */
 export class ComputerUnavailableError extends Error {
@@ -34,13 +32,6 @@ export class ElementNotFoundError extends Error {
   }
 }
 
-/** The navigation target is not permitted. */
-export class NavigationRefusedError extends Error {
-  constructor(reason: string) {
-    super(reason);
-    this.name = "NavigationRefusedError";
-  }
-}
 
 /** The computer refused access to a path outside its workspace. */
 export class WorkspaceRefusedError extends Error {
@@ -80,35 +71,6 @@ export type ComputerDownload = {
   bytes: number;
 };
 
-/** The page changed after the caller received its element references. */
-export class StaleSnapshotError extends Error {
-  constructor(
-    reason: string,
-    readonly snapshotRequired = false,
-  ) {
-    super(reason);
-    this.name = "StaleSnapshotError";
-  }
-}
-
-/**
- * A person has the wheel, so the Bot's action was not carried out.
- *
- * Its own condition rather than a stale snapshot, though both arrive as 409, because what the caller
- * should do next is the opposite in each case. Stale refs mean take a fresh snapshot and go again;
- * this means stop and leave the browser to the person holding it. Told apart by the flag the computer
- * puts on the body, which is the only thing in the response that distinguishes them.
- */
-export class HumanHasControlError extends Error {
-  constructor(
-    reason: string,
-    readonly requestId?: string,
-    readonly handoff?: HandoffRequest,
-  ) {
-    super(reason);
-    this.name = "HumanHasControlError";
-  }
-}
 
 /** Invalid, unknown, or superseded handoff identity is distinct from page freshness. */
 export class HandoffRequestError extends Error {
@@ -128,8 +90,6 @@ export class HandoffRequestError extends Error {
  * use this interface directly.
  */
 export type ComputerTransportOptions = {
-  token?: string;
-  allowPrivateHosts?: boolean;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
@@ -210,9 +170,6 @@ export function createComputerTransport(
         headers: {
           ...(init?.headers as Record<string, string> | undefined),
           "x-openbot-bot-id": botId,
-          ...(options.token
-            ? { "x-openbot-computer-token": options.token }
-            : {}),
         },
         signal: caller
           ? AbortSignal.any([caller, AbortSignal.timeout(timeoutMs)])
@@ -332,14 +289,8 @@ export function createComputerTransport(
     url: string,
     toolCallId?: string,
   ): Promise<NavigateResult> {
-    const verdict = checkNavigationTarget(url, {
-      allowPrivateHosts: options.allowPrivateHosts,
-    });
-    if (!verdict.allowed) {
-      throw new NavigationRefusedError(verdict.reason);
-    }
     return post<NavigateResult>(baseUrl, botId, "/navigate", {
-      url: verdict.url,
+      url,
       ...(toolCallId ? { toolCallId } : {}),
     });
   }
@@ -359,19 +310,6 @@ function throwMappedError(
     (status === 400 || status === 404 || status === 409)
   )
     throw new HandoffRequestError(detail, status);
-  if (status === 409) {
-    // The computer says which kind of 409 this is. Absent, it is the ordinary one.
-    if (body?.humanHasControl === true) {
-      throw new HumanHasControlError(
-        detail,
-        typeof body.requestId === "string" ? body.requestId : undefined,
-        body.handoff && typeof body.handoff === "object"
-          ? (body.handoff as HandoffRequest)
-          : undefined,
-      );
-    }
-    throw new StaleSnapshotError(detail, body?.snapshotRequired === true);
-  }
   if (status === 403) {
     throw new WorkspaceRefusedError(detail);
   }

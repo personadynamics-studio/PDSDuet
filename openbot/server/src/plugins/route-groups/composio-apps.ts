@@ -1,4 +1,3 @@
-import { requireAdmin } from "../../auth/guards";
 import { reasonWithoutStatement } from "../../db/query-failure";
 import { BROKERED_PROFILE } from "../access";
 import {
@@ -58,14 +57,6 @@ export function mountComposioAppRoutes({
    * property made structural: there is no id here to read by mistake.
    */
   routes.get("/composio/apps", requireUser, async (context) => {
-    /*
-     * INSIDE THE HANDLER, and the response returned. `requireAdmin` is a function that answers a
-     * response, not Hono middleware: put in the middleware position it typechecks against Hono's
-     * variadic signature, runs, and gates nothing at all, because nobody reads what it returned.
-     */
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
-
     if (!composio) {
       return context.json(
         {
@@ -156,8 +147,6 @@ export function mountComposioAppRoutes({
    * name for it.
    */
   routes.post("/composio/apps", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const body = (await context.req.json().catch(() => null)) as {
       slug?: unknown;

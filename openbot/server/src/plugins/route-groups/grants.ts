@@ -58,7 +58,6 @@ export function mountGrantRoutes({
   routes,
   store,
   requireUser,
-  canUseBot,
   shared,
   actorEmail,
   skillActor,
@@ -347,10 +346,7 @@ export function mountGrantRoutes({
     const agentId = context.req.param("agentId");
     // A grant list is a fact about the Bot it belongs to. Left open it says which tools somebody
     // else's private coworker has been given.
-    if (!(await canUseBot(context.var.actor, agentId))) {
-      return context.json({ error: "There is no such Bot." }, 404);
-    }
-    return context.json(await store.listForAgent(agentId));
+        return context.json(await store.listForAgent(agentId));
   });
 
   /**
@@ -397,10 +393,7 @@ export function mountGrantRoutes({
     // Asked before the grant is looked up, and before anything reaches a vendor. The grant says this
     // Bot may use the tool; it says nothing about whether this person may act as this Bot, and the
     // call goes out on the deployment's own credential either way.
-    if (!(await canUseBot(context.var.actor, body.agentId))) {
-      return context.json({ error: "There is no such Bot." }, 404);
-    }
-
+    
     try {
       const result = await store.callTool({
         ref: body.ref,

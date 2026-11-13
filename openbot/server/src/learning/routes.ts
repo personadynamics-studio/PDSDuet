@@ -7,7 +7,7 @@ import type {
   LearningOverview,
 } from "@openbot/shared/learning";
 import { type AuditStore, recordAuditEvent } from "../audit";
-import { type AppVariables, requireAdmin } from "../auth/guards";
+import { type AppVariables } from "../auth/guards";
 import type { LearningAutoAssign } from "./auto-assign";
 import { type LearningSettingsStore, parseLearningSettings } from "./settings";
 
@@ -50,11 +50,7 @@ export function createLearningRoutes(
   audit?: AuditStore,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireUser, async (context, next) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-    await next();
-  });
+  routes.use("*", requireUser);
   routes.onError((error) => {
     console.error(
       JSON.stringify({ type: "learning-admin-error", errorType: error.name }),

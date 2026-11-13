@@ -272,7 +272,7 @@ export function LiveScreen({
       },
       verifyOwnership: async () => {
         const state = await readControl(computerId);
-        return state?.holder === "human" && !state.transitioning;
+        return state?.holder === "human";
       },
       onReady: (ready) => {
         inputReady.current = ready;
@@ -312,7 +312,7 @@ export function LiveScreen({
     void readControl(computerId)
       .then((state) => {
         if (!live || socketRef.current?.readyState !== WebSocket.OPEN) return;
-        inputReady.current = state?.holder === "human" && !state.transitioning;
+        inputReady.current = state?.holder === "human";
         setConnected(inputReady.current);
       })
       .catch(() => {

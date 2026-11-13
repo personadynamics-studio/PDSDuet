@@ -4,7 +4,6 @@ AG-UI is built into Pydantic AI itself, as the `ag-ui` extra on `pydantic-ai-sli
 carries its own ASGI app and there is nothing to bridge.
 """
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -15,11 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from model_providers import bot_settings
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-TOKEN_HEADER = "x-openbot-agent-token"
 
 
 def _model_id() -> str:
@@ -57,16 +53,6 @@ def _drop_blank_base_urls() -> None:
 _drop_blank_base_urls()
 agent = Agent(_model_id())
 app = FastAPI()
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

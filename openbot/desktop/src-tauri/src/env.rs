@@ -121,87 +121,11 @@ impl Ports {
         settings
     }
 
-    /// A connect probe misses Windows excluded ports: only a bind proves a port is usable.
-    /// Hold the probes until every port is chosen so allocations cannot collide with each other.
-    /// Existing containers from this exact Compose project are reusable, never foreign listeners.
-    pub fn available(
-        self,
-        ours: &std::collections::HashSet<u16>,
-        harness: Option<u16>,
-    ) -> std::io::Result<Self> {
-        let mut held = Vec::new();
-        let mut chosen = std::collections::HashSet::new();
-        let mut choose = |preferred, container: bool| -> std::io::Result<u16> {
-            if !chosen.contains(&preferred) {
-                if container && ours.contains(&preferred) {
-                    chosen.insert(preferred);
-                    return Ok(preferred);
-                }
-                if let Ok(listeners) = bind_loopbacks(preferred) {
-                    held.extend(listeners);
-                    chosen.insert(preferred);
-                    return Ok(preferred);
-                }
-            }
-            let mut last = None;
-            for _ in 0..32 {
-                match bind_loopbacks(0) {
-                    Ok(listeners) => {
-                        let port = listeners[0].local_addr()?.port();
-                        if chosen.insert(port) {
-                            held.extend(listeners);
-                            return Ok(port);
-                        }
-                    }
-                    Err(error) => last = Some(error),
-                }
-            }
-            Err(last.unwrap_or_else(|| {
-                std::io::Error::other("could not allocate distinct local ports")
-            }))
-        };
-        Ok(Self {
-            app: choose(self.app, false)?,
-            server: choose(self.server, false)?,
-            postgres: choose(self.postgres, true)?,
-            computer: choose(self.computer, true)?,
-            bot: choose(self.bot, true)?,
-            langgraph: choose(self.langgraph, true)?,
-            supervisor: choose(self.supervisor, true)?,
-            harness: harness
-                .map(|default| choose(self.harness.unwrap_or(default), true))
-                .transpose()?,
-        })
-    }
+
 }
 
 fn parse_port(key: &str, value: &str) -> std::io::Result<u16> {
-    value
-        .parse::<u16>()
-        .ok()
-        .filter(|port| *port != 0)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{key} must be a port from 1 to 65535"),
-            )
-        })
-}
-
-fn bind_loopbacks(port: u16) -> std::io::Result<Vec<std::net::TcpListener>> {
-    let ipv4 = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))?;
-    let port = ipv4.local_addr()?.port();
-    let mut held = vec![ipv4];
-    match std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)) {
-        Ok(ipv6) => held.push(ipv6),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
-            ) => {}
-        Err(error) => return Err(error),
-    }
-    Ok(held)
+    value.parse().map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{key}: {error}")))
 }
 
 #[cfg(test)]
@@ -551,10 +475,6 @@ pub fn compose(
      * changed key leaves stored configuration unreadable and sign-in broken until it is registered
      * again. A new one on every Start quietly orphaned everything the last run had encrypted.
      *
-     * The rest are kept for a smaller reason that points the same way: a Bot's computer is a
-     * container that outlives a restart and was created holding the old `COMPUTER_TOKEN`, so
-     * rotating buys nothing and can only strand it.
-     *
      * Two installs still do not share a key. A machine with nothing stored generates, which is what
      * a first run is.
      */
@@ -575,19 +495,6 @@ pub fn compose(
         format!(
             "postgres://openbot:openbot@127.0.0.1:{}/openbot",
             ports.postgres
-        ),
-    );
-    // Every address the app is actually reachable at, because it is reachable at more than one.
-    //
-    // The app's dev server binds `[::1]` and not `127.0.0.1`, so a browser sent to one of those
-    // arrives with an origin the other would not match, and the deployment refuses a request it
-    // should have accepted. Naming all three costs nothing: they are the same machine, and the
-    // question this setting answers is which origins are this deployment's own.
-    env.insert(
-        "TRUSTED_ORIGINS".into(),
-        format!(
-            "http://localhost:{app},http://127.0.0.1:{app},http://[::1]:{app}",
-            app = ports.app
         ),
     );
     env.insert(
@@ -706,29 +613,12 @@ pub fn compose(
         ),
     );
 
-    // The whole deployment is on this machine, so the server must be allowed to talk to it.
-    //
-    // The private-address floor stops a hosted deployment reaching into its own network, which is
-    // right there and wrong here: the supervisor, the computers and the Bots are all on loopback by
-    // design. Without this the server refuses to call its own supervisor and the failure arrives as
-    // an Unauthorized wrapped in a 500, which names neither the address nor the rule.
-    env.insert("AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS".into(), "true".into());
-
     // Which package the deployment runs. Without it the server falls back rather than using the one
     // that came with the deployment, and the Bots somebody was given are not the Bots they get.
     env.insert("TENANT_PACKAGE_DIR".into(), "../examples/fintech".into());
 
-    // The one person, named. `OPENBOT_SINGLE_USER` says there is nobody else; this says who that
-    // somebody is, so the routes that ask what an actor may do have an actor to answer about.
+    // The default actor of this desktop installation.
     env.insert("INITIAL_ADMIN_EMAILS".into(), "dev@openbot.local".into());
-
-    // One machine, one person, no sign-in.
-    //
-    // The server refuses to start with no identity provider rather than serve a deployment where
-    // every visitor is an administrator, which is the right refusal on a server and the wrong
-    // question on a laptop: there is nobody else here. Saying so explicitly is how that refusal is
-    // answered, and it is the same switch `ci.yml` uses for the same reason.
-    env.insert("OPENBOT_SINGLE_USER".into(), "true".into());
 
     // Pull the published images rather than build them. A desktop install has no toolchain and no
     // reason to compile Chromium.
@@ -881,12 +771,9 @@ pub const NO_KEY_NEEDED: &str = "no-key-needed";
 const BANNER: &str = "# Written by OpenBot Desktop. Anything else in this file is left alone.";
 
 /// The secrets this deployment mints for itself, once.
-pub const MINTED: [&str; 6] = [
+pub const MINTED: [&str; 3] = [
     "AGENT_TOOL_TOKEN",
-    "COMPUTER_TOKEN",
     "KEY_ENCRYPTION_KEY",
-    "MANAGED_AGENT_TOKEN",
-    "SUPERVISOR_TOKEN",
     "WORKER_SHARED_SECRET",
 ];
 

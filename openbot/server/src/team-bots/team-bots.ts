@@ -14,7 +14,7 @@
  * only with their consent: Allow once, Always allow for this Bot, or Skip. Everything else about the
  * call (grant, policy, approvals, audit) is still decided as the teammate who is asking.
  */
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { capabilityRefusal } from "../admin/capabilities";
 import { enterpriseControls } from "../admin/controls";
 import type { AgentActor } from "../agents/profile-types";
@@ -124,8 +124,8 @@ export function createTeamBots(options: {
     return row ?? null;
   }
 
-  /** The Bot as its owner, for owner-only acts; administrators may unpublish and assign. */
-  async function owned(actor: AgentActor, botId: string, allowAdmin: boolean) {
+  /** Read the Bot used by publish and unpublish. */
+  async function owned(botId: string) {
     const [row] = await database
       .select({
         id: agents.id,
@@ -138,8 +138,6 @@ export function createTeamBots(options: {
       .where(and(eq(agents.id, botId), isNull(agentProfiles.deletedAt)))
       .limit(1);
     if (!row) throw new TeamBotNotFoundError();
-    if (row.ownerUserId !== actor.id && !(allowAdmin && actor.role === "admin"))
-      throw new TeamBotNotFoundError();
     return row;
   }
 
@@ -299,7 +297,7 @@ export function createTeamBots(options: {
         if (!allowed)
           throw new TeamBotForbiddenError(capabilityRefusal("teamBots"));
       }
-      const bot = await owned(actor, botId, false);
+      const bot = await owned(botId);
       // A teammate cannot tell an undescribed Bot from any other, so it is not published.
       if (
         !bot.roleDescription.trim() ||
@@ -367,15 +365,13 @@ export function createTeamBots(options: {
 
     /** Teammates lose access until it is published again. Assignments wait, inert. */
     async unpublish(actor: AgentActor, botId: string) {
-      await owned(actor, botId, true);
+      await owned(botId);
       await database
         .delete(teamBotPublications)
         .where(eq(teamBotPublications.agentId, botId));
     },
 
     async assign(actor: AgentActor, botId: string, groupName: string) {
-      if (actor.role !== "admin")
-        throw new TeamBotRefusedError("Only an admin can assign Team Bots.");
       if (!(await publication(botId)))
         throw new TeamBotRefusedError("Publish this Bot before assigning it.");
       const group = groupName.trim();
@@ -387,8 +383,6 @@ export function createTeamBots(options: {
     },
 
     async unassign(actor: AgentActor, botId: string, groupName: string) {
-      if (actor.role !== "admin")
-        throw new TeamBotRefusedError("Only an admin can assign Team Bots.");
       await database
         .delete(teamBotAssignments)
         .where(
@@ -437,17 +431,7 @@ export function createTeamBots(options: {
         .from(teamBotPublications)
         .innerJoin(agents, eq(agents.id, teamBotPublications.agentId))
         .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-        .where(
-          and(
-            isNull(agentProfiles.deletedAt),
-            actor.role === "admin"
-              ? undefined
-              : or(
-                  eq(agentProfiles.ownerUserId, actor.id),
-                  teamBotAccess(actor.id, teamBotPublications.agentId),
-                ),
-          ),
-        )
+        .where(isNull(agentProfiles.deletedAt))
         .orderBy(agents.name);
       const ids = rows.map((row) => row.id);
       const [audience, assignments] = ids.length
@@ -475,7 +459,6 @@ export function createTeamBots(options: {
           ])
         : [[], []];
       return rows.map((row) => {
-        const manages = row.ownerUserId === actor.id || actor.role === "admin";
         return {
           id: row.id,
           name: row.name,
@@ -487,20 +470,15 @@ export function createTeamBots(options: {
           assigned: Boolean(row.assigned),
           /** False while its name or description would leave teammates unable to tell it apart. */
           visibleToTeam: Boolean(row.described),
-          // Who it reaches is the owner's and administrators' business, not every teammate's.
-          ...(manages
-            ? {
-                people: audience
-                  .filter((a) => a.agentId === row.id && a.kind === "user")
-                  .map((a) => a.email ?? a.value),
-                groups: audience
-                  .filter((a) => a.agentId === row.id && a.kind === "group")
-                  .map((a) => a.value),
-                assignments: assignments
-                  .filter((a) => a.agentId === row.id)
-                  .map((a) => a.groupName),
-              }
-            : {}),
+          people: audience
+            .filter((a) => a.agentId === row.id && a.kind === "user")
+            .map((a) => a.email ?? a.value),
+          groups: audience
+            .filter((a) => a.agentId === row.id && a.kind === "group")
+            .map((a) => a.value),
+          assignments: assignments
+            .filter((a) => a.agentId === row.id)
+            .map((a) => a.groupName),
         };
       });
     },
@@ -521,7 +499,6 @@ export function createTeamBots(options: {
         )
         .where(
           and(
-            eq(agentProfiles.ownerUserId, actor.id),
             isNull(agentProfiles.deletedAt),
             isNull(teamBotPublications.agentId),
           ),

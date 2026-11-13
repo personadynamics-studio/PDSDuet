@@ -1,5 +1,4 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AppVariables } from "../auth/guards";
 import { BROKERED_PROFILE, type BrokerProvider, toolkitOfFor } from "./access";
 import type { AccountModeSwitch } from "./account-mode";
@@ -44,11 +43,6 @@ export { AUTHORIZATION_REFUSALS } from "./route-groups/context";
 export function createPluginRoutes(
   store: PluginStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
-  /**
-   * Whether the caller may act as the Bot they named. Required rather than optional, so a deployment
-   * cannot end up calling somebody else's tools by leaving an argument off.
-   */
-  canUseBot: BotAccessCheck,
   /**
    * What the connect flow needs that the store does not hold: the key its state is sealed with, the
    * address a vendor sends people back to, and who still has access when they come back.
@@ -196,7 +190,6 @@ export function createPluginRoutes(
     routes,
     store,
     requireUser,
-    canUseBot,
     connect,
     composio,
     shared,

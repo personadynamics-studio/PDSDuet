@@ -152,7 +152,6 @@ pub fn observe_engine<R: tauri::Runtime>(app: &tauri::AppHandle<R>, status: &eng
         app,
         telemetry::EventData::EngineDetected {
             engine: kind,
-            responding: status.responding,
         },
     );
 }

@@ -8,7 +8,6 @@ import {
 import {
   type ActionActor,
   type ComputerGateway,
-  HumanHasControlError,
 } from "./gateway";
 import type { ControlState } from "./schema";
 
@@ -41,7 +40,6 @@ export function createHeadlessComputerTools(options: {
   signIn?: HeadlessSignInRequester;
 }): HeadlessTool[] {
   const { gateway, botId, actor, auditStore, signIn } = options;
-  const snapshotId = z.number().int().positive();
   const ref = z.string().min(1);
   const text = z.string().min(1);
   const noArgs = z.strictObject({});
@@ -60,19 +58,7 @@ export function createHeadlessComputerTools(options: {
         const input = schema.parse(args);
         if (context.signal.aborted)
           throw new Error("The computer action was stopped.");
-        try {
-          return await execute(input, context);
-        } catch (error) {
-          if (error instanceof HumanHasControlError) {
-            throw new HeadlessToolSuspension(error.message, {
-              kind: "computer_handoff",
-              botId,
-              ...(error.requestId ? { requestId: error.requestId } : {}),
-              ...(error.handoff ? { handoff: error.handoff } : {}),
-            });
-          }
-          throw error;
-        }
+        return execute(input, context);
       },
     };
   }
@@ -95,7 +81,7 @@ export function createHeadlessComputerTools(options: {
       "Open a web page and return its title and readable text. Use the returned content to answer.",
       z.strictObject({ url: text }),
       async ({ url }, { toolCallId }) => {
-        const result = await gateway.navigate(botId, actor, url, toolCallId);
+        const result = await gateway.navigate(botId, url, toolCallId);
         if (result.challenge)
           throw new HeadlessToolSuspension(result.challenge.reason, {
             kind: "computer_handoff",
@@ -114,7 +100,7 @@ export function createHeadlessComputerTools(options: {
     ),
     tool(
       "computer_snapshot",
-      "List fields, buttons and links with refs. Call before clicking or typing and pass the returned snapshotId with every ref. If refs are stale take a fresh snapshot.",
+      "List fields, buttons and links with refs. Call before clicking or typing to read the current element refs.",
       noArgs,
       async () => ({ ok: true, ...(await gateway.snapshot(botId)) }),
     ),
@@ -126,42 +112,37 @@ export function createHeadlessComputerTools(options: {
     ),
     tool(
       "computer_click",
-      "Click an element using its ref and snapshotId from the latest snapshot.",
-      z.strictObject({ ref, snapshotId }),
+      "Click an element using its ref from the current page.",
+      z.strictObject({ ref }),
       async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.click(botId, actor, input, signal)),
+        ...(await gateway.click(botId, input, signal)),
       }),
     ),
     tool(
       "computer_type",
-      "Replace a field's contents using its ref and snapshotId. Set submit to press Enter afterwards.",
+      "Replace a field's contents using its ref. Set submit to press Enter afterwards.",
       z.strictObject({
         ref,
-        snapshotId,
         text: z.string(),
         submit: z.boolean().optional(),
       }),
       async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.type(botId, actor, input, signal)),
+        ...(await gateway.type(botId, input, signal)),
       }),
     ),
     tool(
       "computer_key",
-      "Press Enter, Tab, Escape or another key on the page. When a ref is given pass its snapshotId.",
+      "Press Enter, Tab, Escape or another key on the page.",
       z
         .strictObject({
           key: text,
           ref: ref.optional(),
-          snapshotId: snapshotId.optional(),
-        })
-        .refine((input) => !input.ref || input.snapshotId !== undefined, {
-          message: "A snapshotId is required when a ref is given.",
         }),
       async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.key(botId, actor, input, signal)),
+        ...(await gateway.key(botId, input, signal)),
       }),
     ),
     tool(
@@ -170,7 +151,7 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ deltaY: z.number().optional() }),
       async (input) => ({
         ok: true,
-        ...(await gateway.scroll(botId, actor, input)),
+        ...(await gateway.scroll(botId, input)),
       }),
     ),
     tool(
@@ -179,7 +160,7 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ path: z.string().optional() }),
       async (input) => ({
         ok: true,
-        ...(await gateway.listFiles(botId, actor, input)),
+        ...(await gateway.listFiles(botId, input)),
       }),
     ),
     tool(
@@ -188,7 +169,7 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ path: text }),
       async (input) => ({
         ok: true,
-        ...(await gateway.readFile(botId, actor, input)),
+        ...(await gateway.readFile(botId, input)),
       }),
     ),
     tool(
@@ -201,7 +182,7 @@ export function createHeadlessComputerTools(options: {
       }),
       async (input) => ({
         ok: true,
-        ...(await gateway.writeFile(botId, actor, input)),
+        ...(await gateway.writeFile(botId, input)),
       }),
     ),
     tool(
@@ -210,7 +191,7 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ command: text }),
       async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.runCommand(botId, actor, input, signal)),
+        ...(await gateway.runCommand(botId, input, signal)),
       }),
     ),
     tool(
@@ -219,17 +200,17 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ reason: text }),
       async ({ reason }, { toolCallId }) =>
         waiting(
-          await gateway.requestHelp(botId, actor, reason, toolCallId),
+          await gateway.requestHelp(botId, reason, toolCallId),
           reason,
         ),
     ),
     tool(
       "computer_request_secret",
       "Ask the person to enter one secret directly into the focused field. Click the field first. You must never receive the secret; this unattended turn pauses for the person.",
-      z.strictObject({ label: text, ref, snapshotId }),
+      z.strictObject({ label: text, ref }),
       async (input) =>
         waiting(
-          await gateway.requestSecret(botId, actor, input),
+          await gateway.requestSecret(botId, input),
           `The person must enter ${input.label} directly into the page.`,
           "computer_secret",
         ),

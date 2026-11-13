@@ -26,9 +26,6 @@
  * These are where this deployment sends a person's authorization code and receives the refresh
  * token that stands in for their access, so they are a reviewed source contract too.
  */
-// The one place browsing and this check agree on: the addresses that hold the deployment's own
-// cloud credentials. `target.ts` imports nothing itself, so asking it here adds no dependency.
-import { isNeverAllowedHostname } from "../computer/target";
 // Type-only, so naming the transport here creates no import cycle with the registry that resolves it.
 import type { CuratedTransportKind } from "./transport";
 import {
@@ -820,31 +817,13 @@ function readsAsCredential(name: string): boolean {
   return CREDENTIAL_WORDS.some((word) => normalized.includes(word));
 }
 
-/**
- * Is this a URL an administrator may point the deployment at?
- *
- * A curated entry is reviewed in code; this is the other path, and it needs its own floor because
- * "add an MCP server" is otherwise a request-forgery primitive aimed at whatever the server can
- * reach: cloud metadata endpoints, databases on the same network, admin panels bound to localhost.
- * The rules are deliberately blunt.
- *
- * HTTPS only, because the credential is a bearer token and plaintext is not negotiable.
- * No address literals, localhost or internal suffixes, because those point at the deployment rather
- * than a vendor service.
- *
- * This is static URL validation: it checks the literal host string and scheme before storage. DNS
- * resolution and per-request network policy are separate deployment controls.
- */
+/** Read the server URL and keep credentials in their separate field. */
 export function customUrlRefusal(raw: string): string | null {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     return "That is not a URL.";
-  }
-
-  if (url.protocol !== "https:") {
-    return "An MCP server must be reached over https.";
   }
 
   // Userinfo is not part of the host, so none of the host rules below would look at it, and what is
@@ -880,46 +859,6 @@ export function customUrlRefusal(raw: string): string | null {
   ];
   if (named.some(readsAsCredential)) {
     return "Put the credential in the token field rather than in the address.";
-  }
-
-  // A trailing dot is the root-anchored spelling of the same name and resolves to the same place, so
-  // they are stripped here rather than added to each comparison below. Without it "localhost."
-  // misses the equality test, "vault.internal." misses the suffix tests, and "database." picks up
-  // the dot that the single-label test keys on, so the fully qualified form of every name this
-  // function refuses walks straight through it.
-  const host = url.hostname.toLowerCase().replace(/\.+$/, "");
-
-  // Bracketed IPv6 arrives with the brackets already stripped by URL, so the colon test catches it.
-  if (host.includes(":") || /^[0-9.]+$/.test(host)) {
-    return "Give a hostname rather than an IP address.";
-  }
-  /*
-   * The cloud metadata endpoint, by name rather than by luck.
-   *
-   * `metadata.goog` is Google's own short alias for it, published beside `metadata.google.internal`,
-   * and it carries a dot and none of the suffixes below, so it read as an ordinary vendor name. The
-   * long spelling was refused only incidentally, by the `.internal` test.
-   *
-   * Asked of the list browsing already uses rather than a second copy here. That list holds the
-   * aliases somebody has already had to think about, including the ones Alibaba and ECS answer on,
-   * and a new alias added there should not have to be remembered here as well.
-   */
-  if (isNeverAllowedHostname(host)) {
-    return "That address holds this deployment's own cloud credentials.";
-  }
-  if (host === "localhost" || host.endsWith(".localhost")) {
-    return "That address is local to the deployment.";
-  }
-  if (
-    host.endsWith(".internal") ||
-    host.endsWith(".local") ||
-    host.endsWith(".localdomain") ||
-    // How a Kubernetes service is addressed from inside the cluster. It carries dots and none of
-    // the suffixes above, so without this it reads as an ordinary vendor name.
-    host.endsWith(".svc") ||
-    !host.includes(".")
-  ) {
-    return "That address is not reachable from outside this network.";
   }
 
   return null;

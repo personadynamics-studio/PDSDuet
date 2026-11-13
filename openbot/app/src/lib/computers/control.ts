@@ -25,10 +25,7 @@ async function callControl(
     { ...(body === undefined ? {} : { method: "POST", body }), signal },
   );
   if (!response.ok) return null;
-  const value: unknown = await response.json().catch(() => null);
-  if (!value || typeof value !== "object" || !("holder" in value)) return null;
-  if (value.holder !== "bot" && value.holder !== "human") return null;
-  return value as ControlState;
+  return response.json();
 }
 
 export function readControl(
@@ -44,24 +41,15 @@ export function readControl(
   );
 }
 
-export async function takeControl(computerId: string, requestId?: string) {
-  const id =
-    requestId ??
-    (
-      await callControl(computerId, "/control/request", {
-        reason: "I want to take control of the browser.",
-      })
-    )?.request?.id;
-  return id
-    ? callControl(computerId, "/control/take", { requestId: id })
-    : null;
+export function takeControl(computerId: string, requestId?: string) {
+  return callControl(computerId, "/control/take", { requestId });
 }
 
-export function releaseControl(computerId: string, requestId: string) {
+export function releaseControl(computerId: string, requestId?: string) {
   return callControl(computerId, "/control/release", { requestId });
 }
 
-export function cancelControl(computerId: string, requestId: string) {
+export function cancelControl(computerId: string, requestId?: string) {
   return callControl(computerId, "/control/cancel", { requestId });
 }
 

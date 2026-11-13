@@ -679,7 +679,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
         );
       const state = await gateway.requestHelp(
         request.botId,
-        actor,
         `Sign in to ${request.origin}${request.reason ? `: ${request.reason}` : ""}`,
         request.toolCallId ?? undefined,
       );

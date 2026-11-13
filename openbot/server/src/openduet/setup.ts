@@ -86,7 +86,7 @@ export type SetupStatus = "ready" | "needs_setup" | "not_checked";
  * What the Bot computer check found, which has one answer more than a row's status: `idle`, the
  * computer service answered and no Bot's computer is running yet. That is how every correctly set
  * up install starts, because a computer starts the first time a Bot needs one, so the row reads
- * Ready and says so. See `createComputerCheck`.
+ * Ready and says so.
  */
 export type ComputerVerdict = SetupStatus | "idle";
 
@@ -670,8 +670,6 @@ export function createSetupSources(input: {
   /** The Bot the first day runs on. See {@link primaryBotIdOf}. */
   primaryBot: string;
   computer: boolean;
-  /** Authenticated reachability and policy delivery, with per-operation deadlines and no wake. */
-  computerCheck?: () => Promise<ComputerVerdict>;
   apps: { configured: boolean; provider: BrokerProvider };
   chat: boolean;
 }): SetupSources {
@@ -687,17 +685,6 @@ export function createSetupSources(input: {
       intelligenceFact,
     );
 
-  const askComputer = async (): Promise<ComputerVerdict> => {
-    if (!input.computer) return "needs_setup";
-    if (!input.computerCheck) return "not_checked";
-    try {
-      // The fleet check owns its operation deadlines; one push's budget cannot cover the fleet.
-      return await input.computerCheck();
-    } catch {
-      return "needs_setup";
-    }
-  };
-  let computerStatus = askComputer();
   let intelligence = askIntelligence();
   let modelCheck: Promise<
     { outcome: ModelCheckOutcome; stamp: string | null } | undefined
@@ -710,7 +697,7 @@ export function createSetupSources(input: {
     productName: input.productName,
     localEvaluation: input.config.singleUser,
     facts: async (userId) => {
-      const [key, check, intelligenceNow, servers, gmail, computerNow] =
+      const [key, check, intelligenceNow, servers, gmail] =
         await Promise.all([
           modelKeyOf(keyFacts),
           modelCheck,
@@ -722,7 +709,6 @@ export function createSetupSources(input: {
             userId,
             composioConfigured: input.apps.configured,
           }),
-          computerStatus,
         ]);
       const google = servers.find((server) => server.id === GOOGLE_WORKSPACE);
       return {
@@ -743,7 +729,7 @@ export function createSetupSources(input: {
           : null,
         primaryBot: input.primaryBot,
         computer: input.computer,
-        computerStatus: computerNow,
+        computerStatus: input.computer ? "not_checked" : "needs_setup",
         apps: input.apps,
         chat: input.chat,
       };
@@ -753,7 +739,6 @@ export function createSetupSources(input: {
       if (lastRecheck && now - lastRecheck.at < RECHECK_INTERVAL_MS)
         return lastRecheck.done;
       intelligence = askIntelligence();
-      computerStatus = askComputer();
       const check = input.model.check;
       if (check) {
         modelCheck = (async () => {
@@ -761,7 +746,7 @@ export function createSetupSources(input: {
           return stamp === null ? undefined : { outcome: await check(), stamp };
         })().catch(() => undefined);
       }
-      const done = Promise.all([intelligence, modelCheck, computerStatus]).then(
+      const done = Promise.all([intelligence, modelCheck]).then(
         () => {},
       );
       lastRecheck = { at: now, done };

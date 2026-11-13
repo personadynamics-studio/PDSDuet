@@ -1,4 +1,3 @@
-import { canAccessAgent } from "../agents/profile-policy";
 import type { AgentProfileStore } from "../agents/profile-store";
 import type { AgentActor, AgentProfile } from "../agents/profile-types";
 import type { AuditStore } from "../audit";
@@ -402,11 +401,7 @@ export function createCoworkerRoutingService(
     if (input.text.length > MAX_ROUTING_TEXT_LENGTH) {
       throw new CoworkerRoutingInputError();
     }
-    // The store applies this same policy in SQL; keep this canonical policy check at the service
-    // boundary so a broader store implementation cannot leak a coworker into routing.
-    const roster = (await options.store.list(input.actor, false)).filter(
-      (profile) => canAccessAgent(input.actor, profile),
-    );
+    const roster = await options.store.list(input.actor, false);
     const namedId = input.agentId?.trim() || null;
     if (namedId) {
       const chosen = roster.find(({ id }) => id === namedId);

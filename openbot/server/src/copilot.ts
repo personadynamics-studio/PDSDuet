@@ -1511,17 +1511,13 @@ function remoteAgentWithStandingRole(
           ]),
         ).pipe(switchMap((offered) => runWith(offered, input, next))),
       );
-      const owned =
-        !!process.env.MANAGED_AGENT_TOKEN &&
-        agent.headers?.["x-openbot-agent-token"] ===
-          process.env.MANAGED_AGENT_TOKEN &&
-        [
-          process.env.PICKED_HARNESS_URL,
-          process.env.MANAGED_AGENT_AG_UI_URL,
-        ].some(
-          (url) =>
-            url?.replace(/\/$/, "") === agent.endpoint.replace(/\/$/, ""),
-        );
+      const owned = [
+        process.env.PICKED_HARNESS_URL,
+        process.env.MANAGED_AGENT_AG_UI_URL,
+      ].some(
+        (url) =>
+          url?.replace(/\/$/, "") === agent.endpoint.replace(/\/$/, ""),
+      );
       return owned ? observeModelConnection(stream) : stream;
     });
     if (acquireLearnedSkills)

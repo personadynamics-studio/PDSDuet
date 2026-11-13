@@ -4,16 +4,14 @@ import {
   IconDeviceDesktop,
   IconFingerprint,
   IconKey,
-  IconNetwork,
   IconPlug,
   IconTerminal2,
   IconToggleRight,
   IconUsersGroup,
-  IconWorld,
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useState } from "react";
 import {
   PageEmpty,
   PageRows,
@@ -51,66 +49,22 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  removeNetworkPolicyMutationOptions,
   setCapabilityMutationOptions,
   setEnterpriseSettingMutationOptions,
-  setNetworkPolicyMutationOptions,
   terminateInactiveComputersMutationOptions,
 } from "@/lib/enterprise/mutations";
 import {
   actionRecordsQueryOptions,
   type CapabilitySetting,
-  type EgressRule,
   type EnterpriseOverview,
   enterpriseOverviewQueryOptions,
   modelUsageQueryOptions,
-  type NetworkMode,
-  type NetworkPolicy,
 } from "@/lib/enterprise/queries";
 import { queryClient } from "@/query-client";
 
 export const Route = createFileRoute("/_authed/admin/enterprise")({
   component: EnterprisePage,
 });
-
-const MODE_NAMES: Record<NetworkMode, string> = {
-  allow_all: "Allow all network access",
-  defaults_plus_allowlist: "Defaults plus team allowlist",
-  allowlist_only: "Team allowlist only",
-};
-
-/** One rule per line: `example.com`, `*.corp.example`, or `10.0.0.0/8 443,8443`. */
-function rulesFromText(text: string): EgressRule[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [value = "", ports] = line.split(/\s+/, 2);
-      return /^[\d.:a-fA-F]+(\/\d+)?$/.test(value) &&
-        /[\d]/.test(value) &&
-        /[.:]/.test(value)
-        ? { type: "cidr" as const, value, ...(ports ? { ports } : {}) }
-        : { type: "domain" as const, value };
-    });
-}
-
-function rulesToText(rules: EgressRule[]): string {
-  return rules
-    .map((rule) =>
-      rule.type === "domain"
-        ? rule.value
-        : `${rule.value}${rule.ports ? ` ${rule.ports}` : ""}`,
-    )
-    .join("\n");
-}
-
-function summarizePolicy(policy: NetworkPolicy | undefined): string {
-  if (!policy)
-    return "No policy. Bot computers can reach anything the cluster allows";
-  const count = policy.rules.length;
-  return `${MODE_NAMES[policy.mode]} · ${count} ${count === 1 ? "rule" : "rules"}${policy.locked ? " · locked" : ""}`;
-}
 
 function EnterprisePage() {
   const overview = useQuery(enterpriseOverviewQueryOptions());
@@ -122,7 +76,7 @@ function EnterprisePage() {
 
   return (
     <PageShell
-      description="What members can use, how Bot computers reach the network, and what is recorded. Every change shows in Audit."
+      description="What members can use and what is recorded. Every change shows in Audit."
       title="Enterprise controls"
     >
       {failure ? (
@@ -171,9 +125,6 @@ function EnterpriseSections({
   saving: boolean;
 }) {
   const [overridesOpen, setOverridesOpen] = useState(false);
-  const [networkScope, setNetworkScope] = useState<
-    { scopeKind: "organization" | "group"; scopeId: string } | undefined
-  >();
   const [modelsOpen, setModelsOpen] = useState(false);
   const [daysOpen, setDaysOpen] = useState(false);
   const { settings } = data;
@@ -184,10 +135,6 @@ function EnterpriseSections({
       Object.keys(capability.groups).length,
     0,
   );
-  const organizationPolicy = data.network.find(
-    (row) => row.scopeKind === "organization",
-  );
-  const groupPolicies = data.network.filter((row) => row.scopeKind === "group");
 
   return (
     <>
@@ -274,77 +221,6 @@ function EnterpriseSections({
         </PageRows>
       </PageSection>
 
-      <PageSection
-        description="Where Bot computers can connect. Changes reach running computers within seconds, without a restart. A group policy replaces the organization's unless it is locked."
-        title="Network"
-      >
-        <PageRows>
-          <Item
-            render={
-              <button
-                onClick={() =>
-                  setNetworkScope({ scopeKind: "organization", scopeId: "" })
-                }
-                type="button"
-              />
-            }
-            size="sm"
-          >
-            <ItemMedia variant="icon">
-              <IconWorld />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>Organization</ItemTitle>
-              <ItemDescription>
-                {summarizePolicy(organizationPolicy)}
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <IconChevronRight className="size-4 text-muted-foreground" />
-            </ItemActions>
-          </Item>
-          {groupPolicies.map((policy) => (
-            <div key={policy.scopeId}>
-              <Separator />
-              <Item
-                render={
-                  <button
-                    onClick={() =>
-                      setNetworkScope({
-                        scopeKind: "group",
-                        scopeId: policy.scopeId,
-                      })
-                    }
-                    type="button"
-                  />
-                }
-                size="sm"
-              >
-                <ItemMedia variant="icon">
-                  <IconNetwork />
-                </ItemMedia>
-                <ItemContent>
-                  <ItemTitle>Group: {policy.scopeId}</ItemTitle>
-                  <ItemDescription>{summarizePolicy(policy)}</ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <IconChevronRight className="size-4 text-muted-foreground" />
-                </ItemActions>
-              </Item>
-            </div>
-          ))}
-        </PageRows>
-        {data.groups.length > 0 ? (
-          <Button
-            className="mt-4"
-            onClick={() => setNetworkScope({ scopeKind: "group", scopeId: "" })}
-            size="sm"
-            variant="outline"
-          >
-            Add a group policy
-          </Button>
-        ) : null}
-      </PageSection>
 
       <PageSection
         description="With the allowlist on, Bots can only call tools on the MCP servers approved here. Calls to any other server are refused."
@@ -555,13 +431,6 @@ function EnterpriseSections({
         onOpenChange={setOverridesOpen}
         open={overridesOpen}
       />
-      {networkScope ? (
-        <NetworkDialog
-          data={data}
-          initial={networkScope}
-          onClose={() => setNetworkScope(undefined)}
-        />
-      ) : null}
       <ListDialog
         description="One model per line, as provider/model, for example openai/gpt-5.6-terra."
         initial={settings.modelAllowlist.models}
@@ -797,177 +666,6 @@ function OverridesDialog({
         <DialogFooter className="mt-4">
           <Button onClick={() => onOpenChange(false)} size="sm" type="button">
             完成
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function NetworkDialog({
-  data,
-  initial,
-  onClose,
-}: {
-  data: EnterpriseOverview;
-  initial: { scopeKind: "organization" | "group"; scopeId: string };
-  onClose: () => void;
-}) {
-  const existing = data.network.find(
-    (row) =>
-      row.scopeKind === initial.scopeKind && row.scopeId === initial.scopeId,
-  );
-  const [group, setGroup] = useState(initial.scopeId || data.groups[0] || "");
-  const [mode, setMode] = useState<NetworkMode>(
-    existing?.mode ?? "defaults_plus_allowlist",
-  );
-  const [rules, setRules] = useState(rulesToText(existing?.rules ?? []));
-  const [locked, setLocked] = useState(existing?.locked ?? false);
-  const save = useMutation(setNetworkPolicyMutationOptions(queryClient));
-  const remove = useMutation(removeNetworkPolicyMutationOptions(queryClient));
-  const scopeId = initial.scopeKind === "group" ? group : "";
-  const formId = useId();
-
-  return (
-    <Dialog onOpenChange={(open) => (open ? undefined : onClose())} open>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {initial.scopeKind === "organization"
-              ? "Organization network policy"
-              : "Group network policy"}
-          </DialogTitle>
-        </DialogHeader>
-        <DialogBody className="mt-4 space-y-4 overflow-y-auto">
-          {/* The submit button is in the footer and reaches this form by id, so DialogBody stays a
-              direct child of DialogContent and keeps scrolling. */}
-          <form
-            className="flex flex-col gap-4"
-            id={formId}
-            onSubmit={(event) => {
-              event.preventDefault();
-              save.mutate(
-                {
-                  scopeKind: initial.scopeKind,
-                  scopeId,
-                  mode,
-                  rules: rulesFromText(rules),
-                  locked,
-                },
-                { onSuccess: onClose },
-              );
-            }}
-          >
-            {initial.scopeKind === "group" && !initial.scopeId ? (
-              <div className="space-y-1.5">
-                <Label>Group</Label>
-                <Select
-                  onValueChange={(value) => setGroup(String(value))}
-                  value={group}
-                >
-                  <SelectTrigger aria-label="Group">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {data.groups.map((name) => (
-                        <SelectItem key={name} value={name}>
-                          {name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <Label>Mode</Label>
-              <Select
-                onValueChange={(value) => setMode(value as NetworkMode)}
-                value={mode}
-              >
-                <SelectTrigger aria-label="Mode">
-                  <SelectValue>{MODE_NAMES[mode]}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {(Object.keys(MODE_NAMES) as NetworkMode[]).map(
-                      (candidate) => (
-                        <SelectItem key={candidate} value={candidate}>
-                          {MODE_NAMES[candidate]}
-                        </SelectItem>
-                      ),
-                    )}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="network-rules">Allowlist</Label>
-              <Textarea
-                className="font-mono text-xs"
-                id="network-rules"
-                onChange={(event) => setRules(event.target.value)}
-                placeholder={"example.com\n*.corp.example\n10.0.0.0/8 443,5432"}
-                rows={8}
-                value={rules}
-              />
-              <p className="text-muted-foreground text-xs">
-                One per line. A domain covers its subdomains. *.name covers only
-                subdomains. An IP range can list ports. Defaults are{" "}
-                {data.defaultDestinations.slice(0, 4).join(", ")} and{" "}
-                {data.defaultDestinations.length - 4} more package and source
-                hosts.
-              </p>
-            </div>
-            {initial.scopeKind === "organization" ? (
-              <div className="flex items-center justify-between gap-4">
-                <Label htmlFor="network-locked">
-                  Lock so groups can't replace this policy
-                </Label>
-                <Switch
-                  checked={locked}
-                  id="network-locked"
-                  onCheckedChange={setLocked}
-                />
-              </div>
-            ) : null}
-          </form>
-          {(save.error ?? remove.error) ? (
-            <p className="text-destructive text-sm" role="alert">
-              {(save.error ?? remove.error)?.message}
-            </p>
-          ) : null}
-        </DialogBody>
-        <DialogFooter className="mt-4">
-          {existing ? (
-            <Button
-              disabled={remove.isPending}
-              onClick={() =>
-                remove.mutate(
-                  { scopeKind: initial.scopeKind, scopeId },
-                  { onSuccess: onClose },
-                )
-              }
-              size="sm"
-              type="button"
-              variant="destructive"
-            >
-              Remove policy
-            </Button>
-          ) : null}
-          <Button onClick={onClose} size="sm" type="button" variant="outline">
-            取消
-          </Button>
-          <Button
-            disabled={
-              save.isPending || (initial.scopeKind === "group" && !scopeId)
-            }
-            form={formId}
-            size="sm"
-            type="submit"
-          >
-            {save.isPending ? "儲存中…" : "儲存"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -78,7 +78,6 @@ async function buildModel() {
   return compatible ? openai.chat(model) : openai(model);
 }
 const port = listenPort(process.env.PORT, 4213);
-if (!port.ok) throw new Error(port.reason);
 
 export const openbotBaseInstructions =
   "Answer the question you are asked, briefly and correctly.";
@@ -141,34 +140,11 @@ const openbot = new Agent({
   model: await buildModel(),
 });
 
-/** The one header OpenBot's server sends, compared without leaking length through timing. */
-function carriesTheServerToken(request: Request): boolean {
-  const expected = (process.env.MANAGED_AGENT_TOKEN ?? "").trim();
-  const offered = (request.headers.get("x-openbot-agent-token") ?? "").trim();
-  // Unset means unconfigured, not open.
-  if (!expected || offered.length !== expected.length) return false;
-  let difference = 0;
-  for (let index = 0; index < offered.length; index += 1) {
-    difference |= offered.charCodeAt(index) ^ expected.charCodeAt(index);
-  }
-  return difference === 0;
-}
-
 export const mastra = new Mastra({
   agents: { openbot },
   server: {
-    port: port.port,
+    port: port,
     host: "0.0.0.0",
-    middleware: [
-      // Everything but `/health`, which Compose polls before any token exists.
-      async (context, next) => {
-        if (new URL(context.req.url).pathname === "/health") return next();
-        if (!carriesTheServerToken(context.req.raw)) {
-          return context.json({ error: "unauthorised" }, 401);
-        }
-        return next();
-      },
-    ],
     apiRoutes: [
       registerApiRoute("/health", {
         method: "GET",

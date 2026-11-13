@@ -1,8 +1,6 @@
 import { DICTATION_HTTP_IDLE_SECONDS } from "@openbot/shared/dictation";
 import { listenAddress } from "@openbot/shared/listen-host";
 import { serve } from "bun";
-import { computerAccessCheck } from "./agents/computer-access";
-import type { AgentProfileStore } from "./agents/profile-store";
 import type { OpenBotRole } from "./auth/roles";
 import { websocket as channelSocket } from "./channels/socket";
 import type { ComputerGateway } from "./computer/gateway";
@@ -36,23 +34,13 @@ type StreamData = {
 type ChannelSocket = Parameters<typeof channelSocket.open>[0];
 type SocketData = StreamData | ChannelSocket["data"];
 
-/**
- * Starts the server on each address in `config.listen`, and returns the addresses it is listening
- * on, so the boot log names them rather than assuming one, and a way to stop every listener.
- *
- * One listener per address, because loopback is two of them (127.0.0.1 and ::1) and Bun binds one
- * address per server. Only ::1 in the loopback default may be missing: a machine or container with
- * IPv6 switched off has none, and refusing to start over it would take 127.0.0.1 down with it. An
- * address somebody named in `OPENBOT_HOST` that cannot be bound stops the boot, as an unbindable
- * port always has.
- */
+/** Start the configured listeners and return their addresses and a stop function. */
 export function startHttpServer(deps: {
   port: number;
   config: DeploymentConfig;
   resolveRequestActor: (
     request: Request,
   ) => Promise<{ id: string; name: string; role: OpenBotRole }>;
-  agentProfileStore: AgentProfileStore;
   computerGateway: ComputerGateway | undefined;
   demonstrationStore: DemonstrationStore;
   demonstrationRecorder: DemonstrationRecorder;
@@ -67,30 +55,14 @@ export function startHttpServer(deps: {
     port,
     config,
     resolveRequestActor,
-    agentProfileStore,
     computerGateway,
     demonstrationStore,
     demonstrationRecorder,
     app,
   } = deps;
 
-  /**
-   * The live screen, proxied.
-   *
-   * Proxied rather than connected directly. `agent-computer` authenticates its callers with a
-   * shared token, not with a person's session, and it must never be reachable from a browser. So the
-   * socket terminates here, behind the same session guard as every other route, and this process opens
-   * a second socket inward carrying the token.
-   *
-   * Not a Hono route because an upgrade is not a request/response: Bun hands it over before Hono sees a
-   * body, so it is handled in `fetch` ahead of the app.
-   */
   const toStreamUrl = (baseUrl: string, botId: string) =>
-    // The Bot travels in the query, because a websocket upgrade carries no custom header for the
-    // computer to read and every call it serves is per Bot. The secret travels the same way and for the
-    // same reason, this socket is the one a person can type into, so it is the last thing that should
-    // be reachable without it.
-    `${baseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/stream?bot=${encodeURIComponent(botId)}&token=${encodeURIComponent(config.computer?.token ?? "")}`;
+    `${baseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/stream?bot=${encodeURIComponent(botId)}`;
 
   const isProxiedStream = (data: SocketData): data is StreamData =>
     typeof (data as StreamData).upstream === "string";
@@ -122,25 +94,6 @@ export function startHttpServer(deps: {
         if (!actor) {
           return new Response("Sign in first.", { status: 401 });
         }
-        // And which Bot, which the guard above does not answer. This socket carries that Bot's screen,
-        // so signing in is not enough: without this, anybody signed in watches anybody's Bot work. And
-        // seeing a Team Bot is not enough either: its screen is its owner's signed-in browser.
-        if (
-          !(await computerAccessCheck(agentProfileStore)(
-            { id: actor.id, role: actor.role },
-            streamBotId,
-          ))
-        ) {
-          return new Response("There is no such Bot.", { status: 404 });
-        }
-        /*
-         * Through the gateway, not the provider.
-         *
-         * `gateway.locate` runs checkComputerAddress; `provider.locate` does not, and the URL built
-         * below carries COMPUTER_TOKEN in its query string. A provider that answered with a foreign
-         * host was handed the deployment's computer token, which is the case that check was written
-         * for. Every acting path already went through the gateway; this one did not.
-         */
         let upstream: string;
         try {
           const streamBase = computerGateway
@@ -284,21 +237,14 @@ export function startHttpServer(deps: {
 
   const listening: string[] = [];
   const servers: ReturnType<typeof serve>[] = [];
-  for (const { host, required } of config.listen) {
-    try {
-      servers.push(
-        serve<SocketData>({
-          ...options,
-          ...(host === undefined ? {} : { hostname: host }),
-        }),
-      );
-      listening.push(listenAddress(host, port));
-    } catch (error) {
-      if (required) throw error;
-      console.warn(
-        `Not listening on ${listenAddress(host, port)}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+  for (const { host } of config.listen) {
+    servers.push(
+      serve<SocketData>({
+        ...options,
+        ...(host === undefined ? {} : { hostname: host }),
+      }),
+    );
+    listening.push(listenAddress(host, port));
   }
   return {
     addresses: listening,

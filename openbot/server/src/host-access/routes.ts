@@ -3,7 +3,6 @@ import { Hono } from "hono";
 import { recordAuditEvent, type AuditStore } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { sameToken } from "../agents/callback-token";
-import type { BotAccessCheck } from "../agents/profile-policy";
 import { HostAccessRefusedError, type HostAccessBroker } from "./broker";
 import {
   asHostAccessDesktopResult,
@@ -44,7 +43,6 @@ export function createHostAccessRoutes(options: {
   broker: HostAccessBroker;
   desktopToken?: string;
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
-  canUseBot: BotAccessCheck;
   auditStore?: AuditStore;
   botName?: (
     botId: string,
@@ -52,7 +50,7 @@ export function createHostAccessRoutes(options: {
   ) => Promise<string | null>;
 }) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  const { broker, requireUser, canUseBot, auditStore } = options;
+  const { broker, requireUser, auditStore } = options;
 
   const requireDesktop: MiddlewareHandler = async (context, next) => {
     const token = options.desktopToken;
@@ -105,10 +103,7 @@ export function createHostAccessRoutes(options: {
       return context.json({ error: "botId is required." }, 400);
     }
     const actor = context.var.actor;
-    if (!(await canUseBot(actor, botId))) {
-      return context.json({ error: "That Bot is not available to you." }, 404);
-    }
-    try {
+        try {
       const grant = await broker.requestFolderGrant({
         botId,
         botName: (await options.botName?.(botId, actor)) ?? botId,

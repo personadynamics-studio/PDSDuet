@@ -274,7 +274,6 @@ export function ManageSection({
             <IconChevronRight className="size-4 text-muted-foreground" />
           </ItemActions>
         </Item>
-        {agent.canManage ? (
           <>
             <Separator />
             <Item
@@ -297,7 +296,6 @@ export function ManageSection({
               </ItemActions>
             </Item>
           </>
-        ) : null}
       </PageRows>
       <ResetDialog agent={agent} onOpenChange={setResetOpen} open={resetOpen} />
       <Dialog onOpenChange={setDeleteOpen} open={deleteOpen}>

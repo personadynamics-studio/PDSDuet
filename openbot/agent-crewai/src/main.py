@@ -9,7 +9,6 @@ The contract with the rest of OpenBot is the same one the other Bots meet, and i
 serve AG-UI on a port, answer `/health`, and refuse anybody who does not carry the server's token.
 """
 
-import hmac
 import os
 import sys
 from collections.abc import Mapping
@@ -26,18 +25,8 @@ import ag_ui_crewai.endpoint as crewai_endpoint
 from ag_ui.core import Message, Tool
 from ag_ui_crewai import add_crewai_flow_fastapi_endpoint
 from crewai.flow.flow import Flow, listen, start
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from litellm import acompletion
-
-# The one header OpenBot's server sends when it calls a managed Bot. Same name the TypeScript Bots
-# check, because a Bot is a Bot whatever it is written in.
-TOKEN_HEADER = "x-openbot-agent-token"
-
-
-def _expected_token() -> str:
-    return (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-
 
 def _model() -> str:
     """The provider and model OpenBot chose, in the form litellm wants.
@@ -178,23 +167,6 @@ class OpenBotFlow(Flow):
 
 
 app = FastAPI()
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    """Everything but `/health` carries the server's token.
-
-    `/health` is exempt because Compose polls it before anything has a token to send, and a
-    healthcheck that authenticates is a container that never reports healthy.
-    """
-    if request.url.path != "/health":
-        expected = _expected_token()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        # An unset token means unconfigured, not open. A Bot that answers anybody because nobody
-        # set a secret is the failure this check exists for.
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

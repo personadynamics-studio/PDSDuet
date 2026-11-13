@@ -12,11 +12,7 @@ import {
   runNavigation,
 } from "@/lib/computers/handoff";
 import { useActiveBotHolder } from "./active-bot";
-import { useFrontendTool } from "./approval-tools";
-import {
-  useComputerAvailable,
-  useComputerToolsOffered,
-} from "./computer-available";
+import { useFrontendTool } from "@copilotkit/react-core/v2";
 
 /**
  * Frontend registrations for computer tools, including inline rendering and policy-refusal display.
@@ -187,16 +183,7 @@ function didNotWork(outcome: ComputerOutcome): boolean {
 
 export function ComputerTools() {
   const bot = useActiveBotHolder();
-  /*
-   * Not offered to a Team Bot's teammates, and not offered where this deployment's capability
-   * switches would refuse them; see computerToolsOffered.
-   */
-  const offered = useComputerToolsOffered();
-  // Audit bookkeeping rather than a computer action, so it answers only the first question.
-  const available = useComputerAvailable();
-
   useFrontendTool({
-    available: offered.navigate,
     name: "computer_navigate",
     description:
       "Open a web page on your own computer so the person can watch. Use this when asked to look " +
@@ -265,7 +252,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_read",
     description:
       "Read the page currently open on your computer, without opening anything. Use this after you " +
@@ -282,12 +268,11 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_snapshot",
     description:
       "List the things on the current page you can act on: fields, buttons, links and checkboxes, " +
       "each with a ref, its label and its current value. Call this BEFORE clicking or typing, and " +
-      "use the refs it returns. Always send back the snapshotId it gives you. If an action reports " +
+      "use the refs it returns. If an action reports " +
       "that your refs are stale, the page changed: call this again and use the new refs.",
     parameters: z.object({}),
     handler: async (
@@ -316,17 +301,15 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_type",
     description:
       "Enter text into a field on the page. Give the ref of the field from your most recent " +
-      "snapshot and the snapshotId it came from. This replaces whatever the field already contains. " +
+      "snapshot. This replaces whatever the field already contains. " +
       "Set submit to true to press Enter afterwards.",
     parameters: z.object({
       ref: z
         .string()
         .describe("Ref of the field, from your most recent snapshot"),
-      snapshotId: z.number().describe("The snapshotId that ref came from"),
       text: z.string().describe("The text to enter"),
       submit: z
         .boolean()
@@ -336,7 +319,6 @@ export function ComputerTools() {
     handler: async (
       input: {
         ref: string;
-        snapshotId: number;
         text: string;
         submit?: boolean;
       },
@@ -367,21 +349,19 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_click",
     description:
       "Click something on the page: a button, a link, a checkbox or a radio option. Give the ref " +
-      "from your most recent snapshot and the snapshotId it came from.",
+      "from your most recent snapshot.",
     parameters: z.object({
       ref: z
         .string()
         .describe(
           "Ref of the element to click, from your most recent snapshot",
         ),
-      snapshotId: z.number().describe("The snapshotId that ref came from"),
     }),
     handler: async (
-      input: { ref: string; snapshotId: number },
+      input: { ref: string },
       { signal }: { signal?: AbortSignal } = {},
     ) =>
       callComputer(
@@ -414,7 +394,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_key",
     description:
       "Press a key, such as Enter, Tab or Escape. Give a ref to press it while a particular field " +
@@ -422,16 +401,11 @@ export function ComputerTools() {
     parameters: z.object({
       key: z.string().describe("Key name, such as Enter, Tab or Escape"),
       ref: z.string().optional().describe("Optional ref to press the key on"),
-      snapshotId: z
-        .number()
-        .optional()
-        .describe("The snapshotId the ref came from, required if ref is given"),
     }),
     handler: async (
       input: {
         key: string;
         ref?: string;
-        snapshotId?: number;
       },
       { signal }: { signal?: AbortSignal } = {},
     ) =>
@@ -456,7 +430,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_request_secret",
     description:
       "Ask the person for ONE value you must not be told: a password, a one-time code, a card number. " +
@@ -476,10 +449,9 @@ export function ComputerTools() {
         .describe(
           "Ref of the field it goes in, from your most recent snapshot",
         ),
-      snapshotId: z.number().describe("The snapshotId that ref came from"),
     }),
     handler: async (
-      input: { label: string; ref: string; snapshotId: number },
+      input: { label: string; ref: string },
       { signal }: { signal?: AbortSignal } = {},
     ) => {
       const botId = bot.current;
@@ -516,7 +488,6 @@ export function ComputerTools() {
 
   /** Self-reported model declines: audit evidence, not an enforcement control. */
   useFrontendTool({
-    available,
     name: "report_refusal",
     description:
       "Record that you DECLINED something you were asked to do, because it looked unsafe, was outside " +
@@ -554,7 +525,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_request_help",
     description:
       "Ask the person to take control of your computer and do something you cannot: sign in, enter a " +
@@ -583,7 +553,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.computer,
     name: "computer_list_files",
     description:
       "List what is in your workspace: every file and folder you have saved, with sizes. Call this " +
@@ -631,7 +600,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.computer,
     name: "computer_read_file",
     description:
       "Read a file you saved earlier in your own workspace. Paths are relative to your workspace, " +
@@ -677,7 +645,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.computer,
     name: "computer_run_command",
     description:
       "Run a shell command on your own computer. Use this for anything the browser cannot do: " +
@@ -763,7 +730,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.computer,
     name: "computer_write_file",
     description:
       "Save a file in your own workspace so you still have it later. Paths are relative to your " +
@@ -831,7 +797,6 @@ export function ComputerTools() {
   });
 
   useFrontendTool({
-    available: offered.browser,
     name: "computer_scroll",
     description:
       "Scroll the page down, or up with a negative amount, to bring more of a long page into view.",

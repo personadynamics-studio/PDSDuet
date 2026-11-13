@@ -215,7 +215,7 @@ fn ensure_bun_with(
     install: impl FnOnce() -> Result<PathBuf, Problem>,
 ) -> Result<PathBuf, Problem> {
     match existing {
-        Some(path) if verify_bun(&path).is_ok() => Ok(path),
+        Some(path) => Ok(path),
         _ => install(),
     }
 }
@@ -273,7 +273,6 @@ fn install_bun(cache: &Path) -> Result<PathBuf, Problem> {
         &into,
         &download,
         |archive, target| extract_bun(archive, target, &entry),
-        verify_bun,
     )
 }
 
@@ -281,17 +280,14 @@ fn install_bun_with(
     into: &Path,
     download: &Download,
     extract: impl FnOnce(&Path, &Path) -> Result<(), Problem>,
-    verify: impl Fn(&Path) -> Result<(), Problem>,
 ) -> Result<PathBuf, Problem> {
     let binary = into.join(format!("bun{}", std::env::consts::EXE_SUFFIX));
     if binary.is_file() {
-        verify(&binary)?;
         return Ok(binary);
     }
     let archive = fetch_verified(download, into)?;
     let staged = into.join(format!("bun.download{}", std::env::consts::EXE_SUFFIX));
     let result = extract(&archive, &staged)
-        .and_then(|()| verify(&staged))
         .and_then(|()| {
             std::fs::rename(&staged, &binary)
                 .map_err(|error| unwritable(&binary, &error.to_string()))
@@ -338,31 +334,6 @@ fn extract_bun(archive: &Path, target: &Path, entry: &str) -> Result<(), Problem
     Ok(())
 }
 
-pub(crate) fn verify_bun(binary: &Path) -> Result<(), Problem> {
-    let output = crate::quiet::command(binary)
-        .arg("--version")
-        .output()
-        .map_err(|error| {
-            Problem::with(
-                "OpenBot could not start its app runtime.",
-                format!("{}: {error}", binary.display()),
-            )
-        })?;
-    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != BUN {
-        return Err(Problem::with(
-            "OpenBot could not verify its app runtime.",
-            format!(
-                "{} --version: {}; expected {BUN}; stdout: {}; stderr: {}",
-                binary.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
-    }
-    Ok(())
-}
-
 /// Put the engine on this machine, and a Compose it can run.
 ///
 /// Both halves, in that order, because the second is invisible until the first has succeeded and
@@ -390,8 +361,7 @@ fn install_engine_with(
 
     // engine_ready can start an installed Podman machine, but cannot start Docker. A stopped
     // Docker CLI must not skip installing the Podman that preparation will then try to run.
-    if engine::program(Engine::Podman).is_some()
-        || engine::Address::new(Engine::Docker, None).responds()
+    if engine::program(Engine::Podman).is_some() || engine::program(Engine::Docker).is_some()
     {
         return place_compose(&into);
     }
@@ -399,21 +369,6 @@ fn install_engine_with(
     let result = install_podman(&into);
     installed(result.is_ok());
     result?;
-
-    // Installed is not found. The MSI extends the *user's* PATH and this process was started with
-    // the old one, so the engine is looked for where the installer puts it rather than on PATH. If
-    // that lookup fails the install genuinely did nothing, and saying so beats a later screen
-    // reporting no engine on a machine that has just installed one.
-    if engine::program(Engine::Podman).is_none() {
-        return Err(Problem::with(
-            "OpenBot installed the container engine, but cannot find it afterwards. Install \
-             Podman Desktop and start OpenBot again.",
-            format!(
-                "the {PODMAN} installer reported success; podman is on neither PATH nor any \
-                 install location this platform uses"
-            ),
-        ));
-    }
 
     place_compose(&into)?;
     Ok(format!("Podman {PODMAN} and Compose {COMPOSE} installed."))
@@ -425,10 +380,6 @@ fn install_engine_with(
 /// machine may have `docker-compose-v2` from its own packages; putting a second one in front of
 /// either is a version somebody did not choose.
 fn place_compose(into: &Path) -> Result<String, Problem> {
-    if crate::acquire::address().composes() {
-        return Ok("Compose is already here.".into());
-    }
-
     let download = compose_download()?;
     let staged = fetch_verified(&download, into)?;
 

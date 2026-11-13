@@ -1,5 +1,4 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
-import { electron } from "@better-auth/electron";
 import { expo } from "@better-auth/expo";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
@@ -25,8 +24,6 @@ import { encryptSsoConfig } from "./encrypt-sso-config";
 import { seedRole } from "./roles";
 import { scimOptions } from "./scim";
 
-/** The native app's custom scheme (mobile/app.config.ts). */
-const NATIVE_APP_ORIGIN = "openbotmobile://";
 
 /**
  * An address for somebody arriving from Entra, whatever claim it turned up in.
@@ -105,7 +102,6 @@ export function createAuth(config: DeploymentConfig, database: Database) {
      * SCIM 2.0 at /api/auth/scim/v2, only when SCIM_BEARER_TOKEN is set. See scim.ts.
      */
     ...(scimPluginOptions ? [scim(scimPluginOptions)] : []),
-    electron({ clientID: "openbot-desktop", codeExpiresIn: 120 }),
     ...(authConfig.okta
       ? [
           genericOAuth({
@@ -144,10 +140,6 @@ export function createAuth(config: DeploymentConfig, database: Database) {
     },
     baseURL: authConfig.baseUrl,
     secret: authConfig.secret,
-    trustedOrigins: [
-      ...authConfig.trustedOrigins,
-      ...(nativeApp ? [NATIVE_APP_ORIGIN] : []),
-    ],
     /*
      * Wrapped, so a company's client secret is ciphertext in the column.
      *

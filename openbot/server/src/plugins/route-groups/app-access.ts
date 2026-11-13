@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { type AppVariables, requireAdmin } from "../../auth/guards";
+import { type AppVariables } from "../../auth/guards";
 import { BROKERED_PROFILE, type BrokerProvider } from "../access";
 import type { Unavailable } from "../app-access";
 import type { CatalogueEntry } from "../catalogue";
@@ -101,7 +101,6 @@ export function mountAppAccessRoutes({
   routes,
   store,
   requireUser,
-  canUseBot,
   composio,
   shared,
   actorEmail,
@@ -160,9 +159,7 @@ export function mountAppAccessRoutes({
    */
   routes.get("/for/:agentId/apps", requireUser, async (context) => {
     const agentId = context.req.param("agentId");
-    if (!(await canUseBot(context.var.actor, agentId)))
-      return context.json({ error: "There is no such Bot." }, 404);
-    return context.json({
+        return context.json({
       apps: await store.appAccessForBot({
         userId: context.var.actor.id,
         agentId,
@@ -179,9 +176,7 @@ export function mountAppAccessRoutes({
    */
   routes.get("/for/:agentId/apps/:app", requireUser, async (context) => {
     const agentId = context.req.param("agentId");
-    if (!(await canUseBot(context.var.actor, agentId)))
-      return context.json({ error: "There is no such Bot." }, 404);
-    const app = context.req.param("app");
+        const app = context.req.param("app");
     const inspected =
       app.length > MAX_NAME
         ? null
@@ -228,15 +223,7 @@ export function mountAppAccessRoutes({
         },
         400,
       );
-    if (!(await canUseBot(context.var.actor, agentId)))
-      return refused(context, {
-        app,
-        bot: agentId,
-        reason: "no_such_bot",
-        error: "There is no such Bot.",
-        status: 404,
-      });
-    const found = await store.inspectApp({
+        const found = await store.inspectApp({
       app,
       agentId,
       userId: context.var.actor.id,
@@ -346,8 +333,6 @@ export function mountAppAccessRoutes({
    * count per app either way so the Plugins list can badge each app without a second read.
    */
   routes.get("/access-requests", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
     const all = await store.pendingAppAccessRequests({});
     const byApp: Record<string, number> = {};
     for (const request of all)
@@ -378,8 +363,6 @@ export function mountAppAccessRoutes({
    * dropped.
    */
   routes.post("/access-requests/:id/approve", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
     const id = context.req.param("id");
     const body = (await context.req.json().catch(() => null)) as {
       refs?: unknown;
@@ -605,8 +588,6 @@ export function mountAppAccessRoutes({
 
   /** Dismiss a request: nothing changes but the request, which stops waiting. */
   routes.post("/access-requests/:id/dismiss", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
     const id = context.req.param("id");
     const closed: AppAccessRequestRecord | null =
       await store.closeAppAccessRequest({

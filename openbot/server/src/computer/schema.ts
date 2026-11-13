@@ -138,14 +138,6 @@ export type SnapshotElement = {
 export type SnapshotResult = {
   untrusted?: string;
   challenge?: BrowserChallenge;
-  /**
-   * Which snapshot these refs belong to. Must be sent back with every action.
-   *
-   * This field makes refs from superseded snapshots refusals instead of actions.
-   * A page that re-rendered between the snapshot and the click has moved its controls, and the
-   * failure mode without this check is not an error, it is clicking the wrong button.
-   */
-  snapshotId: number;
   url: string;
   title: string;
   elements: SnapshotElement[];
@@ -153,8 +145,8 @@ export type SnapshotResult = {
   truncated: boolean;
 };
 
-/** Common to every acting call: which element, and which snapshot the ref came from. */
-export type ActionTarget = { ref: string; snapshotId: number };
+/** The element an action targets. */
+export type ActionTarget = { ref: string };
 
 export type ClickInput = ActionTarget;
 export type TypeInput = ActionTarget & {
@@ -289,7 +281,7 @@ export type ControlState = ComputerControlState;
  * recorded. `ref` names the field it goes in, because a secret typed into whatever happens to have
  * focus goes nowhere when nothing does, and reports success while doing it.
  */
-export type SecretRequest = { label: string; ref: string; snapshotId: number };
+export type SecretRequest = { label: string; ref: string };
 
 /**
  * What supplying a secret reports back.

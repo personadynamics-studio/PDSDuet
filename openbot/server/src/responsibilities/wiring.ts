@@ -6,7 +6,6 @@ import {
   type RunnerLike,
 } from "@openbot/toolkit/run-turn";
 import { z } from "zod";
-import { canUseComputer } from "../agents/computer-access";
 import type { AgentProfileStore } from "../agents/profile-store";
 import type { AgentActor } from "../agents/profile-types";
 import { serverTurnAdmission } from "../agents/turn-admission";
@@ -97,15 +96,7 @@ export function createServerResponsibilityEngine(deps: {
           buildAgentFor: (input) => buildAgentFor({ ...input, initiator }),
           toolsForTurn: async () => {
             const actor = await actorFor(context.ownerUserId);
-            // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-            const computer =
-              computerGateway &&
-              canUseComputer(
-                await agentProfileStore
-                  .get(actor, context.agentId)
-                  .catch(() => null),
-                actor,
-              )
+            const computer = computerGateway
                 ? createHeadlessComputerTools({
                     gateway: computerGateway,
                     botId: context.agentId,

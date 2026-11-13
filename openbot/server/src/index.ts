@@ -6,7 +6,6 @@ import {
   IntelligenceAgentRunner,
 } from "@copilotkit/runtime/v2";
 import { COMPUTER_GUIDANCE } from "@openbot/shared/bot-prompt";
-import { LISTEN_HOST_VARIABLE } from "@openbot/shared/listen-host";
 import { workOwner } from "@openbot/shared/work-owner";
 import { createTurnRunner } from "@openbot/toolkit/run-turn";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -29,9 +28,7 @@ import {
   readApprovedRunAssertion,
   readRunAssertion,
 } from "./agents/callback-token";
-import { canUseComputer } from "./agents/computer-access";
 import { wireCoordination } from "./agents/coordination-wiring";
-import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk } from "./agents/handoff";
 import { createHandoffRunner } from "./agents/handoff-runner";
 import { startHandoffDelivery } from "./agents/handoff-wiring";
@@ -74,9 +71,8 @@ import { startRetentionSweeps } from "./audit-retention";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { AuthService } from "./auth/guards";
-import { createRoleRepository } from "./auth/guards";
 import { createIdentityProviderStore } from "./auth/identity-provider-store";
-import type { OpenBotRole } from "./auth/roles";
+import { roleForEmail, type OpenBotRole } from "./auth/roles";
 import {
   loadAttachmentForTurn,
   markAttachmentsSent,
@@ -110,7 +106,6 @@ import { createComputerGateway } from "./computer/gateway";
 import { createHeadlessComputerTools } from "./computer/headless-tools";
 import { createPageFrameStore } from "./computer/page-frames";
 import { startPolicyListener } from "./computer/policy-listener";
-import { withPolicyPushOnWake } from "./computer/policy-network";
 import {
   createPolicyStore,
   DEFAULT_ACTION_POLICY,
@@ -119,7 +114,6 @@ import {
   createComputerProvider,
   describeComputerIsolation,
 } from "./computer/provider";
-import { createSnapshotStore } from "./computer/snapshot-store";
 import { loadConfig } from "./config";
 import {
   type IdentifyActor,
@@ -259,12 +253,10 @@ import {
   createChannelHello,
   createDuetChannelStore,
 } from "./openduet/channels";
-import { createComputerCheck } from "./openduet/computer-check";
 import { createPageStore } from "./openduet/pages";
 import { withRunChannels } from "./openduet/run-channel";
 import {
   createSetupSources,
-  modelKeyOf,
   primaryBotIdOf,
 } from "./openduet/setup";
 import {
@@ -276,7 +268,6 @@ import { createTaskReplyContext } from "./openduet/task-reply-context";
 import { createTaskThreads, createTaskTurn } from "./openduet/task-threads";
 import type { TaskStarter } from "./openduet/tasks";
 import { createOpenDuetTools, createTaskIntake } from "./openduet/wiring";
-import { reportIntelligenceEntitlement } from "./intelligence-entitlement-check";
 import { createSelfHostBanner } from "./self-host-banner";
 import { createTeamBots } from "./team-bots/team-bots";
 import {
@@ -311,11 +302,10 @@ async function resolveRequestActor(request: Request): Promise<{
   if (!user) {
     throw new Error("A CopilotKit run requires a signed-in user.");
   }
-  const roles = await roleRepository.rolesForUser(user.id);
   return {
     id: user.id,
     name: user.name ?? user.email ?? user.id,
-    role: roles.includes("admin") ? "admin" : "user",
+    role: roleForEmail(user.email, config.auth?.initialAdminEmails ?? []),
   };
 }
 
@@ -493,11 +483,9 @@ const channelBusySweep = repeatAfterEach(async () => {
     console.error("Channel busy expiry failed.", error);
   }
 }, 30_000);
-const roleRepository = createRoleRepository(database);
 const loadAgentsForActor = createRuntimeAgentLoader(
   database,
   agentVault,
-  config.managedAgent,
 );
 await synchronizeTenantPackage(database, tenantPackage);
 const peopleStore = createPeopleStore(
@@ -532,23 +520,9 @@ const identityProviderStore = createIdentityProviderStore(database);
 const auth: AuthService | undefined = config.auth
   ? createAuth(config, database)
   : undefined;
-// Each computer is pushed its network policy on the way to the action that woke it, because a
-// computer refuses every connection until one arrives (see `withPolicyPushOnWake`).
-const computerProvider = config.computer
-  ? withPolicyPushOnWake(createComputerProvider(config.computer), {
-      policyForBot: (botId) => enterpriseControls()?.policyForBot(botId),
-      ...(config.computer.token ? { token: config.computer.token } : {}),
-      ...(config.webBotAuth ? { webBotAuth: config.webBotAuth } : {}),
-    })
-  : undefined;
-
-if (computerProvider?.warm) {
-  void computerProvider.warm();
-}
-// What Bots may do on their computers. Configuration supplies the deployment's default; an
-// administrator can change it while running, and a restart returns to the configured one.
+const computerProvider = config.computer ? createComputerProvider(config.computer) : undefined;
 const policyStore = createPolicyStore(
-  config.computer?.policy ?? DEFAULT_ACTION_POLICY,
+  DEFAULT_ACTION_POLICY,
   database,
 );
 // A boundary an administrator set is read back before the first action is decided, so a restart no
@@ -595,29 +569,11 @@ let deliveryNotifications: (
   throw new Error("Delivery is not initialized.");
 };
 
-/**
- * Who a routine acts as, resolved the way {@link resolveRequestActor} resolves it.
- *
- * THE ROLE IS READ, NOT ASSUMED. Which coworkers exist is decided per person and an administrator
- * sees Bots a user does not, so hardcoding `role: "user"` here would hide an administrator's own Bots
- * from their own routine — the routine would fail with "that Bot is no longer registered" for a Bot
- * sitting in front of them in chat. This asks the same repository the request path asks, so a routine
- * sees exactly the coworkers its owner sees.
- */
-const actorFor = async (ownerUserId: string): Promise<AgentActor> => {
-  // One person, and they are an administrator. The id stays the routine owner's rather than being
-  // rewritten to DEV_ACTOR's: in this mode they are the same person, and if they ever were not,
-  // silently borrowing the dev actor's identity would be worse than finding nothing.
-  if (config.singleUser) return { id: ownerUserId, role: DEV_ACTOR.role };
-  const roles = await roleRepository.rolesForUser(ownerUserId);
-  if (!roles.includes("admin") && !roles.includes("user")) {
-    throw new Error("A routine requires an authorized owner.");
-  }
-  return {
-    id: ownerUserId,
-    role: roles.includes("admin") ? "admin" : "user",
-  };
-};
+const actorFor = async (ownerUserId: string): Promise<AgentActor> => ({
+  id: ownerUserId,
+  role: config.singleUser ? "admin" : "user",
+});
+
 const channelSourceForRun = async (run: RunAssertion) => {
   if (!run.threadId) return null;
   const sources = await database
@@ -726,8 +682,7 @@ const approvalComputerTools = async (
   const profile = await agentProfileStore.get(actor, agentId);
   if (!profile)
     throw new ApprovalRefusedError("That Bot is no longer available to you.");
-  // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-  return computerGateway && canUseComputer(profile, actor)
+  return computerGateway
     ? createHeadlessComputerTools({
         gateway: computerGateway,
         botId: agentId,
@@ -759,21 +714,7 @@ const retentionSweeps = startRetentionSweeps(
   pageFrameStore,
 );
 const computerGateway = computerProvider
-  ? createComputerGateway({
-      provider: computerProvider,
-      auditStore: bootAuditStore,
-      approvalGate: approvalService.gate,
-      policy: () => policyStore.get(),
-      // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
-      // when the snapshot was taken by another server. A Map here would be blank on every replica
-      // but the one that snapshotted, and the boundary would decide with no element to look at.
-      snapshots: createSnapshotStore(database),
-      // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
-      // sentence on that button already promised.
-      pageFrames: pageFrameStore,
-      allowPrivateHosts: config.computer?.allowPrivateHosts,
-      token: config.computer?.token,
-    })
+  ? createComputerGateway({ provider: computerProvider, pageFrames: pageFrameStore })
   : undefined;
 
 /**
@@ -1132,9 +1073,7 @@ void recordAuditEvent(bootAuditStore, {
     source:
       policySource === "the database"
         ? "an administrator, saved in this deployment"
-        : config.computer?.policy
-          ? "configuration"
-          : "the built-in default",
+        : "the built-in default",
     note:
       policySource === "the database"
         ? "Set while running and kept. A restart returns to this."
@@ -1224,11 +1163,7 @@ const intentRouter = createIntentRouter({
   }),
 });
 
-// Said once at boot: whether the key can call the model the Bots run on. A key without access to it
-// otherwise passes every start-up check and fails at the first message, in front of whoever sent it.
-// Kept, with a stamp naming the key it asked about, so the setup checklist can repeat the answer
-// for that key and say "not checked yet" for any other. The checklist's "Check again" asks again
-// through the same function. Never rejects: a failed read reads as not checked.
+// Used by the setup page when a person explicitly asks to check the model.
 const checkModelAvailability = () =>
   reportModelAvailability({
     provider: runtimeModel.provider,
@@ -1242,17 +1177,6 @@ const checkModelAvailability = () =>
         environment: process.env,
       }),
   });
-const modelCheckAtBoot = (async () => {
-  const { stamp } = await modelKeyOf({
-    plan: Boolean(runtimeModel.plan),
-    provider: runtimeModel.provider,
-    keyId: tenantPackage.model.credentialSecretRef,
-    credentials: credentialStore,
-    environment: process.env,
-  });
-  return { outcome: await checkModelAvailability(), stamp };
-})().catch(() => undefined);
-
 // Named collaborators are bound once in actorAgentResolver for chat, hops, and headless turns.
 
 /** The deployment's model key, resolved per call so a credential rotated a moment ago is used next. */
@@ -1636,31 +1560,6 @@ const selectionForActor = (actorId: string): ToolSelection => ({
   },
 });
 
-// Every run dials the stored endpoint again, so the check that was applied when it was
-// registered has to be applied to wherever it redirects now.
-// Absent computer configuration means nothing opted into private hosts, which is the safe
-// reading and the same one `createApp` takes.
-const agentFetch = createAgentFetch({
-  allowPrivateHosts: config.computer?.allowPrivateHosts === true,
-  // Named addresses are reachable on every hop, not only the one that was registered.
-  allowedHosts: config.agentEndpointAllowedHosts,
-  // The refusal is what the run already knows; this is what the deployment knows. Written here
-  // rather than in `endpoint.ts` so that file keeps deciding and nothing else, the way the
-  // target check it reuses does.
-  onRefusal: ({ address, reason }) => {
-    void recordAuditEvent(bootAuditStore, {
-      eventType: "agent.dial_refused",
-      targetType: "agent_endpoint",
-      targetId: address,
-      payload: { address, reason },
-    }).catch((error) => {
-      // A trail that cannot be written must not take a refusal down with it: the request is
-      // already refused by the time this runs, and the alternative to a logged failure here is
-      // an unhandled rejection.
-      console.error("Could not record a refused agent dial.", error);
-    });
-  },
-});
 const { coordination, coordinationForActor } = wireCoordination({
   handoffDesk,
   config,
@@ -1671,7 +1570,6 @@ const { coordination, coordinationForActor } = wireCoordination({
   database,
   pluginStore,
   bootAuditStore,
-  peopleStore,
   sourceForCoordinationRun,
   channelStore,
   // Assigned further down, once delivery is wired.
@@ -1743,8 +1641,6 @@ const routineRunner = createRoutineRunner({
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
-      // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-      if (!canUseComputer(profile, actor)) return [];
       return createHeadlessComputerTools({
         gateway: computerGateway,
         botId: agentId,
@@ -1783,7 +1679,6 @@ const baseAgentResolver = createActorAgentResolver({
   computerGuidance: config.computer ? COMPUTER_GUIDANCE : undefined,
   loadVendors,
   selectionForActor,
-  agentFetch,
   handoffForActor: (actorId, initiator, depth) =>
     restrictCoordinationForRun(
       initiator,
@@ -1987,8 +1882,6 @@ const groupConversations = createGroupConversations({
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
-      // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-      if (!canUseComputer(profile, actor)) return [];
       return createHeadlessComputerTools({
         gateway: computerGateway,
         botId: agentId,
@@ -2276,8 +2169,6 @@ const wakeUpRunner = createWakeUpRunner({
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
-      // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-      if (!canUseComputer(profile, actor)) return [];
       return createHeadlessComputerTools({
         gateway: computerGateway,
         botId: agentId,
@@ -2485,8 +2376,6 @@ await installEnterpriseControls({
   databaseUrl: config.databaseUrl,
   auditStore: bootAuditStore,
   ...(computerProvider ? { provider: computerProvider } : {}),
-  ...(config.computer?.token ? { computerToken: config.computer.token } : {}),
-  ...(config.webBotAuth ? { webBotAuth: config.webBotAuth } : {}),
   builtInModel: `${runtimeModel.provider}/${runtimeModel.defaultModel}`,
   people: peopleStore,
   initialAdminEmails: config.auth?.initialAdminEmails ?? [],
@@ -2507,12 +2396,6 @@ auditRoutineStore(routineStore, bootAuditStore);
 const selfHostBannerIntelligence = createIntelligenceClient(
   config.runtime.intelligence,
 );
-
-// Said once, at boot, whether Intelligence will let this deployment use what it is licensed for. A
-// self-hosted Intelligence without a licence refuses memory quietly; this is the line that says why.
-void reportIntelligenceEntitlement({
-  entitlements: () => selfHostBannerIntelligence.getRuntimeEntitlements(),
-});
 
 const identityGithubCallback =
   config.githubApp && config.publicUrl
@@ -2535,7 +2418,6 @@ const identityGithubCallback =
 const app = createApp(
   config,
   auth,
-  roleRepository,
   createAuditReader(database),
   createCredentialAdminService(
     config.keyEncryptionKey,
@@ -2548,7 +2430,6 @@ const app = createApp(
   copilotRuntime.handler,
   // The only path to an acting call.
   computerGateway,
-  policyStore,
   // Bots as durable objects, and the channels they run in.
   agentProfileStore,
   channelStore,
@@ -2707,7 +2588,6 @@ const app = createApp(
           check: checkModelAvailability,
         },
         credentials: credentialStore,
-        modelCheckAtBoot,
         entitlements: () => selfHostBannerIntelligence.getRuntimeEntitlements(),
         plugins: pluginStore,
         primaryBot: primaryBotIdOf(
@@ -2715,12 +2595,6 @@ const app = createApp(
           tenantPackage.tenantId,
         ),
         computer: Boolean(config.computer),
-        computerCheck: createComputerCheck({
-          provider: computerProvider,
-          controls: enterpriseControls,
-          ...(config.computer?.token ? { token: config.computer.token } : {}),
-          ...(config.webBotAuth ? { webBotAuth: config.webBotAuth } : {}),
-        }),
         apps: {
           configured: Boolean(composio),
           provider: composio?.provider ?? config.brokerProvider ?? "composio",
@@ -2765,29 +2639,11 @@ const { addresses: listening } = startHttpServer({
   port,
   config,
   resolveRequestActor,
-  agentProfileStore,
   computerGateway,
   demonstrationStore,
   demonstrationRecorder,
   app,
 });
-
-/** Whether only this machine, and the containers it runs, can reach the server. */
-const listensLocally = config.listen.every(({ local }) => local);
-
-if (config.singleUser) {
-  // Loud, every boot. A server that is not checking who is asking should never be a quiet default.
-  console.warn(
-    "No identity provider is configured, so every request is treated as " +
-      `${DEV_ACTOR.email} (administrator). Configure GOOGLE_OAUTH_*, ` +
-      "MICROSOFT_OAUTH_* or OKTA_OAUTH_* before anybody else can reach this.",
-  );
-  // And louder when somebody opened it beyond this machine, which only OPENBOT_HOST does.
-  if (!listensLocally)
-    console.warn(
-      `${LISTEN_HOST_VARIABLE} has this server listening beyond this machine (${listening.join(", ")}) with no sign-in, so anybody who can reach port ${port} is that administrator.`,
-    );
-}
 
 // Each listener holds a connection of its own for the life of the process. Released on the way out,
 // so a watch-mode restart does not leave two behind on every reload.
@@ -2819,10 +2675,4 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
  * 127.0.0.1 for as long as the server listened on every interface, which is how a single-user
  * install could be the administrator to the whole network while its own log said otherwise.
  */
-console.info(
-  `${tenantPackage.productName} server listening on ${listening.join(" and ")}${
-    listensLocally
-      ? ` (this machine only; set ${LISTEN_HOST_VARIABLE} to listen beyond it)`
-      : ""
-  }`,
-);
+console.info(`${tenantPackage.productName} server listening on ${listening.join(" and ")}`);

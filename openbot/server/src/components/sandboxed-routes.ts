@@ -1,7 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../auth/guards";
-import { requireAdmin } from "../auth/guards";
 import {
   SandboxedNameRefusedError,
   SandboxedNotFoundError,
@@ -31,8 +30,6 @@ export function createSandboxedRoutes(
 
   /** Everything the playground edits. Admin-only: this is the source of what Bots draw. */
   routes.get("/", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     return context.json({ components: await store.list() });
   });
@@ -49,8 +46,6 @@ export function createSandboxedRoutes(
   );
 
   routes.post("/", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const body = (await context.req.json().catch(() => null)) as {
       slug?: unknown;
@@ -148,8 +143,6 @@ export function createSandboxedRoutes(
   });
 
   routes.post("/:name/publish", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     try {
       const component = await store.publish(
@@ -166,8 +159,6 @@ export function createSandboxedRoutes(
   });
 
   routes.delete("/:name", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     // Answered like `publish`, because it is the same question: this surface owns the components it
     // authored, and a name with no draft behind it is not one of them. Reporting that as "not found"

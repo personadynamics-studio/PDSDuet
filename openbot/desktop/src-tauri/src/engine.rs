@@ -65,17 +65,6 @@ pub struct Address {
     pub engine: Engine,
     /// A Podman connection by name. Unpinned detection may leave this unset.
     pub connection: Option<String>,
-    /// Internal run affinity, deliberately absent from the setup/status IPC representation.
-    #[serde(skip)]
-    selector: Option<RuntimeSelector>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum RuntimeSelector {
-    DockerContext(String),
-    DockerHost(String),
-    PodmanUrl(String),
-    PodmanLocal,
 }
 
 impl Address {
@@ -83,103 +72,7 @@ impl Address {
         Self {
             engine,
             connection,
-            selector: None,
         }
-    }
-
-    /// Freeze the supported nonsecret selector before a managed run can create containers.
-    /// Query only names/remote mode, never context exports, TLS material or credential config.
-    pub fn pin(&self) -> Result<Self, String> {
-        if self.selector.is_some() || (self.engine == Engine::Podman && self.connection.is_some()) {
-            return Ok(self.clone());
-        }
-        let mut pinned = self.clone();
-        let env = |name| std::env::var(name).ok().filter(|value| !value.is_empty());
-        match self.engine {
-            Engine::Docker => {
-                pinned.selector = Some(if let Some(context) = env("DOCKER_CONTEXT") {
-                    self.docker_context_selector(context)?
-                } else if let Some(host) = env("DOCKER_HOST") {
-                    RuntimeSelector::DockerHost(nonsecret_endpoint(host)?)
-                } else {
-                    self.docker_context_selector(self.selector_output(&["context", "show"])?)?
-                });
-            }
-            Engine::Podman => {
-                if let Some(connection) = env("CONTAINER_CONNECTION") {
-                    pinned.connection = Some(connection);
-                } else if let Some(host) = env("CONTAINER_HOST") {
-                    pinned.selector = Some(RuntimeSelector::PodmanUrl(nonsecret_endpoint(host)?));
-                } else if cfg!(target_os = "linux")
-                    && self.selector_output(&["info", "--format", "{{.Host.ServiceIsRemote}}"])?
-                        == "false"
-                {
-                    pinned.selector = Some(RuntimeSelector::PodmanLocal);
-                } else {
-                    pinned.connection = Some(self.selector_output(&[
-                        "system",
-                        "connection",
-                        "list",
-                        "--format",
-                        "{{if .Default}}{{.Name}}{{end}}",
-                    ])?);
-                }
-            }
-        }
-        Ok(pinned)
-    }
-
-    fn docker_context_selector(&self, context: String) -> Result<RuntimeSelector, String> {
-        if context == "default" {
-            // Docker's virtual default context still derives its endpoint from DOCKER_HOST.
-            // Retain that endpoint so even this context cannot be retargeted by the environment.
-            Ok(RuntimeSelector::DockerHost(nonsecret_endpoint(
-                self.selector_output(&[
-                    "context",
-                    "inspect",
-                    "default",
-                    "--format",
-                    "{{.Endpoints.docker.Host}}",
-                ])?,
-            )?))
-        } else {
-            Ok(RuntimeSelector::DockerContext(context))
-        }
-    }
-
-    fn selector_output(&self, args: &[&str]) -> Result<String, String> {
-        let output = self
-            .command()
-            .args(args)
-            .output()
-            .map_err(|error| format!("Could not identify the container runtime: {error}"))?;
-        if !output.status.success() {
-            return Err(format!("Could not identify the {} runtime selector ({}). Choose an explicit context or connection and try again.", self.engine.binary(), output.status));
-        }
-        let value = String::from_utf8(output.stdout)
-            .map_err(|_| "The container runtime returned an invalid selector.".to_string())?;
-        let names: Vec<_> = value
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        match names.as_slice() {
-            [name] => Ok((*name).to_string()),
-            _ => Err("The container runtime did not identify one connection. Choose an explicit context or connection and try again.".into()),
-        }
-    }
-
-    /// Probe this retained runtime without detecting a replacement engine.
-    pub fn status(&self) -> EngineStatus {
-        let mut status = answering(self.clone());
-        status.responding = self.responds();
-        if !status.responding {
-            status.detail = format!(
-                "The original {} runtime is not answering. Start it and try again.",
-                self.engine.binary()
-            );
-        }
-        status
     }
 
     /// The binary and the arguments that name this engine, and the one place that decides them.
@@ -196,18 +89,6 @@ impl Address {
         if let Some(connection) = &self.connection {
             arguments.push("--connection".to_string());
             arguments.push(connection.clone());
-        }
-        if let Some(selector) = &self.selector {
-            match selector {
-                RuntimeSelector::DockerContext(context) => {
-                    arguments.extend(["--context".into(), context.clone()])
-                }
-                RuntimeSelector::DockerHost(host) => {
-                    arguments.extend(["--host".into(), host.clone()])
-                }
-                RuntimeSelector::PodmanUrl(url) => arguments.extend(["--url".into(), url.clone()]),
-                RuntimeSelector::PodmanLocal => arguments.push("--remote=false".into()),
-            }
         }
         (
             program(self.engine).unwrap_or_else(|| PathBuf::from(self.engine.binary())),
@@ -226,39 +107,6 @@ impl Address {
         command
     }
 
-    /// Whether Compose can actually run through this engine.
-    ///
-    /// Podman ships no compose implementation. `podman compose` looks for an external provider on
-    /// PATH and, finding none, answers with seven errors naming `docker-compose`, which is a
-    /// baffling thing to read on a machine where Docker was deliberately not installed. Docker
-    /// Desktop puts a provider on PATH, which is why this went unnoticed until the stack was
-    /// started on a Linux machine that had only Podman.
-    pub fn composes(&self) -> bool {
-        self.command()
-            .args(["compose", "version"])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
-    /// Answering now, not merely installed. A binary that prints help proves nothing.
-    pub fn responds(&self) -> bool {
-        self.command()
-            .args(["version", "--format", "{{.Server.APIVersion}}"])
-            .output()
-            .map(|out| out.status.success() && !out.stdout.is_empty())
-            .unwrap_or(false)
-    }
-}
-
-fn nonsecret_endpoint(value: String) -> Result<String, String> {
-    let parsed = reqwest::Url::parse(&value).map_err(|_| {
-        "Use a named container context or connection for this endpoint.".to_string()
-    })?;
-    if parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() {
-        return Err("Use a named container context or connection; credentials cannot be retained in an endpoint selector.".into());
-    }
-    Ok(value)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -266,41 +114,10 @@ pub struct EngineStatus {
     pub engine: Option<Engine>,
     /// How to reach it, carried so no later call has to guess again.
     pub address: Option<Address>,
-    /// Answering now, not merely installed. A binary on PATH proves nothing.
-    pub responding: bool,
     /// What Compose should mount as the engine socket, when the default is wrong.
     pub engine_socket: Option<String>,
     /// Present so a person can be told what was wrong rather than that something was.
     pub detail: String,
-}
-
-/// A Podman machine that is running now, preferred over starting a second one.
-///
-/// Somebody who already has a machine up is handed it rather than made to wait while a duplicate
-/// boots beside it. Ours is preferred among running machines only so that repeat launches settle on
-/// the same one.
-fn running_machine(preferred: &str) -> Option<String> {
-    let output = tool(Engine::Podman)
-        .args(["machine", "list", "--format", "json"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let machines: Vec<MachineListing> = serde_json::from_slice(&output.stdout).ok()?;
-    let running = || machines.iter().filter(|machine| machine.running);
-    running()
-        .find(|machine| machine.name == preferred)
-        .or_else(|| running().next())
-        .map(|machine| machine.name.clone())
-}
-
-#[derive(Deserialize)]
-struct MachineListing {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Running")]
-    running: bool,
 }
 
 /// Where OpenBot keeps the engine tools it installed itself.
@@ -480,8 +297,7 @@ pub fn rootless_socket() -> Option<PathBuf> {
             let uid = unsafe { libc::getuid() };
             Some(PathBuf::from(format!("/run/user/{uid}")))
         })?;
-    let socket = runtime_dir.join("podman/podman.sock");
-    socket.exists().then_some(socket)
+    Some(runtime_dir.join("podman/podman.sock"))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -491,62 +307,19 @@ pub fn rootless_socket() -> Option<PathBuf> {
     None
 }
 
-/// What is here, before anything is installed.
+/// Locate an installed container CLI.
 pub fn detect() -> EngineStatus {
-    for engine in [Engine::Docker, Engine::Podman] {
-        let address = Address::new(engine, None);
-        if address.responds() {
-            return answering(address);
-        }
-    }
-
-    // Podman's default connection can name a machine that is not running while another one is. That
-    // is not "no engine", and creating a second machine in answer to it is the wrong repair.
-    if let Some(machine) = running_machine(crate::acquire::MACHINE) {
-        let address = Address::new(Engine::Podman, Some(machine));
-        if address.responds() {
-            return answering(address);
-        }
-    }
-
     for engine in [Engine::Docker, Engine::Podman] {
         if program(engine).is_some() {
             return EngineStatus {
                 engine: Some(engine),
-                address: None,
-                responding: false,
-                engine_socket: None,
-                detail: format!(
-                    "{} is installed but not answering. Start it and try again.",
-                    engine.binary()
-                ),
+                address: Some(Address::new(engine, None)),
+                engine_socket: socket_override(engine),
+                detail: format!("{} is installed.", engine.binary()),
             };
         }
     }
-
-    EngineStatus {
-        engine: None,
-        address: None,
-        responding: false,
-        engine_socket: None,
-        // Not an instruction any more: OpenBot installs one. See `install.rs`.
-        detail: "No container engine yet.".into(),
-    }
-}
-
-fn answering(address: Address) -> EngineStatus {
-    let engine = address.engine;
-    let detail = match &address.connection {
-        Some(machine) => format!("{} is answering on {machine}.", engine.binary()),
-        None => format!("{} is answering.", engine.binary()),
-    };
-    EngineStatus {
-        engine: Some(engine),
-        engine_socket: socket_override(engine),
-        address: Some(address),
-        responding: true,
-        detail,
-    }
+    EngineStatus { engine: None, address: None, engine_socket: None, detail: "No container engine yet.".into() }
 }
 
 /// The socket Compose should mount, or `None` when the default is already right.
@@ -824,236 +597,34 @@ fn main() {
     }
 }
 
-/// A native Podman API service belongs to the desktop session only when this session spawned it.
-/// Existing user/systemd services are probed and reused, never stopped or reconfigured.
 #[cfg(any(target_os = "linux", all(test, unix)))]
 pub mod local_api {
     use crate::problem::Problem;
-    use std::io::{Read, Write};
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-    use std::os::unix::net::UnixStream;
-    use std::os::unix::process::CommandExt;
-    use std::path::{Path, PathBuf};
-    use std::process::{Child, Command, Stdio};
-    use std::time::{Duration, Instant};
+    use std::path::Path;
+    use std::process::{Child, Stdio};
 
     #[derive(Default)]
-    pub struct Service {
-        child: Option<Child>,
-        socket: Option<(PathBuf, u64, u64)>,
-    }
-
-    fn problem(detail: impl Into<String>) -> Problem {
-        Problem::with(
-            "OpenBot could not prepare its container API. Try again.",
-            detail,
-        )
-    }
-
-    fn ping(socket: &Path) -> Result<Option<u32>, String> {
-        let probe = || -> std::io::Result<(String, Option<u32>)> {
-            let mut stream = UnixStream::connect(socket)?;
-            #[cfg(target_os = "linux")]
-            let peer = {
-                use std::os::fd::AsRawFd;
-                let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-                let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-                if unsafe {
-                    libc::getsockopt(
-                        stream.as_raw_fd(),
-                        libc::SOL_SOCKET,
-                        libc::SO_PEERCRED,
-                        (&mut credentials as *mut libc::ucred).cast(),
-                        &mut size,
-                    )
-                } != 0
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Some(credentials.pid as u32)
-            };
-            #[cfg(not(target_os = "linux"))]
-            let peer = None;
-            stream.set_read_timeout(Some(Duration::from_millis(300)))?;
-            stream.set_write_timeout(Some(Duration::from_millis(300)))?;
-            stream.write_all(
-                b"GET /_ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-            )?;
-            let mut response = String::new();
-            stream.take(4096).read_to_string(&mut response)?;
-            Ok((response, peer))
-        };
-        let (response, peer) = probe().map_err(|error| format!("{}: {error}", socket.display()))?;
-        if response.starts_with("HTTP/1.1 200 ") || response.starts_with("HTTP/1.0 200 ") {
-            Ok(peer)
-        } else {
-            Err(format!(
-                "{}: Podman API ping failed: {response}",
-                socket.display()
-            ))
-        }
-    }
+    pub struct Service { child: Option<Child> }
 
     impl Service {
-        #[cfg(target_os = "linux")]
-        pub fn ensure(&mut self, address: &super::Address, root: &Path) -> Result<(), Problem> {
-            if !matches!(address.selector, Some(super::RuntimeSelector::PodmanLocal)) {
-                return Ok(());
+        pub fn start(&mut self, address: &super::Address, root: &Path) -> Result<(), Problem> {
+            if address.engine != super::Engine::Podman { return Ok(()); }
+            self.stop()?;
+            let socket = super::rootless_socket().ok_or_else(|| Problem::plain("No local container socket is configured."))?;
+            let logs = root.join("logs");
+            for directory in [socket.parent(), Some(logs.as_path())].into_iter().flatten() {
+                std::fs::create_dir_all(directory).map_err(|error| Problem::from(error.to_string()))?;
             }
-            let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
-                });
-            let socket = runtime.join("podman/podman.sock");
-            let log = root.join("logs/podman-api.log");
-            self.ensure_with(&socket, &log, || {
-                let mut command = address.command();
-                command
-                    .args(["system", "service", "--time=0"])
-                    .arg(format!("unix://{}", socket.display()));
-                command
-            })
-        }
-
-        pub(super) fn ensure_with(
-            &mut self,
-            socket: &Path,
-            log: &Path,
-            spawn: impl FnOnce() -> Command,
-        ) -> Result<(), Problem> {
-            if let Some(child) = self.child.as_mut() {
-                if let Some(status) = child
-                    .try_wait()
-                    .map_err(|error| problem(error.to_string()))?
-                {
-                    self.stop()?;
-                    return Err(problem(format!(
-                        "The owned Podman API exited with {status}. Log: {}",
-                        log.display()
-                    )));
-                }
-            }
-            match std::fs::symlink_metadata(socket) {
-                Ok(_) => return ping(socket).map(|_| ()).map_err(problem),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(problem(format!("{}: {error}", socket.display()))),
-            }
-            if self.child.is_some() {
-                return Err(problem("The owned Podman API lost its socket."));
-            }
-            for directory in [socket.parent(), log.parent()].into_iter().flatten() {
-                std::fs::DirBuilder::new()
-                    .recursive(true)
-                    .mode(0o700)
-                    .create(directory)
-                    .map_err(|error| problem(format!("{}: {error}", directory.display())))?;
-            }
-            let output = std::fs::File::create(log)
-                .map_err(|error| problem(format!("{}: {error}", log.display())))?;
-            let error_output = output
-                .try_clone()
-                .map_err(|error| problem(error.to_string()))?;
-            self.child = Some(
-                spawn()
-                    .process_group(0)
-                    .stdin(Stdio::null())
-                    .stdout(output)
-                    .stderr(error_output)
-                    .spawn()
-                    .map_err(|error| problem(format!("could not start Podman API: {error}")))?,
-            );
-            let until = Instant::now() + Duration::from_secs(10);
-            let failure = loop {
-                match self.child.as_mut().unwrap().try_wait() {
-                    Ok(Some(status)) => break format!("Podman API exited with {status}"),
-                    Err(error) => break format!("could not observe Podman API: {error}"),
-                    Ok(None) => {}
-                }
-                match ping(socket) {
-                    Ok(peer) => {
-                        let child = self.child.as_ref().unwrap().id();
-                        if peer
-                            .is_some_and(|pid| unsafe { libc::getpgid(pid as i32) } != child as i32)
-                        {
-                            // Another service won the bind race. Retire ours without claiming its socket.
-                            self.stop()?;
-                            return ping(socket).map(|_| ()).map_err(problem);
-                        }
-                        match std::fs::symlink_metadata(socket) {
-                            Ok(metadata) => {
-                                self.socket =
-                                    Some((socket.to_path_buf(), metadata.dev(), metadata.ino()))
-                            }
-                            Err(error) => break format!("{}: {error}", socket.display()),
-                        }
-                        return Ok(());
-                    }
-                    Err(error) if Instant::now() >= until => break error,
-                    Err(_) => std::thread::sleep(Duration::from_millis(50)),
-                }
-            };
-            let diagnostic = match std::fs::read_to_string(log) {
-                Ok(contents) => contents,
-                Err(error) => format!("could not read {}: {error}", log.display()),
-            };
-            let cleanup = self.stop();
-            Err(problem(match cleanup {
-                Ok(()) => format!("{failure}\n{diagnostic}"),
-                Err(cleanup) => format!(
-                    "{failure}\n{diagnostic}\nCleanup: {} {:?}",
-                    cleanup.said, cleanup.detail
-                ),
-            }))
+            let output = std::fs::File::create(root.join("logs/podman-api.log")).map_err(|error| Problem::from(error.to_string()))?;
+            let error_output = output.try_clone().map_err(|error| Problem::from(error.to_string()))?;
+            self.child = Some(address.command().args(["system", "service", "--time=0"])
+                .arg(format!("unix://{}", socket.display())).stdin(Stdio::null()).stdout(output).stderr(error_output)
+                .spawn().map_err(|error| Problem::from(error.to_string()))?);
+            Ok(())
         }
 
         pub fn stop(&mut self) -> Result<(), Problem> {
-            if let Some(child) = self.child.as_mut() {
-                if child
-                    .try_wait()
-                    .map_err(|error| problem(error.to_string()))?
-                    .is_none()
-                {
-                    // Terminate the exact held child, never a PID read from a previous session.
-                    if unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) } != 0 {
-                        let error = std::io::Error::last_os_error();
-                        if error.raw_os_error() != Some(libc::ESRCH) {
-                            return Err(problem(format!("could not stop Podman API: {error}")));
-                        }
-                    }
-                    let until = Instant::now() + Duration::from_secs(2);
-                    while child
-                        .try_wait()
-                        .map_err(|error| problem(error.to_string()))?
-                        .is_none()
-                    {
-                        if Instant::now() >= until {
-                            if unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) } != 0 {
-                                let error = std::io::Error::last_os_error();
-                                if error.raw_os_error() != Some(libc::ESRCH) {
-                                    return Err(problem(error.to_string()));
-                                }
-                            }
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
-                }
-                child.wait().map_err(|error| problem(error.to_string()))?;
-                self.child = None;
-            }
-            if let Some((socket, device, inode)) = &self.socket {
-                match std::fs::symlink_metadata(socket) {
-                    Ok(metadata) if metadata.dev() == *device && metadata.ino() == *inode => {
-                        std::fs::remove_file(socket)
-                            .map_err(|error| problem(format!("{}: {error}", socket.display())))?;
-                    }
-                    Ok(_) => {} // A replacement socket is not ours.
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(problem(error.to_string())),
-                }
-                self.socket = None;
-            }
+            if let Some(mut child) = self.child.take() { let _ = child.kill(); child.wait().map_err(|error| Problem::from(error.to_string()))?; }
             Ok(())
         }
 
@@ -1064,14 +635,7 @@ pub mod local_api {
     }
 
     impl Drop for Service {
-        fn drop(&mut self) {
-            if let Err(error) = self.stop() {
-                eprintln!(
-                    "[podman-api] cleanup failed: {} {:?}",
-                    error.said, error.detail
-                );
-            }
-        }
+        fn drop(&mut self) { let _ = self.stop(); }
     }
 }
 

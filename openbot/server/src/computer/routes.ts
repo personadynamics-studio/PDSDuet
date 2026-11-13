@@ -1,97 +1,26 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { downloadHeaders } from "@openbot/shared/file-download";
-import type { BotAccessCheck } from "../agents/profile-policy";
-import type { AuditReader } from "../audit";
 import type { AppVariables } from "../auth/guards";
-import { requireAdmin } from "../auth/guards";
-import { DEPLOYMENT_ROUTES } from "./deployment-routes";
 import {
-  type ActionActor,
-  ActionRefusedError,
   type ComputerGateway,
   ComputerUnavailableError,
   ElementNotFoundError,
   HandoffRequestError,
-  HumanHasControlError,
-  NavigationRefusedError,
-  StaleSnapshotError,
   WorkspaceNotFoundError,
   WorkspaceRefusedError,
   WorkspaceRequestError,
   WorkspaceTooLargeError,
 } from "./gateway";
 import type { PageFrameStore } from "./page-frames";
-import { dryRunAgainstHistory, REPLAYABLE_EVENT_TYPES } from "./policy-dry-run";
-import { type PolicyStore, parseActionPolicy } from "./policy-store";
-
-/**
- * The Bot computer's surface, behind the same session guard as every other API route.
- *
- * The computer has token authentication but no user/session identity. These server routes require a
- * session guard because `COMPUTER_TOKEN` proves the caller is an internal service, not which user is
- * asking to drive the browser.
- *
- * Every computer call goes through the gateway. That is the governance seam: each acting route in
- * this file passes through a policy decision and audit row before it reaches the computer.
- */
 
 export function createComputerRoutes(
   gateway: ComputerGateway,
-  policyStore: PolicyStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
-  /**
-   * Whether the caller may act as the Bot in the path. Required rather than optional, so a new
-   * deployment cannot be wired up without an answer to it.
-   */
-  canUseBot: BotAccessCheck,
-  /** Where the frame a page was opened on is kept. Absent leaves the transcript as it was. */
   pageFrames?: PageFrameStore,
-  /**
-   * For the policy dry-run, which replays the trail. Optional the way `auditReader` is optional in
-   * `createApp`: a deployment wired without one still governs and records actions, and the dry-run
-   * endpoint says it cannot answer rather than answering from nothing.
-   */
-  auditReader?: AuditReader,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-
-  /**
-   * Every route under a Bot id, in one place.
-   *
-   * The Bot travels in the path, so each route would otherwise have to remember to ask, and the one
-   * that forgot would be the whole surface. Reads are gated as well as actions: a screenshot of
-   * somebody's Bot is whatever page it is signed into.
-   *
-   * The answer is the same for a Bot that does not exist and one belonging to somebody else, so this
-   * cannot be used to find out which Bots a deployment has.
-   */
-  routes.use("/:botId/*", requireUser, async (context, next) => {
-    const botId = context.req.param("botId");
-    /*
-     * `/policy` and `/fleet` are this router's own, and they are not about a Bot.
-     *
-     * Hono matches `/*` against zero segments, so `/policy` arrives here as a Bot called "policy",
-     * `canUseBot` quite correctly says there is no such Bot, and the Boundaries screen answers 404
-     * for everybody including an administrator. Named rather than inferred from the segment count,
-     * because a second deployment-wide route added later should have to think about this line.
-     *
-     * The name alone is not enough to step aside on, though. Both deployment routes are a single
-     * segment, so `/policy/status` is `/:botId/status` and nothing more: skipping the whole subtree
-     * would hand the computer of a Bot called `policy` to anybody who can sign in, with the guard
-     * never asked rather than merely bypassed. Bot ids are reserved against these names where a Bot
-     * is created, so such a Bot should not exist; this is the half that holds if one ever does.
-     */
-    const path = context.req.path.replace(/\/+$/, "");
-    if (botId && DEPLOYMENT_ROUTES.has(botId) && path.endsWith(`/${botId}`)) {
-      return next();
-    }
-
-    if (botId && !(await canUseBot(context.var.actor, botId))) {
-      return context.json({ error: "There is no such Bot." }, 404);
-    }
-    await next();
-  });
+  routes.use("*", requireUser);
 
   routes.get("/:botId/status", async (context) => {
     const botId = context.req.param("botId");
@@ -250,27 +179,12 @@ export function createComputerRoutes(
       const botId = context.req.param("botId") ?? "default";
       const result = await gateway.navigate(
         botId,
-        {
-          id: context.var.actor.id,
-          ...(context.var.actor.email === DEV_ACTOR_EMAIL
-            ? {}
-            : { userId: context.var.actor.id }),
-        },
         body.url.trim(),
         toolCallId || undefined,
       );
       await keepFrameOf(botId, toolCallId, result.url, result.title);
       return context.json(result);
     } catch (error) {
-      if (error instanceof ActionRefusedError) {
-        return context.json({ error: error.message, rule: error.rule }, 403);
-      }
-      // A refusal is the rules working, not a fault, so it is a 403 with the reason a person reads.
-      // Collapsing it into the same 5xx as an unreachable computer would send somebody looking for
-      // an outage that is not happening.
-      if (error instanceof NavigationRefusedError) {
-        return context.json({ error: error.message }, 403);
-      }
       return context.json(errorBody(error), statusFor(error));
     }
   });
@@ -286,19 +200,18 @@ export function createComputerRoutes(
   /**
    * The acting routes.
    *
-   * Each one hands the gateway the Bot, the actor and the input, and does no checking
-   * of its own beyond the shape of the request. Where a decision gets made is a single place.
+   * Each route passes the request input to the computer gateway.
    */
   routes.post("/:botId/click", (context) =>
-    act(context, (botId, actor, body, signal) => {
+    act(context, (botId, body, signal) => {
       const ref = asRef(body);
       if (!ref) return badRef;
-      return gateway.click(botId, actor, ref, signal);
+      return gateway.click(botId, ref, signal);
     }),
   );
 
   routes.post("/:botId/type", (context) =>
-    act(context, (botId, actor, body, signal) => {
+    act(context, (botId, body, signal) => {
       const ref = asRef(body);
       if (!ref) return badRef;
       if (typeof body?.text !== "string") {
@@ -306,7 +219,6 @@ export function createComputerRoutes(
       }
       return gateway.type(
         botId,
-        actor,
         {
           ...ref,
           text: body.text,
@@ -318,14 +230,13 @@ export function createComputerRoutes(
   );
 
   routes.post("/:botId/key", (context) =>
-    act(context, (botId, actor, body, signal) => {
+    act(context, (botId, body, signal) => {
       if (typeof body?.key !== "string" || !body.key) {
         return { error: "A key name is required, such as Enter or Tab." };
       }
       const ref = asRef(body);
       return gateway.key(
         botId,
-        actor,
         {
           key: body.key,
           ...(ref ?? {}),
@@ -336,9 +247,9 @@ export function createComputerRoutes(
   );
 
   routes.post("/:botId/scroll", (context) =>
-    act(context, (botId, actor, body) => {
+    act(context, (botId, body) => {
       if (!usableDeltaY(body?.deltaY)) return badDeltaY;
-      return gateway.scroll(botId, actor, {
+      return gateway.scroll(botId, {
         ...(typeof body?.deltaY === "number" ? { deltaY: body.deltaY } : {}),
       });
     }),
@@ -362,10 +273,9 @@ export function createComputerRoutes(
   });
 
   routes.post("/:botId/control/request", (context) =>
-    act(context, (botId, actor, body) =>
+    act(context, (botId, body) =>
       gateway.requestHelp(
         botId,
-        actor,
         typeof body?.reason === "string" && body.reason.trim()
           ? body.reason.trim()
           : "It can't continue without you.",
@@ -374,26 +284,8 @@ export function createComputerRoutes(
     ),
   );
 
-  /**
-   * The computers, for the admin surface.
-   *
-   * Not per-Bot in the path the way the acting routes are: this asks the computer what it holds, and
-   * it holds a list. `:botId` is still there because every route under this router has it. The
-   * list itself is every computer, so a signed-in user is not enough; an administrator has to ask.
-   */
-  /**
-   * Every computer in the deployment.
-   *
-   * Its own route rather than `/:botId/computers`, which is what Admin used to call with a
-   * placeholder id. That worked until the bot-access middleware arrived: the placeholder is not a
-   * Bot, `canUseBot` said so, and the screen 404d for everybody including an administrator, showing
-   * an empty page rather than the fleet. The list is deployment-wide, so it is addressed
-   * deployment-wide and named in DEPLOYMENT_ROUTES beside `/policy`.
-   */
-  routes.get("/fleet", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-
+  /** Every computer in the deployment. */
+  routes.get("/fleet", async (context) => {
     try {
       return context.json(await gateway.computers());
     } catch (error) {
@@ -402,12 +294,6 @@ export function createComputerRoutes(
   });
 
   routes.get("/:botId/computers", async (context) => {
-    // The session guard and the question of whether this person may act as the Bot in the path are
-    // both applied by the middleware above. Neither is the question here: the answer is the whole
-    // fleet whatever `:botId` says, so it takes administering the deployment.
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-
     try {
       return context.json(await gateway.computers());
     } catch (error) {
@@ -417,12 +303,12 @@ export function createComputerRoutes(
 
   /** Stop the browser, keep the logins. */
   routes.post("/:botId/computers/stop", (context) =>
-    act(context, (botId, actor) => gateway.stopComputer(botId, actor)),
+    act(context, (botId) => gateway.stopComputer(botId)),
   );
 
   /** Delete the profile. Every login goes with it, which is the point and also the danger. */
   routes.post("/:botId/computers/reset", (context) =>
-    act(context, (botId, actor) => gateway.resetComputer(botId, actor)),
+    act(context, (botId) => gateway.resetComputer(botId)),
   );
 
   /**
@@ -430,49 +316,42 @@ export function createComputerRoutes(
    * computer restarts, so this is a person's button and never something a wake does to a busy one.
    */
   routes.post("/:botId/computers/update", (context) =>
-    act(context, (botId, actor) => gateway.updateComputer(botId, actor)),
+    act(context, (botId) => gateway.updateComputer(botId)),
   );
 
   routes.post("/:botId/control/take", (context) =>
-    act(context, (botId, actor, body) =>
-      gateway.takeControl(botId, actor, handoffId(body)),
+    act(context, (botId, body) =>
+      gateway.takeControl(botId, body?.requestId as string | undefined),
     ),
   );
 
   routes.post("/:botId/control/release", (context) =>
-    act(context, (botId, actor, body) =>
-      gateway.releaseControl(botId, actor, handoffId(body)),
+    act(context, (botId, body) =>
+      gateway.releaseControl(botId, body?.requestId as string | undefined),
     ),
   );
 
   routes.post("/:botId/control/cancel", (context) =>
-    act(context, (botId, actor, body) =>
-      gateway.cancelControl(botId, actor, handoffId(body)),
+    act(context, (botId, body) =>
+      gateway.cancelControl(botId, body?.requestId as string | undefined),
     ),
   );
 
   /** The Bot asking for a value it must not be told. */
   routes.post("/:botId/control/secret", (context) =>
-    act(context, (botId, actor, body) => {
+    act(context, (botId, body) => {
       if (typeof body?.ref !== "string" || !body.ref) {
         return {
           error:
             "Say which field the value goes in, using a ref from your snapshot.",
         };
       }
-      if (
-        typeof body?.snapshotId !== "number" ||
-        !Number.isInteger(body.snapshotId)
-      ) {
-        return { error: "The snapshotId the ref came from is required." };
-      }
-      return gateway.requestSecret(botId, actor, {
+      return gateway.requestSecret(botId, {
         label:
           typeof body?.label === "string" && body.label.trim()
             ? body.label.trim()
             : "the value this page is asking for",
         ref: body.ref,
-        snapshotId: body.snapshotId,
       });
     }),
   );
@@ -485,11 +364,11 @@ export function createComputerRoutes(
    * this server returns exactly one place.
    */
   routes.post("/:botId/human/secret", (context) =>
-    act(context, (botId, actor, body) => {
+    act(context, (botId, body) => {
       if (typeof body?.text !== "string" || !body.text) {
         return { error: "A value is required." };
       }
-      return gateway.supplySecret(botId, actor, body.text);
+      return gateway.supplySecret(botId, body.text);
     }),
   );
 
@@ -593,8 +472,8 @@ export function createComputerRoutes(
   });
 
   routes.post("/:botId/files/list", (context) =>
-    act(context, (botId, actor, body) =>
-      gateway.listFiles(botId, actor, {
+    act(context, (botId, body) =>
+      gateway.listFiles(botId, {
         ...(typeof body?.path === "string" && body.path.trim()
           ? { path: body.path.trim() }
           : {}),
@@ -603,11 +482,11 @@ export function createComputerRoutes(
   );
 
   routes.post("/:botId/files/read", (context) =>
-    act(context, (botId, actor, body) => {
+    act(context, (botId, body) => {
       if (typeof body?.path !== "string" || !body.path.trim()) {
         return { error: "A file path is required." };
       }
-      return gateway.readFile(botId, actor, { path: body.path.trim() });
+      return gateway.readFile(botId, { path: body.path.trim() });
     }),
   );
 
@@ -628,7 +507,6 @@ export function createComputerRoutes(
     try {
       const file = await gateway.downloadFile(
         context.req.param("botId"),
-        actorOf(context.var.actor),
         { path: path.trim() },
         context.req.raw.signal,
       );
@@ -649,7 +527,7 @@ export function createComputerRoutes(
    * computer as a RangeError 500 or a run that outlasts the transport backstop.
    */
   routes.post("/:botId/exec", (context) =>
-    act(context, (botId, actor, body, signal) => {
+    act(context, (botId, body, signal) => {
       if (typeof body?.command !== "string" || !body.command.trim()) {
         return { error: "A command is required." };
       }
@@ -671,7 +549,6 @@ export function createComputerRoutes(
       // run in the transcript while the command carried on to completion inside the container.
       return gateway.runCommand(
         botId,
-        actor,
         {
           command: body.command,
           ...(typeof body.timeoutMs === "number"
@@ -684,135 +561,20 @@ export function createComputerRoutes(
   );
 
   routes.post("/:botId/files/write", (context) =>
-    act(context, (botId, actor, body) => {
+    act(context, (botId, body) => {
       if (typeof body?.path !== "string" || !body.path.trim()) {
         return { error: "A file path is required." };
       }
       if (typeof body?.contents !== "string") {
         return { error: "The contents to write are required." };
       }
-      return gateway.writeFile(botId, actor, {
+      return gateway.writeFile(botId, {
         path: body.path.trim(),
         contents: body.contents,
         append: body.append === true,
       });
     }),
   );
-
-  /**
-   * The policy, readable and writable by an administrator.
-   *
-   * Here rather than in the admin routes file, because this directory owns the computer and `app.ts`
-   * takes one appended line per mount. The storage underneath is durable, so administrator rules
-   * remain active after a restart.
-   */
-  routes.get("/policy", requireUser, (context) => {
-    const denied = requireAdmin(context);
-    return denied ?? context.json({ policy: policyStore.get() });
-  });
-
-  routes.put("/policy", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-
-    const parsed = parseActionPolicy(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.ok) {
-      return context.json({ error: parsed.error }, 400);
-    }
-    try {
-      await policyStore.set(parsed.policy, context.var.actor.email);
-    } catch {
-      /*
-       * Saved, or said so. A boundary that is enforced now and gone after the next restart is worse
-       * than one that was never set, so a policy that could not be written is reported as a failure
-       * rather than quietly held in memory. Nothing changes: the previous policy is still in force.
-       */
-      return context.json(
-        {
-          error:
-            "Couldn't save that rule. The previous boundary still applies.",
-        },
-        503,
-      );
-    }
-    // Echoed back so a caller can see exactly what is now in force rather than assuming its request
-    // was stored verbatim.
-    return context.json({ policy: policyStore.get() });
-  });
-
-  /**
-   * What would this policy have decided, about actions already on the trail?
-   *
-   * A rule is otherwise written blind: saved first, understood later, from the refusals it produces
-   * in production. This answers before the save — the candidate is validated exactly as PUT
-   * validates it, replayed over recent judged actions, and the reply names each action it would have
-   * decided differently and the rule that would have decided it.
-   *
-   * A POST that writes nothing: not the policy, and no audit row either. Nothing is decided here —
-   * no action is permitted or refused, nothing runs or is stopped — and a trail row for every
-   * what-if would bury the rows that record what actually happened. Deployment-wide and named in
-   * DEPLOYMENT_ROUTES beside `/policy`, and admin-gated the same way, because history is the
-   * administrator's view.
-   */
-  routes.post("/policy-dry-run", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-
-    if (!auditReader) {
-      return context.json(
-        {
-          error:
-            "This deployment records no readable trail, so there is no history to test against.",
-        },
-        501,
-      );
-    }
-
-    const body = (await context.req.json().catch(() => null)) as {
-      policy?: unknown;
-      limit?: unknown;
-    } | null;
-    const parsed = parseActionPolicy(body?.policy);
-    if (!parsed.ok) {
-      return context.json({ error: parsed.error }, 400);
-    }
-
-    // Bounded, and biased to recency: the question is what this rule does to the traffic the
-    // deployment actually has, and last week's traffic answers that better than a full scan.
-    //
-    // Strict on purpose. This used to read `typeof limit === "number" ? limit : 200` and clamp,
-    // so `"abc"`, `null` and `true` silently became 200, `Infinity` silently became 500, and
-    // `NaN` became `NaN` and travelled into `auditReader.list` as one. A what-if answered from
-    // the wrong slice of history is worse than no answer, because it is believed.
-    const rawLimit = body?.limit;
-    let limit = 200;
-    if (rawLimit !== undefined) {
-      if (
-        typeof rawLimit !== "number" ||
-        !Number.isInteger(rawLimit) ||
-        rawLimit < 1 ||
-        rawLimit > 500
-      ) {
-        return context.json(
-          { error: "limit must be a whole number between 1 and 500." },
-          400,
-        );
-      }
-      limit = rawLimit;
-    }
-
-    const { events } = await auditReader.list({
-      limit,
-      eventType: REPLAYABLE_EVENT_TYPES.join(","),
-      targetType: "computer",
-    });
-
-    return context.json({
-      report: dryRunAgainstHistory(parsed.policy, events),
-    });
-  });
 
   return routes;
 }
@@ -822,10 +584,7 @@ type ComputerContext = Context<{ Variables: AppVariables }>;
 /** A request that was rejected before any decision was needed, because it was not a valid action. */
 type BadRequest = { error: string };
 
-const badRef: BadRequest = {
-  error:
-    "A ref and the snapshotId it came from are both required. Take a snapshot first.",
-};
+const badRef: BadRequest = { error: "A field ref is required." };
 
 const badDeltaY: BadRequest = {
   error: "deltaY must be a finite number of pixels.",
@@ -846,17 +605,12 @@ function usableDeltaY(value: unknown): boolean {
 }
 
 /**
- * Shared plumbing for acting routes that use this helper: resolve who is asking, run, and map
- * failures onto statuses.
- *
- * One place, so a new acting route cannot accidentally report a policy refusal as a server error, and
- * so the actor is derived the same way every time.
+ * Read an action request and map its result onto an HTTP response.
  */
 async function act(
   context: ComputerContext,
   handler: (
     botId: string,
-    actor: ActionActor,
     body: Record<string, unknown> | null,
     /**
      * The person's Stop, as an abort.
@@ -873,7 +627,6 @@ async function act(
   // helper is typed against a generic context that cannot know that, and a thrown "undefined bot"
   // would be a worse outcome than naming the one shared computer.
   const botId = context.req.param("botId") ?? "default";
-  const record = context.var.actor;
   const body = (await context.req.json().catch(() => null)) as Record<
     string,
     unknown
@@ -882,7 +635,6 @@ async function act(
   try {
     const result = await handler(
       botId,
-      actorOf(record),
       body,
       context.req.raw.signal,
     );
@@ -895,35 +647,7 @@ async function act(
   }
 }
 
-/**
- * The local actor's address, matched to decide whether the id is a real users row.
- *
- * Compared against rather than imported from `auth/dev-actor` because the computer must not depend on the
- * authentication module's internals; this is the one fact about it that matters here.
- */
-const DEV_ACTOR_EMAIL = "dev@openbot.local";
-
-/** The audit identity derived from the signed-in actor, with the same FK rule as every acting call. */
-function actorOf(record: AppVariables["actor"]): ActionActor {
-  return {
-    id: record.id,
-    // Only a real users row may go in the audit table's foreign key column. The local development
-    // actor is not one, so writing it there fails the constraint and loses the row entirely. Who
-    // it was is recorded in the payload regardless. See gateway.ts.
-    ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
-  };
-}
-
-/**
- * One failure shape for JSON acting and binary download routes.
- *
- * A policy refusal names the rule; a workspace refusal does not, because there is no rule to edit.
- * Keeping both here means the download route cannot accidentally turn a boundary into a 500.
- */
 function actionFailure(context: ComputerContext, error: unknown) {
-  if (error instanceof ActionRefusedError) {
-    return context.json({ error: error.message, rule: error.rule }, 403);
-  }
   return context.json(errorBody(error), statusFor(error));
 }
 
@@ -936,95 +660,27 @@ function isBadRequest(value: unknown): value is BadRequest {
   );
 }
 
-function asRef(
-  body: Record<string, unknown> | null,
-): { ref: string; snapshotId: number } | undefined {
-  if (typeof body?.ref !== "string" || !body.ref) return undefined;
-  /*
-   * A snapshot id is an integer the snapshot store handed out. `typeof` alone accepts `1.5` and
-   * `Infinity` (valid JSON: `1e999` parses to it), which then never equals the stored integer, so
-   * the gateway reports a stale snapshot and the caller retries a request that was malformed.
-   * Malformed input is a 400 here, not a 409 staleness.
-   */
-  if (
-    typeof body?.snapshotId !== "number" ||
-    !Number.isInteger(body.snapshotId)
-  ) {
-    return undefined;
-  }
-  return { ref: body.ref, snapshotId: body.snapshotId };
+function asRef(body: Record<string, unknown> | null): { ref: string } | undefined {
+  return typeof body?.ref === "string" && body.ref ? { ref: body.ref } : undefined;
 }
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-/**
- * Which HTTP status a failure deserves.
- *
- * Three genuinely different conditions that read identically if they all become 500: the computer is
- * not running (an operator fixes it), the refs are stale (the model fixes it by snapshotting again),
- * and everything else. Navigation established this; the acting routes follow it.
- */
-/**
- * What a failed computer call looks like to the caller.
- *
- * One place, because the flag below decides what a Bot does next and a route that renders its own
- * error would silently not carry it. The computer marks a takeover on both the acting path and
- * navigate, and those two are answered by different code here, so the version of this that lived in
- * the acting helper alone fixed one of them.
- */
+/** The error response for a computer call. */
 function errorBody(error: unknown): Record<string, unknown> {
   return {
     error: describe(error),
-    // Not "the refs are stale, take another snapshot", which is what the surface says without it.
-    ...(error instanceof HumanHasControlError
-      ? {
-          humanHasControl: true,
-          requestId: error.requestId,
-          handoff: error.handoff,
-        }
-      : {}),
-    ...(error instanceof StaleSnapshotError
-      ? {
-          stale: true,
-          ...(error.snapshotRequired ? { snapshotRequired: true } : {}),
-        }
-      : {}),
     ...(error instanceof HandoffRequestError
       ? { controlRequestError: true }
       : {}),
   };
 }
 
-function handoffId(body: Record<string, unknown> | null): string {
-  if (
-    typeof body?.requestId !== "string" ||
-    !body.requestId.trim() ||
-    body.requestId.length > 200
-  )
-    throw new HandoffRequestError("A requestId is required.", 400);
-  return body.requestId;
-}
-
 function statusFor(error: unknown): 400 | 403 | 404 | 409 | 413 | 500 | 503 {
   if (error instanceof HandoffRequestError) return error.status;
-  if (error instanceof StaleSnapshotError) return 409;
-  // Same status as a stale snapshot and for the same reason: nothing is broken, the caller has to do
-  // something else first. What differs is what that something is, which the body carries.
-  if (error instanceof HumanHasControlError) return 409;
-  // The same answer as a stale snapshot, because it is the same instruction: the refs are wrong, take
-  // another snapshot. Not 503, which says the computer is unavailable and sends an operator hunting a
-  // container that is running perfectly.
   if (error instanceof ElementNotFoundError) return 409;
-  // A person holding the wheel, or a person driving before taking it. Nothing is broken; the caller
-  // has to wait or take control first, and 409 is how both of those are already reported.
-  if (
-    error instanceof ComputerUnavailableError &&
-    /control/i.test(error.message)
-  ) {
-    return 409;
-  }
   if (error instanceof WorkspaceRefusedError) return 403;
   if (error instanceof WorkspaceRequestError) return 400;
   if (error instanceof WorkspaceNotFoundError) return 404;

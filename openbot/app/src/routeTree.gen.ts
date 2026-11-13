@@ -32,7 +32,6 @@ import { Route as AuthedAppTeamBotsRouteImport } from './routes/_authed/_app/tea
 import { Route as AuthedAdminIndexRouteImport } from './routes/_authed/admin/index'
 import { Route as AuthedAdminApprovalsRouteImport } from './routes/_authed/admin/approvals'
 import { Route as AuthedAdminAuditRouteImport } from './routes/_authed/admin/audit'
-import { Route as AuthedAdminBoundariesRouteImport } from './routes/_authed/admin/boundaries'
 import { Route as AuthedAdminComputersRouteImport } from './routes/_authed/admin/computers'
 import { Route as AuthedAdminCredentialsRouteImport } from './routes/_authed/admin/credentials'
 import { Route as AuthedAdminEnterpriseRouteImport } from './routes/_authed/admin/enterprise'
@@ -199,11 +198,6 @@ const AuthedAdminApprovalsRoute = AuthedAdminApprovalsRouteImport.update({
 const AuthedAdminAuditRoute = AuthedAdminAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
-  getParentRoute: () => AuthedAdminRouteRoute,
-} as any)
-const AuthedAdminBoundariesRoute = AuthedAdminBoundariesRouteImport.update({
-  id: '/boundaries',
-  path: '/boundaries',
   getParentRoute: () => AuthedAdminRouteRoute,
 } as any)
 const AuthedAdminComputersRoute = AuthedAdminComputersRouteImport.update({
@@ -521,7 +515,6 @@ export interface FileRoutesByFullPath {
   '/team-bots': typeof AuthedAppTeamBotsRoute
   '/admin/approvals': typeof AuthedAdminApprovalsRoute
   '/admin/audit': typeof AuthedAdminAuditRoute
-  '/admin/boundaries': typeof AuthedAdminBoundariesRoute
   '/admin/computers': typeof AuthedAdminComputersRoute
   '/admin/credentials': typeof AuthedAdminCredentialsRoute
   '/admin/enterprise': typeof AuthedAdminEnterpriseRoute
@@ -595,7 +588,6 @@ export interface FileRoutesByTo {
   '/team-bots': typeof AuthedAppTeamBotsRoute
   '/admin/approvals': typeof AuthedAdminApprovalsRoute
   '/admin/audit': typeof AuthedAdminAuditRoute
-  '/admin/boundaries': typeof AuthedAdminBoundariesRoute
   '/admin/computers': typeof AuthedAdminComputersRoute
   '/admin/credentials': typeof AuthedAdminCredentialsRoute
   '/admin/enterprise': typeof AuthedAdminEnterpriseRoute
@@ -674,7 +666,6 @@ export interface FileRoutesById {
   '/_authed/_app/team-bots': typeof AuthedAppTeamBotsRoute
   '/_authed/admin/approvals': typeof AuthedAdminApprovalsRoute
   '/_authed/admin/audit': typeof AuthedAdminAuditRoute
-  '/_authed/admin/boundaries': typeof AuthedAdminBoundariesRoute
   '/_authed/admin/computers': typeof AuthedAdminComputersRoute
   '/_authed/admin/credentials': typeof AuthedAdminCredentialsRoute
   '/_authed/admin/enterprise': typeof AuthedAdminEnterpriseRoute
@@ -754,7 +745,6 @@ export interface FileRouteTypes {
     | '/team-bots'
     | '/admin/approvals'
     | '/admin/audit'
-    | '/admin/boundaries'
     | '/admin/computers'
     | '/admin/credentials'
     | '/admin/enterprise'
@@ -828,7 +818,6 @@ export interface FileRouteTypes {
     | '/team-bots'
     | '/admin/approvals'
     | '/admin/audit'
-    | '/admin/boundaries'
     | '/admin/computers'
     | '/admin/credentials'
     | '/admin/enterprise'
@@ -906,7 +895,6 @@ export interface FileRouteTypes {
     | '/_authed/_app/team-bots'
     | '/_authed/admin/approvals'
     | '/_authed/admin/audit'
-    | '/_authed/admin/boundaries'
     | '/_authed/admin/computers'
     | '/_authed/admin/credentials'
     | '/_authed/admin/enterprise'
@@ -1130,13 +1118,6 @@ declare module '@tanstack/react-router' {
       path: '/audit'
       fullPath: '/admin/audit'
       preLoaderRoute: typeof AuthedAdminAuditRouteImport
-      parentRoute: typeof AuthedAdminRouteRoute
-    }
-    '/_authed/admin/boundaries': {
-      id: '/_authed/admin/boundaries'
-      path: '/boundaries'
-      fullPath: '/admin/boundaries'
-      preLoaderRoute: typeof AuthedAdminBoundariesRouteImport
       parentRoute: typeof AuthedAdminRouteRoute
     }
     '/_authed/admin/computers': {
@@ -1516,7 +1497,6 @@ declare module '@tanstack/react-router' {
 interface AuthedAdminRouteRouteChildren {
   AuthedAdminApprovalsRoute: typeof AuthedAdminApprovalsRoute
   AuthedAdminAuditRoute: typeof AuthedAdminAuditRoute
-  AuthedAdminBoundariesRoute: typeof AuthedAdminBoundariesRoute
   AuthedAdminComputersRoute: typeof AuthedAdminComputersRoute
   AuthedAdminCredentialsRoute: typeof AuthedAdminCredentialsRoute
   AuthedAdminEnterpriseRoute: typeof AuthedAdminEnterpriseRoute
@@ -1539,7 +1519,6 @@ interface AuthedAdminRouteRouteChildren {
 const AuthedAdminRouteRouteChildren: AuthedAdminRouteRouteChildren = {
   AuthedAdminApprovalsRoute: AuthedAdminApprovalsRoute,
   AuthedAdminAuditRoute: AuthedAdminAuditRoute,
-  AuthedAdminBoundariesRoute: AuthedAdminBoundariesRoute,
   AuthedAdminComputersRoute: AuthedAdminComputersRoute,
   AuthedAdminCredentialsRoute: AuthedAdminCredentialsRoute,
   AuthedAdminEnterpriseRoute: AuthedAdminEnterpriseRoute,

@@ -1,7 +1,5 @@
 """Microsoft Agent Framework as a Bot, through `agent-framework-ag-ui`, which Microsoft publishes."""
 
-import hashlib
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -14,10 +12,7 @@ from model_providers import bot_settings
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-
-TOKEN_HEADER = "x-openbot-agent-token"
+from fastapi import FastAPI
 
 
 def _client() -> AnthropicClient | OpenAIChatClient:
@@ -46,31 +41,9 @@ agent = _client().as_agent(
 app = FastAPI()
 
 
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
-
-
 @app.get("/health")
 async def health():
     return {"ok": True, "harness": "microsoft-agent-framework"}
 
 
-def _authorization_scope(request: Request) -> str:
-    """The caller Agent Framework keeps this run's sessions and approval state under.
-
-    The middleware above has already refused any request without MANAGED_AGENT_TOKEN, and that
-    token belongs to the deployment rather than to a person: people sign in to the server, not
-    here. So every run that gets this far comes from one principal, named here by the credential
-    that let it in. A digest rather than the token, because the scope is kept as a key in memory.
-    """
-    offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-    return "openbot-deployment:" + hashlib.sha256(offered.encode("utf-8")).hexdigest()
-
-
-add_agent_framework_fastapi_endpoint(app, agent, "/", authorization_scope_resolver=_authorization_scope)
+add_agent_framework_fastapi_endpoint(app, agent, "/")

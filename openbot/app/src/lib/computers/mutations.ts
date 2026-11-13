@@ -1,7 +1,7 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import { clearActivity } from "./activity";
-import { type ActionPolicy, computerKeys } from "./queries";
+import { computerKeys } from "./queries";
 
 /**
  * Stopping frees the container; resetting also deletes the browser profile; updating moves the
@@ -41,21 +41,3 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
   });
 }
 
-/**
- * Replace the whole policy.
- *
- * A PUT rather than a patch because the rules are ordered and evaluated as a set: sending a
- * difference would leave the server deciding where a new rule belongs, and where a deny sits
- * relative to an allow is most of what a policy means.
- */
-export function saveActionPolicyMutationOptions(queryClient: QueryClient) {
-  return mutationOptions({
-    mutationFn: (next: ActionPolicy): Promise<ActionPolicy> =>
-      client("/api/computers/policy", "policy", {
-        method: "PUT",
-        body: next,
-        fallback: "The boundary could not be saved.",
-      }),
-    onSuccess: () => invalidateComputers(queryClient),
-  });
-}

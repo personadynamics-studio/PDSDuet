@@ -24,16 +24,8 @@ import { listenPort } from "@openbot/shared/listen-port";
 import { file, type ServerWebSocket } from "bun";
 
 const DIST = join(import.meta.dir, "dist");
-const appPort = listenPort(process.env.APP_PORT, 3010);
-if (!appPort.ok) {
-  throw new Error(appPort.reason.replace(/^PORT /, "APP_PORT "));
-}
-const serverPort = listenPort(process.env.SERVER_PORT, 3001);
-if (!serverPort.ok) {
-  throw new Error(serverPort.reason.replace(/^PORT /, "SERVER_PORT "));
-}
-const PORT = appPort.port;
-const SERVER = `http://127.0.0.1:${serverPort.port}`;
+const PORT = listenPort(process.env.APP_PORT, 3010);
+const SERVER = process.env.SERVER_INTERNAL_URL;
 
 /**
  * Which file answers a path, or `null` when the app's own router should.
@@ -110,17 +102,10 @@ function prepareWebSocketBridge(upstream: BunWebSocket, signal: AbortSignal) {
   upstream.binaryType = "arraybuffer";
   let downstream: ServerWebSocket<WebSocketBridge> | undefined;
   const pending: (string | ArrayBuffer)[] = [];
-  let pendingBytes = 0;
   let disposed = false;
-  let timedOut = false;
   const { promise: opened, resolve } = Promise.withResolvers<boolean>();
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    dispose();
-  }, 5_000);
 
   function finishHandshake(success: boolean) {
-    clearTimeout(timeout);
     upstream.removeEventListener("open", onOpen);
     signal.removeEventListener("abort", dispose);
     resolve(success);
@@ -134,7 +119,6 @@ function prepareWebSocketBridge(upstream: BunWebSocket, signal: AbortSignal) {
     upstream.removeEventListener("error", onError);
     upstream.removeEventListener("close", onClose);
     pending.length = 0;
-    pendingBytes = 0;
     // close() can wait for a handshake or a close reply that will never arrive.
     upstream.terminate();
   }
@@ -158,18 +142,7 @@ function prepareWebSocketBridge(upstream: BunWebSocket, signal: AbortSignal) {
       downstream.send(event.data);
       return;
     }
-    // Only bridge-transition frames are buffered, never input for a peer that has not accepted.
-    // Bound both frame count and bytes so an upstream cannot grow this queue indefinitely.
-    const size =
-      typeof event.data === "string"
-        ? Buffer.byteLength(event.data)
-        : event.data.byteLength;
-    if (pending.length >= 64 || pendingBytes + size > 8 * 1024 * 1024) {
-      onError();
-      return;
-    }
     pending.push(event.data);
-    pendingBytes += size;
   }
 
   upstream.addEventListener("open", onOpen);
@@ -190,21 +163,13 @@ function prepareWebSocketBridge(upstream: BunWebSocket, signal: AbortSignal) {
       }
       for (const message of pending) socket.send(message);
       pending.length = 0;
-      pendingBytes = 0;
     },
   };
-  return { data, opened, failureStatus: () => (timedOut ? 504 : 502) };
+  return { data, opened };
 }
 
 if (import.meta.main) {
-  /*
-   * Both loopbacks, 127.0.0.1 and ::1, as two listeners, unless OPENBOT_HOST names others
-   * (shared/listen-host.ts). This was `::`, which its comment called both loopbacks and which is
-   * every interface: an installed OpenDuet, which is one administrator with no sign-in, proxied its
-   * `/api` to anybody on the same network.
-   */
-  const hosts = listenHosts(process.env[LISTEN_HOST_VARIABLE], "loopback");
-  if (!hosts.ok) throw new Error(hosts.reason);
+  const hosts = listenHosts(process.env[LISTEN_HOST_VARIABLE]);
   const options: Parameters<typeof Bun.serve<WebSocketBridge>>[0] = {
     port: PORT,
     // `ws: true` on the old proxy was required for the live screen, so the upgrade is forwarded
@@ -247,7 +212,7 @@ if (import.meta.main) {
           ) {
             bridge.data.dispose();
             return new Response("Could not connect to the upstream WebSocket", {
-              status: bridge.failureStatus(),
+              status: 502,
             });
           }
           if (server.upgrade(request, { data: bridge.data })) return undefined;
@@ -261,10 +226,7 @@ if (import.meta.main) {
           headers: request.headers,
           body: request.body,
           redirect: "manual",
-          ...(url.pathname === "/api/audio/transcriptions" ||
-          url.pathname === "/api/voice/calls"
-            ? { signal: request.signal }
-            : {}),
+          signal: request.signal,
           // @ts-expect-error duplex is required by fetch for a streamed body and is not yet typed.
           duplex: "half",
         });
@@ -283,17 +245,9 @@ if (import.meta.main) {
   };
 
   const listening: string[] = [];
-  for (const { host, required } of hosts.hosts) {
-    try {
-      Bun.serve<WebSocketBridge>({
-        ...options,
-        ...(host === undefined ? {} : { hostname: host }),
-      });
-      listening.push(listenAddress(host, PORT));
-    } catch (error) {
-      // Only ::1 may be missing, on a machine with IPv6 switched off.
-      if (required) throw error;
-    }
+  for (const { host } of hosts) {
+    Bun.serve<WebSocketBridge>({ ...options, hostname: host });
+    listening.push(listenAddress(host, PORT));
   }
   console.log(`OpenBot app on ${listening.join(" and ")}`);
 }

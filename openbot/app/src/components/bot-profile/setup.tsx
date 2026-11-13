@@ -89,11 +89,7 @@ export function SetupSections({ agent }: { agent: AgentProfile }) {
             <Fragment key={field}>
               {index > 0 ? <Separator /> : null}
               <Item
-                render={
-                  agent.canManage ? (
-                    <button onClick={() => setEditing(field)} type="button" />
-                  ) : undefined
-                }
+                render={<button onClick={() => setEditing(field)} type="button" />}
                 size="sm"
               >
                 <ItemMedia variant="icon">
@@ -103,11 +99,9 @@ export function SetupSections({ agent }: { agent: AgentProfile }) {
                   <ItemTitle>{label}</ItemTitle>
                   <ItemDescription>{agent[field]}</ItemDescription>
                 </ItemContent>
-                {agent.canManage ? (
-                  <ItemActions>
-                    <IconChevronRight className="size-4 text-muted-foreground" />
-                  </ItemActions>
-                ) : null}
+                <ItemActions>
+                  <IconChevronRight className="size-4 text-muted-foreground" />
+                </ItemActions>
               </Item>
             </Fragment>
           ))}
@@ -169,12 +163,11 @@ function VisibilityRow({
         <ItemDescription>
           {error ??
             (agent.visibility === "private"
-              ? "只有你能看見並與它開始對話。"
+              ? "目前標示為私人。"
               : `${appConfig.brand.productName} 的所有成員都能找到並使用它。`)}
         </ItemDescription>
       </ItemContent>
       <ItemActions>
-        {agent.canManage ? (
           <Select
             disabled={saving}
             // The label map, so the closed trigger says "私人" rather than the raw value.
@@ -205,11 +198,6 @@ function VisibilityRow({
               <SelectItem value="public">公開</SelectItem>
             </SelectContent>
           </Select>
-        ) : (
-          <span className="text-muted-foreground text-sm">
-            {agent.visibility === "private" ? "私人" : "公開"}
-          </span>
-        )}
       </ItemActions>
     </Item>
   );
@@ -340,7 +328,7 @@ function ConnectionSection({ agent }: { agent: AgentProfile }) {
           </ItemContent>
         </Item>
       </PageRows>
-      {!builtIn && agent.canManage ? (
+      {!builtIn ? (
         <CallbackTokenPanel
           agentId={agent.id}
           hasToken={agent.hasCallbackToken}

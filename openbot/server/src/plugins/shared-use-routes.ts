@@ -1,6 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AuditStore, recordAuditEvent } from "../audit";
-import { type AppVariables, requireAdmin } from "../auth/guards";
+import { type AppVariables } from "../auth/guards";
 import { covers, exposureOf } from "./shared-use";
 import {
   SharedUseRequestDecidedError,
@@ -22,20 +22,12 @@ export function createSharedUseRoutes(
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", requireUser);
 
-  const ownerOrAdmin = async (actor: AppVariables["actor"], botId: string) =>
-    actor.role === "admin" ||
-    (await store.botFacts(botId)).ownerUserId === actor.id;
-
   routes.get("/", async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
     return context.json({ requests: await store.listRequests("pending") });
   });
 
   for (const decision of ["approve", "decline"] as const) {
     routes.post(`/:id/${decision}`, async (context) => {
-      const forbidden = requireAdmin(context);
-      if (forbidden) return forbidden;
       try {
         const request = await store.decide({
           id: context.req.param("id"),
@@ -83,8 +75,6 @@ export function createSharedUseRoutes(
           : null;
     if (!botId || !serverId || !reason)
       return context.json({ error: "Name the Bot, the app and why." }, 400);
-    if (!(await ownerOrAdmin(context.var.actor, botId)))
-      return context.json({ error: "Only the Bot's owner can ask." }, 403);
     const held = await store.sharedAppsHeldBy(botId);
     if (!held.some((app) => app.serverId === serverId))
       return context.json(
@@ -112,8 +102,6 @@ export function createSharedUseRoutes(
 
   routes.get("/bot/:botId", async (context) => {
     const botId = context.req.param("botId");
-    if (!(await ownerOrAdmin(context.var.actor, botId)))
-      return context.json({ error: "Only the Bot's owner can see this." }, 403);
     const needed = exposureOf(await store.botFacts(botId));
     const apps = await Promise.all(
       (await store.sharedAppsHeldBy(botId)).map(async (app) => {

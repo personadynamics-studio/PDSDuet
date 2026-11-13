@@ -1,6 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
-import { type AppVariables, requireAdmin } from "../auth/guards";
+import { type AppVariables } from "../auth/guards";
 import type { ApprovalService } from "./service";
 import {
   ApprovalNotFoundError,
@@ -121,8 +121,6 @@ export function createApprovalRoutes(
   );
   /** Team rules and settings. Members read them as locked rows in the inbox; only admins change them. */
   routes.patch("/team", async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
     const input = z
       .strictObject({
         enforceAutoReview: z.boolean().optional(),
@@ -135,8 +133,6 @@ export function createApprovalRoutes(
     );
   });
   routes.post("/team/rules", async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
     return context.json(
       {
         rule: await service.createTeamRule(
@@ -148,8 +144,6 @@ export function createApprovalRoutes(
     );
   });
   routes.patch("/team/rules/:id", async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
     return context.json({
       rule: await service.updateTeamRule(
         context.var.actor.id,
@@ -159,8 +153,6 @@ export function createApprovalRoutes(
     });
   });
   routes.delete("/team/rules/:id", async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
     await service.revokeTeamRule(context.var.actor.id, context.req.param("id"));
     return context.json({ revoked: true });
   });

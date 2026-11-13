@@ -23,25 +23,6 @@ export type CapabilitySetting = {
   groups: Record<string, boolean>;
 };
 
-export type EgressRule =
-  | { type: "domain"; value: string }
-  | { type: "cidr"; value: string; ports?: string };
-
-export type NetworkMode =
-  | "allow_all"
-  | "defaults_plus_allowlist"
-  | "allowlist_only";
-
-export type NetworkPolicy = {
-  scopeKind: "organization" | "group";
-  scopeId: string;
-  mode: NetworkMode;
-  rules: EgressRule[];
-  locked: boolean;
-  updatedBy: string | null;
-  updatedAt: string;
-};
-
 export type EnterpriseSettings = {
   actionRecording: boolean;
   inactiveComputerDays: number;
@@ -53,8 +34,6 @@ export type EnterpriseOverview = {
   capabilities: CapabilitySetting[];
   settings: EnterpriseSettings;
   groups: string[];
-  network: NetworkPolicy[];
-  defaultDestinations: string[];
   mcpServers: { id: string; title: string; url: string }[];
   builtInModel: string | null;
   scim: {

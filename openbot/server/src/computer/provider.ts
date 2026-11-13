@@ -103,26 +103,11 @@ export interface ComputerProvider {
   update?(botId: string): Promise<ComputerUpdate>;
   /** Prepare provider resources before the first computer request. */
   warm?(): Promise<void>;
-  /**
-   * Which run of this Bot's computer is current, if the provider can tell.
-   *
-   * A snapshot's generation only orders snapshots within one run: a replaced container counts from
-   * one again, so a ref from the run before it matches a row nothing has overwritten. This is what
-   * tells the two apart.
-   *
-   * Every provider answers it, and where the answer comes from is the whole of the difference between
-   * them: a container per Bot reads it off the container, a sandbox off the moment its browser last
-   * became ready, and the one shared computer has to ask the computer, because that process serves
-   * every Bot and outlives every reset. Optional in the type only for a provider that genuinely
-   * cannot say; undefined then means unknown rather than mismatched, and the comparison is skipped
-   * exactly as it was before any of this existed.
-   */
-  sessionOf?(botId: string): Promise<string | undefined>;
+
 }
 
 export type SharedComputerProviderOptions = {
   baseUrl: string;
-  token?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 };
@@ -150,7 +135,6 @@ export function createSharedComputerProvider(
   function headers(botId?: string): Record<string, string> {
     return {
       ...(botId ? { "x-openbot-bot-id": botId } : {}),
-      ...(options.token ? { "x-openbot-computer-token": options.token } : {}),
     };
   }
 
@@ -189,36 +173,6 @@ export function createSharedComputerProvider(
 
     async locate(_botId: string): Promise<string> {
       return options.baseUrl;
-    },
-
-    /**
-     * Which run of this Bot's browser is current, asked of the computer itself.
-     *
-     * NOTHING ELSE HERE KNOWS. A Bot with its own container gets a run from the container and a
-     * sandbox gets one from the moment its browser last became ready; this deployment is one process
-     * serving every Bot, and it outlives every reset, so the container says the same thing before and
-     * after the browser it was asked about was replaced. The computer is the only party that can tell
-     * a session apart from the one before it, so it is the one asked.
-     *
-     * NOT REMEMBERED, unlike the supervisor's, and the difference is `locate`: there it is an
-     * `/ensure` that refreshes the answer before every action, while here it is a string and makes no
-     * call at all. A cached run would then be the one this process first saw, for the life of the
-     * process, which is exactly the stale answer this exists to stop giving.
-     */
-    async sessionOf(botId: string): Promise<string | undefined> {
-      try {
-        const body = (await call("/run", "GET", botId)) as {
-          run?: unknown;
-        } | null;
-        return typeof body?.run === "string" && body.run.length > 0
-          ? body.run
-          : undefined;
-      } catch {
-        // Unknown, not mismatched. A computer that cannot be reached, or one from before this
-        // endpoint existed, must not turn every ref into a refusal; the comparison goes back to
-        // being skipped, which is where it started.
-        return undefined;
-      }
     },
 
     async status(botId: string): Promise<ComputerStatus> {
@@ -283,14 +237,12 @@ export function createComputerProvider(
     case "docker": {
       const options: SupervisorOptions = {
         baseUrl: config.baseUrl,
-        ...(config.supervisorToken ? { token: config.supervisorToken } : {}),
       };
       return createDockerSupervisorProvider(options);
     }
     case "shared":
       return createSharedComputerProvider({
         baseUrl: config.baseUrl,
-        ...(config.token ? { token: config.token } : {}),
       });
     case "sandbox":
       /*
@@ -360,6 +312,5 @@ function createLazySandboxProvider(
         throw new Error("The sandbox computer provider cannot update.");
       return built.update(botId);
     },
-    sessionOf: async (botId) => (await provider()).sessionOf?.(botId),
   };
 }

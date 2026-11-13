@@ -20,8 +20,7 @@ import {
   pendingSignInRequestsQueryOptions,
 } from "@/lib/passwords/queries";
 import { useActiveBotHolder } from "./active-bot";
-import { useFrontendTool } from "./approval-tools";
-import { useComputerToolsOffered } from "./computer-available";
+import { useFrontendTool } from "@copilotkit/react-core/v2";
 
 /** How long the open chat waits for the person to answer. The server's request lasts as long. */
 const WAIT_MS = 15 * 60_000;
@@ -60,17 +59,14 @@ function parse(result: string | undefined): Outcome {
  *
  * THE CARD FINDS ITS REQUEST ON THE SERVER, by the tool call that asked, never from state the
  * handler sets here. The SDK keeps the renderer from this component's first render and does not
- * re-register it when it changes (see approval-tools.tsx), so the request id the handler used to put
+ * re-register it when it changes, so the request id the handler used to put
  * in state never reached the card, and it waited with no way to open the form.
  */
 export function SignInTool() {
   const bot = useActiveBotHolder();
   // Stable for the provider's life, so the SDK's once-registered handler may keep it.
   const queryClient = useQueryClient();
-  // A sign-in is typed into the Bot's browser; see computerToolsOffered.
-  const available = useComputerToolsOffered().browser;
   useFrontendTool({
-    available,
     name: "computer_request_sign_in",
     description: DESCRIPTION,
     parameters: z.object({

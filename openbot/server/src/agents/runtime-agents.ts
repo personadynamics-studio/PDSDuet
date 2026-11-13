@@ -1,6 +1,4 @@
-import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
-import { teamBotAccess } from "../team-bots/access";
-import type { ManagedAgentConfig } from "../config";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { type RegisteredAgent, registeredAgentFromRow } from "../copilot";
 import type { CredentialSecretReader } from "../credentials";
 import type { Database } from "../db/client";
@@ -12,26 +10,17 @@ import {
   channels,
 } from "../db/schema";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
-import { isManagedEndpoint } from "./managed-endpoint";
 import type { AgentActor } from "./profile-types";
 
-/**
- * Read the agents one person may run, on every request.
- *
- * The filtering is in the query, not in JavaScript afterwards: a private coworker must never be
- * read into the process for an actor who cannot see it, and "we fetched it but did not show it" is
- * the shape most accidental disclosures take.
- */
+/** Load active agents and the deleted agents present in the caller's history. */
 export function createRuntimeAgentLoader(
   database: Database,
   /** Resolves a customer agent's key at load time. Absent means no agent can carry one. */
   vault?: { reader: CredentialSecretReader; encryptionKey: string },
-  /** Secret for the deployment-managed Bot. Never sent to customer-owned endpoints. */
-  managedAgent?: ManagedAgentConfig,
 ) {
   return async (actor: AgentActor): Promise<RegisteredAgent[]> => {
     const [active, tombstones] = await Promise.all([
-      selectActiveAgents(database, actor),
+      selectActiveAgents(database),
       selectTombstoneAgents(database, actor),
     ]);
 
@@ -53,28 +42,6 @@ export function createRuntimeAgentLoader(
         });
         if (headers) agent.headers = headers;
       }
-      /*
-       * Every endpoint this deployment runs gets the token, not just the first one.
-       *
-       * Matching a single endpoint left the harness picked during setup without it: registered,
-       * addressable, routed to, and answering `401 unauthorised` to everything. Its container is
-       * this deployment's own, started on a port this deployment chose with this token in its
-       * environment, so it is the same relationship the Bot in the box has.
-       */
-      if (isRemoteAgent && managedAgent) {
-        // Config parses URLs, while package rows retain their original spelling. Compare both
-        // in canonical form so scheme/host case cannot silently drop the deployment token.
-        const ours = isManagedEndpoint(agent.endpoint, [
-          managedAgent.endpoint,
-          managedAgent.alsoRun,
-        ]);
-        if (ours) {
-          agent.headers = {
-            ...agent.headers,
-            "x-openbot-agent-token": managedAgent.token,
-          };
-        }
-      }
       registered.set(agent.id, agent);
     }
     for (const row of tombstones) {
@@ -91,7 +58,7 @@ export function createRuntimeAgentLoader(
   };
 }
 
-function selectActiveAgents(database: Database, actor: AgentActor) {
+function selectActiveAgents(database: Database) {
   return database
     .select({
       id: agents.id,
@@ -103,19 +70,7 @@ function selectActiveAgents(database: Database, actor: AgentActor) {
     })
     .from(agents)
     .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-    .where(
-      and(
-        isNull(agentProfiles.deletedAt),
-        actor.role === "admin"
-          ? undefined
-          : or(
-              eq(agentProfiles.visibility, "public"),
-              eq(agentProfiles.ownerUserId, actor.id),
-              // The same Team Bot rule as the roster: see team-bots/access.ts.
-              teamBotAccess(actor.id, agentProfiles.agentId),
-            ),
-      ),
-    );
+    .where(isNull(agentProfiles.deletedAt));
 }
 
 /**

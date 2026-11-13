@@ -15,7 +15,6 @@ import type { DeploymentConfig } from "../config";
 import type { Database } from "../db/client";
 import { channelMemberships } from "../db/schema";
 import type { DeliveryScope } from "../delivery/types";
-import type { PeopleStore } from "../people/store";
 import type { PluginStore } from "../plugins/store";
 import { REFUSAL_MARKER } from "../plugins/tools";
 import { createPrivateShareCheck } from "../proactive/private-share";
@@ -49,7 +48,6 @@ export function wireCoordination(deps: {
   database: Database;
   pluginStore: PluginStore;
   bootAuditStore: AuditStore;
-  peopleStore: PeopleStore;
   sourceForCoordinationRun: (
     run: RunAssertion,
   ) => Promise<{ channelId: string; botId: string } | null>;
@@ -74,7 +72,6 @@ export function wireCoordination(deps: {
     database,
     pluginStore,
     bootAuditStore,
-    peopleStore,
     sourceForCoordinationRun,
     channelStore,
   } = deps;
@@ -141,16 +138,6 @@ export function wireCoordination(deps: {
     auditStore: bootAuditStore,
     authoriseRun: (run) =>
       authoriseCoordinationRun(run, {
-        canUseBot: async (scope) => {
-          const person = await peopleStore.find(scope.actorId);
-          if (!person || person.revoked) return false;
-          return (
-            (await agentProfileStore.get(
-              await actorFor(scope.actorId),
-              scope.botId,
-            )) !== null
-          );
-        },
         sourceThread: sourceForCoordinationRun,
         delegationFor: (claim) => readCoordinationHandoffClaim(database, claim),
       }),

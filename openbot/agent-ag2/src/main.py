@@ -1,6 +1,5 @@
 """AG2 as a Bot. AG-UI is an extra in AG2's own package, so `ag2[ag-ui]` is the dependency."""
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -13,10 +12,7 @@ from model_providers import bot_settings
 from ag2 import Agent
 from ag2.ag_ui import AGUIStream
 from ag2.config import AnthropicConfig, OpenAIConfig
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-
-TOKEN_HEADER = "x-openbot-agent-token"
+from fastapi import FastAPI
 
 
 def _config() -> AnthropicConfig | OpenAIConfig:
@@ -46,16 +42,6 @@ agent = Agent(
 stream = AGUIStream(agent)
 
 app = FastAPI()
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

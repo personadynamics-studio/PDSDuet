@@ -25,7 +25,6 @@ use crate::engine::{Address, Engine};
 pub enum Step {
     CreateMachine,
     StartMachine,
-    HealthGate,
 }
 
 /// How a step went, in both registers when it went badly.
@@ -383,57 +382,6 @@ fn explain_machine_error(error: &str) -> String {
 /// usually still pointing somewhere else.
 pub fn address() -> Address {
     Address::new(Engine::Podman, Some(MACHINE.to_string()))
-}
-
-/// The gate before Compose is touched.
-///
-/// A process that answers is not a process holding the current configuration, so this asks the
-/// engine for its server version rather than whether a binary exists.
-pub fn health_gate(address: &Address) -> StepOutcome {
-    let binary = address.engine.binary();
-    let output = address
-        .command()
-        .args(["version", "--format", "{{.Server.APIVersion}}"])
-        .output();
-    match output {
-        Ok(out) if out.status.success() && !out.stdout.is_empty() => {
-            if let Err(error) = configure_owned_windows_podman_for_compose(
-                address,
-                podman,
-                cfg!(target_os = "windows"),
-            ) {
-                return StepOutcome::stopped(Step::HealthGate, &error);
-            }
-            // An engine that answers is not an engine that can raise the stack. Asked here, where
-            // there is a sentence to put it in, rather than left to Compose to discover.
-            if !address.composes() {
-                return StepOutcome {
-                    step: Step::HealthGate,
-                    ok: false,
-                    said: missing_compose(binary),
-                    detail: None,
-                };
-            }
-            StepOutcome::went(
-                Step::HealthGate,
-                format!("engine API {}", String::from_utf8_lossy(&out.stdout).trim()),
-            )
-        }
-        // The engine ran and refused. Its words are the evidence, and the sentence in front of
-        // them is chosen from what they say.
-        Ok(out) => StepOutcome::stopped(
-            Step::HealthGate,
-            &command_failure(
-                binary,
-                &["version", "--format", "{{.Server.APIVersion}}"],
-                &out,
-            ),
-        ),
-        Err(error) => StepOutcome::stopped(
-            Step::HealthGate,
-            &format!("{binary} could not be run: {error}"),
-        ),
-    }
 }
 
 /// What to install, named, rather than seven errors about a file that is not there.

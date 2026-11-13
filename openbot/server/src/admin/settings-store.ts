@@ -13,7 +13,6 @@ import {
   capabilitySettings,
   enterpriseSettings,
   modelUsage,
-  networkPolicies,
   scimGroups,
   userRoles,
   users,
@@ -44,16 +43,6 @@ const SETTING_KEYS = {
   modelAllowlist: "model_allowlist",
   mcpAllowlist: "mcp_allowlist",
 } as const satisfies Record<keyof EnterpriseSettings, string>;
-
-export type NetworkPolicyRow = {
-  scopeKind: "organization" | "group";
-  scopeId: string;
-  mode: "allow_all" | "defaults_plus_allowlist" | "allowlist_only";
-  rules: unknown[];
-  locked: boolean;
-  updatedBy: string | null;
-  updatedAt: string;
-};
 
 export type ModelUsageSummary = {
   model: string;
@@ -245,65 +234,6 @@ export function createEnterpriseStore(database: Database) {
       }
       for (const row of provisioned) names.add(row.name);
       return [...names].sort((a, b) => a.localeCompare(b));
-    },
-
-    async networkPolicies(): Promise<NetworkPolicyRow[]> {
-      const rows = await database.select().from(networkPolicies);
-      return rows.map((row) => ({
-        scopeKind: row.scopeKind,
-        scopeId: row.scopeId,
-        mode: row.mode,
-        rules: Array.isArray((row.rules as { entries?: unknown }).entries)
-          ? (row.rules as { entries: unknown[] }).entries
-          : [],
-        locked: row.locked,
-        updatedBy: row.updatedBy,
-        updatedAt: row.updatedAt.toISOString(),
-      }));
-    },
-
-    async setNetworkPolicy(
-      row: Omit<NetworkPolicyRow, "updatedBy" | "updatedAt">,
-      by: string,
-    ): Promise<void> {
-      await database.transaction(async (tx) => {
-        const values = {
-          scopeKind: row.scopeKind,
-          scopeId: row.scopeId,
-          mode: row.mode,
-          rules: { entries: row.rules },
-          locked: row.scopeKind === "organization" ? row.locked : false,
-          updatedBy: by,
-          updatedAt: new Date(),
-        };
-        await tx
-          .insert(networkPolicies)
-          .values(values)
-          .onConflictDoUpdate({
-            target: [networkPolicies.scopeKind, networkPolicies.scopeId],
-            set: values,
-          });
-        await announce(tx);
-      });
-    },
-
-    async removeNetworkPolicy(
-      scopeKind: NetworkPolicyRow["scopeKind"],
-      scopeId: string,
-    ): Promise<boolean> {
-      return database.transaction(async (tx) => {
-        const removed = await tx
-          .delete(networkPolicies)
-          .where(
-            and(
-              eq(networkPolicies.scopeKind, scopeKind),
-              eq(networkPolicies.scopeId, scopeId),
-            ),
-          )
-          .returning({ scopeId: networkPolicies.scopeId });
-        await announce(tx);
-        return removed.length > 0;
-      });
     },
 
     async recordAction(input: {

@@ -597,36 +597,5 @@ export function createSandboxComputerProvider(
       });
     },
 
-    async sessionOf(botId: string): Promise<string | undefined> {
-      /*
-       * Which run of this computer this is, and it has to change across a suspend and resume.
-       *
-       * A snapshot's generation only orders snapshots within one run of a browser: a resumed computer
-       * counts from one again, so a ref the model still holds from before the suspend would match a
-       * row nothing has overwritten, and the boundary would decide about an element on a page that no
-       * longer exists.
-       *
-       * NOT THE NODE AND NOT THE POD IP, which is what this used and what testing a real resume
-       * disproved. A suspended sandbox is very often rescheduled onto the same node and handed the
-       * same address back, because nothing else has taken it: measured on EKS, both were byte for
-       * byte identical across a suspend and resume, so the check would have said "same run" for the
-       * exact case it exists to catch.
-       *
-       * The `Ready` condition's transition time does move, because suspending drives Ready to False
-       * and resuming drives it back to True. It is the moment this run of the browser started
-       * serving, which is precisely the question, and it needs no permission beyond the sandbox this
-       * already reads. The pod's own UID would be exact too, and would cost a second read and the
-       * right to list pods.
-       *
-       * Reading, never ensuring: this must not be the thing that wakes a computer up.
-       */
-      const sandbox = await read(botId);
-      if (!sandbox || isSuspended(sandbox)) return undefined;
-      const ready = sandbox.status?.conditions?.find(
-        (condition) => condition.type === "Ready",
-      );
-      if (ready?.status !== "True") return undefined;
-      return ready.lastTransitionTime;
-    },
   };
 }

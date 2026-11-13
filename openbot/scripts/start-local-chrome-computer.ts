@@ -13,11 +13,6 @@ export function localChromeConfiguration(
   platform: string = process.platform,
   userHome = homedir(),
 ) {
-  if (!env.COMPUTER_TOKEN?.trim()) {
-    throw new Error(
-      "COMPUTER_TOKEN is required. Use the same secret as the local OpenBot API.",
-    );
-  }
   if (
     env.COMPUTER_BROWSER_BACKEND?.trim() &&
     env.COMPUTER_BROWSER_BACKEND.trim() !== "local-chrome"

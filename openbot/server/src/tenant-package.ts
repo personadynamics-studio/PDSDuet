@@ -3,7 +3,6 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { parse } from "yaml";
-import { DEPLOYMENT_ROUTES } from "./computer/deployment-routes";
 import type { Database } from "./db/client";
 import {
   agentProfiles,
@@ -379,20 +378,6 @@ function parseAgents(
       );
     }
     const id = requiredString(agent.id, "agent.id");
-    /*
-     * A Bot may not be named after a deployment route.
-     *
-     * The computer router's bot-access guard steps aside for those names, and a request cannot
-     * tell a Bot called `policy` from `/policy` itself, so such a Bot would be served to anybody
-     * who can sign in without the guard ever being asked. A package id is the only way a Bot gets
-     * a chosen id, everything created through the API being `agent_<uuid>`, so refusing it here
-     * closes it rather than moving it.
-     */
-    if (DEPLOYMENT_ROUTES.has(id)) {
-      throw new Error(
-        `${source}: agent.id "${id}" is reserved for a deployment route and cannot name a Bot`,
-      );
-    }
     if (type === "remote_ag_ui" || type === "remote_mastra") {
       const endpoint =
         typeof agent.endpoint === "string" ? agent.endpoint.trim() : "";
@@ -797,25 +782,6 @@ export async function synchronizeTenantPackage(
   tenantPackage: LoadedTenantPackage,
 ) {
   return database.transaction(async (transaction) => {
-    /*
-     * A Bot already holding one of those names, from a package that declared it before this was
-     * refused. Validation covers the file, and nothing here removes a canonical agent when a package
-     * stops declaring one, so correcting the YAML leaves the row and the router goes on stepping
-     * aside for its path. Checked inside the transaction so a deployment in that state does not come
-     * up half-synchronised, and refused rather than renamed because whose Bot that is, and what
-     * points at it, is not this function's to decide.
-     */
-    const reserved = await transaction
-      .select({ id: agentTable.id })
-      .from(agentTable)
-      .where(inArray(agentTable.id, [...DEPLOYMENT_ROUTES]));
-    if (reserved.length > 0) {
-      const names = reserved.map((agent) => `"${agent.id}"`).join(", ");
-      throw new Error(
-        `Bot ${names} is reserved for a deployment route and cannot exist; rename or remove it before this deployment can start`,
-      );
-    }
-
     const [deploymentPackage] = await transaction
       .insert(deploymentPackages)
       .values({

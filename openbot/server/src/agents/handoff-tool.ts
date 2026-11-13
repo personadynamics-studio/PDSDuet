@@ -261,8 +261,6 @@ async function sharePermission(
 export { HANDED_OVER };
 
 export type CoordinationRunAuthority = {
-  /** Resolve the current actor and Bot visibility, rather than trusting their former access. */
-  canUseBot: (run: RunAssertion) => Promise<boolean>;
   /** The actor's current membership and the source thread's actual Bot. */
   sourceThread: (run: RunAssertion) => Promise<{ botId: string } | null>;
   /** Read the signed claim by key; active must use the database clock and exclude finished work. */
@@ -334,7 +332,6 @@ export async function authoriseCoordinationRun(
   run: RunAssertion,
   authority: CoordinationRunAuthority,
 ): Promise<boolean> {
-  if (!run.threadId || !(await authority.canUseBot(run))) return false;
   const source = await authority.sourceThread(run);
   if (!source) return false;
   if (!run.handoff) return (run.depth ?? 0) === 0 && source.botId === run.botId;

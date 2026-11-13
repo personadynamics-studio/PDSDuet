@@ -9,7 +9,6 @@ import {
   IconLayoutGrid,
   IconListDetails,
   IconPuzzle,
-  IconShieldCheck,
   IconUsers,
 } from "@tabler/icons-react";
 import { Link, type LinkOptions } from "@tanstack/react-router";
@@ -51,11 +50,6 @@ const GROUPS: {
         title: "Credentials",
         icon: IconKey,
         linkOptions: { to: "/admin/credentials" },
-      },
-      {
-        title: "Boundaries",
-        icon: IconShieldCheck,
-        linkOptions: { to: "/admin/boundaries" },
       },
       {
         title: "審批",

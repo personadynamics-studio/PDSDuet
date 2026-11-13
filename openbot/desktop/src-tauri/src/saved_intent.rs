@@ -37,13 +37,10 @@ pub enum ModelIntent {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SavedIntent {
     version: u8,
     pub categories: BTreeSet<Category>,
     pub model: Option<ModelIntent>,
-    #[serde(default)]
-    pub compatible_endpoint: Option<String>,
 }
 
 impl Default for SavedIntent {
@@ -52,20 +49,11 @@ impl Default for SavedIntent {
             version: 1,
             categories: BTreeSet::new(),
             model: None,
-            compatible_endpoint: None,
         }
     }
 }
 
 impl SavedIntent {
-    pub fn has_compatible_key_for(&self, base_url: &str) -> bool {
-        self.model == Some(ModelIntent::CompatibleEndpoint)
-            && self
-                .categories
-                .contains(&Category::CompatibleEndpointApiKey)
-            && self.compatible_endpoint.as_deref() == Some(base_url.trim())
-    }
-
     /// Missing, unreadable and invalid records are unknown. Never discover or migrate secrets here.
     pub fn read(root: &Path) -> Self {
         std::fs::read(root.join(FILE))
@@ -93,15 +81,13 @@ impl SavedIntent {
         // Compatible endpoints share the legacy OPENAI_API_KEY slot, but that key was not
         // established for the OpenAI provider. Keep its recorded hint out of that provider's UI.
         self.categories.remove(&Category::CompatibleEndpointApiKey);
-        self.compatible_endpoint = None;
         if let ModelCredential::Compatible {
-            base_url, api_key, ..
+            api_key, ..
         } = credential
         {
             self.categories.remove(&Category::OpenAiApiKey);
             if has_endpoint_key(api_key) {
                 self.categories.insert(Category::CompatibleEndpointApiKey);
-                self.compatible_endpoint = Some(base_url.trim().to_string());
             }
         }
         // write_plan_store persists the selected plan, and clears it for other selections.
@@ -144,14 +130,11 @@ impl SavedIntent {
     }
 }
 
-// The runtime OPENAI_API_KEY slot is shared with first-party OpenAI. Keep the endpoint binding
-// and its key together, so a later partially persisted provider change cannot relabel that key.
+// Compatible model credentials use their own saved record.
 pub const COMPATIBLE_CREDENTIAL: &str = "OPENAI_COMPATIBLE_CREDENTIAL";
 
 #[derive(serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CompatibleCredential {
-    base_url: String,
     api_key: String,
 }
 
@@ -159,16 +142,8 @@ fn has_endpoint_key(api_key: &str) -> bool {
     !api_key.trim().is_empty() && api_key.trim() != crate::env::NO_KEY_NEEDED
 }
 
-pub fn compatible_key_from_record(base_url: &str, record: &str) -> Result<String, Problem> {
-    let saved = serde_json::from_str::<CompatibleCredential>(record).ok();
-    match saved {
-        Some(saved) if saved.base_url == base_url.trim() && has_endpoint_key(&saved.api_key) => {
-            Ok(saved.api_key)
-        }
-        _ => Err(Problem::plain(
-            "That saved endpoint key is unavailable for this address. Enter its API key again.",
-        )),
-    }
+pub fn compatible_key_from_record(record: &str) -> Result<String, Problem> {
+    serde_json::from_str::<CompatibleCredential>(record).map(|saved| saved.api_key).map_err(|e| Problem::from(e.to_string()))
 }
 
 /// Start's credential transaction: protected writes, plan file, durable hints, then legacy purge.
@@ -201,10 +176,9 @@ fn persist_configuration_with(
     let mut scoped_secrets = secrets.clone();
     let record = match credential {
         ModelCredential::Compatible {
-            base_url, api_key, ..
+            api_key, ..
         } if has_endpoint_key(api_key) => Some(
             serde_json::to_string(&CompatibleCredential {
-                base_url: base_url.trim().to_string(),
                 api_key: api_key.trim().to_string(),
             })
             .map_err(|_| {

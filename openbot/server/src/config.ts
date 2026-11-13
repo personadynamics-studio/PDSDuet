@@ -13,10 +13,6 @@ import {
   listenHosts,
 } from "@openbot/shared/listen-host";
 import { listenPort } from "@openbot/shared/listen-port";
-import { networkInterfaces } from "node:os";
-import { singleUserEnabled } from "./auth/dev-actor";
-import type { ActionPolicy } from "./computer/policy";
-import { parseActionPolicy } from "./computer/policy-store";
 import {
   type TranscriptionConfig,
   transcriptionConfig,
@@ -48,18 +44,11 @@ export type IntelligenceSettings = {
 export type DockerComputerConfig = {
   provider: "docker";
   baseUrl: string;
-  supervisorToken?: string;
-  token?: string;
-  allowPrivateHosts: boolean;
-  policy?: ActionPolicy;
 };
 
 export type SharedComputerConfig = {
   provider: "shared";
   baseUrl: string;
-  token?: string;
-  allowPrivateHosts: boolean;
-  policy?: ActionPolicy;
 };
 
 /**
@@ -75,9 +64,6 @@ export type SandboxComputerConfig = {
   idleAfterMs: number;
   /** Where the chart mounted the shape of a computer. */
   templateFile: string;
-  token?: string;
-  allowPrivateHosts: boolean;
-  policy?: ActionPolicy;
 };
 
 export type ComputerConfig =
@@ -103,9 +89,8 @@ export type GithubAppConfig = {
 };
 
 export type AuthConfig = {
-  baseUrl: string;
-  secret: string;
-  trustedOrigins: string[];
+  baseUrl?: string;
+  secret?: string;
   initialAdminEmails: string[];
   google?: OAuthClient;
   /**
@@ -139,13 +124,10 @@ export function configuredAuthProviders(
 export type ManagedAgentConfig = {
   /** The bundled Bot, absent when this deployment's provider cannot run it. */
   endpoint?: URL;
-  /** Secret sent only to endpoints this deployment runs. Never stored in an agent row. */
-  token: string;
   /**
    * The harness picked during setup, when there is one.
    *
-   * Also an endpoint this deployment runs: its container was started by this deployment, on a port
-   * it chose, holding this token. It gets the same header for the same reason.
+   * The endpoint of the installed harness.
    */
   alsoRun?: URL;
 };
@@ -201,33 +183,19 @@ export type DeploymentConfig = {
   /** The port the API listens on. Named `PORT` or `SERVER_PORT`; see `serverPort`. */
   port: number;
   /**
-   * Where the API listens: `OPENBOT_HOST`, or loopback in single-user mode and every interface
-   * otherwise. See `shared/listen-host.ts` for why single-user mode keeps to this machine.
+   * Where the API listens: `OPENBOT_HOST`, or the platform default
+   * when no host is configured. See `shared/listen-host.ts`.
    */
   listen: ListenHost[];
   databaseUrl: string;
   keyEncryptionKey: string;
   /**
-   * Authentication for the bundled Bot and/or the installed picked harness.
+   * Endpoints for the bundled Bot and/or the installed picked harness.
    *
    * The bundled endpoint is optional: plan credentials can run a picked harness without it.
    * Its presence, not this auth configuration, determines whether a bundled Bot is available.
    */
   managedAgent?: ManagedAgentConfig;
-  /**
-   * Private addresses an agent may be registered at, named one at a time.
-   *
-   * WHY THIS EXISTS. `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS` is a floor, not a permission: it opens this
-   * deployment's whole network, to browsing and to agent endpoints alike, which is why a production
-   * deployment refuses to start with it on. That left bring-your-own-agent — a headline capability —
-   * unusable in the image people are told to deploy, because a company's own agent legitimately lives
-   * at an internal address and the only way to reach it was to drop the floor.
-   *
-   * So the address is named instead. Nothing else is opened, browsing is not widened, and the
-   * never-allowed list is still checked first, so the metadata address cannot be named back in.
-   * Empty by default, which is the same posture as before for anybody who does not set it.
-   */
-  agentEndpointAllowedHosts: ReadonlySet<string>;
   /**
    * What this deployment calls itself, when more than one shares an Intelligence project.
    *
@@ -289,8 +257,8 @@ export type DeploymentConfig = {
    * the API and has to send the person back to a page, so a relative redirect would put them on the
    * API's origin, where no page exists.
    *
-   * `OPENBOT_APP_URL` when set, otherwise the first `TRUSTED_ORIGINS` entry, which is already defined
-   * as where the app is served from. Falls back to the API's own public URL, which is right for a
+   * `OPENBOT_APP_URL` when set.
+   * Falls back to the API's own public URL, which is right for a
    * deployment serving both from one origin.
    */
   appUrl: string | undefined;
@@ -500,131 +468,6 @@ function keyEncryptionKey(environment: Environment): string {
   return value;
 }
 
-/**
- * Whether this deployment may run with no sign-in at all.
- *
- * {@link singleUserEnabled} answers whether somebody ASKED for it, and the flag is how they say so.
- * That design is deliberate and stays: `single-user.test.ts` pins it, and the boot comment in
- * `.github/workflows/ci.yml` says the same thing in the same words. This asks the second question
- * the flag cannot answer, which is not "is this production" but "can anybody else reach it".
- *
- * NOT `NODE_ENV`. It looks like the signal and is not one here: `Dockerfile` sets
- * `NODE_ENV=production` for every container and `openbot.commonEnv` sets it for every chart
- * install, including the local trial the chart's own `validation.yaml` offers. Gating on it would
- * refuse a mode the chart advertises and would fail the image-boot job in CI, which runs exactly
- * this combination on purpose.
- *
- * The chart already asks the right question twice, and this is the same question moved to where a
- * deployment that never goes near Helm is also asked it:
- *
- *   config.singleUser + a LoadBalancer with no source ranges -> refused
- *   config.singleUser + config.publicUrl                     -> refused
- *
- * So: one administrator and no sign-in is a thing you run where only you can reach it. A public
- * URL, or a trusted origin that is not loopback, says somebody else can. `.env.example` ships the
- * flag on so a clone runs, and README's "Deploy it" hands that same `.env` to `docker run`; what
- * separates those two is an address, which is what this reads.
- */
-function singleUserAllowed(
-  environment: Environment,
-  hasProvider: boolean,
-): boolean {
-  if (!singleUserEnabled(environment, hasProvider)) return false;
-
-  const reachable = [
-    optional(environment, "OPENBOT_PUBLIC_URL"),
-    optional(environment, "OPENBOT_APP_URL"),
-    ...commaSeparated(environment, "TRUSTED_ORIGINS"),
-  ].filter((value): value is string => value !== undefined);
-
-  const published = reachable.filter((value) => reachOf(value) === "public");
-  if (published.length > 0) {
-    throw new Error(
-      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, so it cannot be combined with an address the public internet reaches: ${published.join(", ")}. Configure GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_* with BETTER_AUTH_SECRET and BETTER_AUTH_URL, or serve it somewhere only you reach.`,
-    );
-  }
-
-  /*
-   * A private address is allowed and said out loud. index.ts already warns every boot that there is
-   * no sign-in; what it cannot say, because it never reads an address, is that this one is carried
-   * beyond the machine. Whoever is on that network is an administrator here.
-   */
-  const shared = reachable.filter((value) => reachOf(value) === "private");
-  if (shared.length > 0) {
-    console.warn(
-      `OPENBOT_SINGLE_USER admits every request as one administrator with no sign-in, and this deployment answers on an address beyond this machine: ${shared.join(", ")}. Anybody on that network is that administrator. Configure a sign-in provider before anybody else is on it.`,
-    );
-  }
-
-  return true;
-}
-
-/**
- * How far an address reaches, which is the question `OPENBOT_SINGLE_USER` actually turns on.
- *
- * Not two answers but three, because the middle one is most of the deployments this flag exists
- * for. "No sign-in, one administrator" is a thing people run on a home server at `192.168.1.10`,
- * over Tailscale at `100.something`, on a VPN, or at `openbot.local`. None of those is loopback and
- * none of them is a stranger's to reach, so refusing them would refuse the feature's own audience
- * while the operator's only recourse is to turn off the flag that describes what they are doing.
- *
- * A routable public address is the different thing, and it is the one that refuses.
- *
- * UNPARSEABLE COUNTS AS PUBLIC, and so does an unrecognised name. A value nobody could read is not
- * a value anybody checked, and the safe reading of "I cannot tell" is never "it is fine".
- */
-type Reach = "loopback" | "private" | "public";
-
-function reachOf(raw: string): Reach {
-  let bare: string;
-  try {
-    bare = new URL(raw).hostname.toLowerCase();
-  } catch {
-    return "public";
-  }
-  bare = bare.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
-  if (!bare) return "public";
-
-  if (
-    bare === "localhost" ||
-    bare === "::1" ||
-    bare === "0:0:0:0:0:0:0:1" ||
-    /^127(\.\d{1,3}){3}$/.test(bare)
-  ) {
-    return "loopback";
-  }
-
-  if (bare.includes(":")) {
-    // fc00::/7 is the unique local range and fe80::/10 the link-local one. Both are unroutable on
-    // the public internet, which is the only property being asked about here.
-    return /^f[cd]/.test(bare) || /^fe[89ab]/.test(bare) ? "private" : "public";
-  }
-
-  const octets = bare.split(".");
-  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part))) {
-    const [a, b] = octets.map(Number) as [number, number, number, number];
-    const privateV4 =
-      a === 10 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      // 169.254/16 is link-local, and 100.64/10 is the carrier-grade NAT range Tailscale hands out.
-      (a === 169 && b === 254) ||
-      (a === 100 && b >= 64 && b <= 127);
-    return privateV4 ? "private" : "public";
-  }
-
-  // A name rather than an address. `.local` is mDNS, `.internal` and `.home.arpa` are reserved for
-  // exactly this, and a single label with no dot at all is a LAN name that no public resolver
-  // answers. Anything else is a name somebody could look up.
-  const privateName =
-    !bare.includes(".") ||
-    bare.endsWith(".local") ||
-    bare.endsWith(".internal") ||
-    bare.endsWith(".lan") ||
-    bare.endsWith(".home.arpa");
-  return privateName ? "private" : "public";
-}
-
 function url(environment: Environment, name: string): string | undefined {
   const value = optional(environment, name);
   if (!value) {
@@ -662,47 +505,20 @@ function optionalHttpUrl(
   return parsed;
 }
 
-/**
- * The Bot in the box, if this deployment has one.
- *
- * A URL with no token would send unauthenticated calls to a Bot that refuses them, so that half
- * alone refuses to start. A token with no URL is the leftover `scripts/start.sh` writes into
- * `.env`; it names nothing and is ignored, so a one-container image can boot from that file.
- */
+/** Endpoints of the bundled Bot and installed harness. */
 function managedAgentConfig(
   environment: Environment,
 ): ManagedAgentConfig | undefined {
   const endpoint = optionalHttpUrl(environment, "MANAGED_AGENT_AG_UI_URL");
-  // BYO writes a URL too, but does not run our image or hold our deployment token.
+  // An installed harness has its own endpoint.
   const alsoRun = optional(environment, "PICKED_HARNESS_IMAGE")
     ? optionalHttpUrl(environment, "PICKED_HARNESS_URL")
     : undefined;
-  const token = optional(environment, "MANAGED_AGENT_TOKEN");
-  if (endpoint && !token) {
-    throw new Error(
-      "MANAGED_AGENT_TOKEN must be set when MANAGED_AGENT_AG_UI_URL is set",
-    );
-  }
-  if (alsoRun && !token) {
-    throw new Error(
-      "MANAGED_AGENT_TOKEN must be set when an installed PICKED_HARNESS_URL is set",
-    );
-  }
-  if ((!endpoint && !alsoRun) || !token) {
+  if (!endpoint && !alsoRun) {
     return undefined;
   }
-  /*
-   * The harness somebody picked during setup is also an endpoint this deployment runs.
-   *
-   * It is a container this deployment started, on a port this deployment chose, holding the token
-   * this deployment generated — the same relationship the Bot in the box has. It was not getting
-   * the token because that was attached by matching one endpoint exactly, so the picked Bot was
-   * registered, addressable, routed to, and answered every call with 401. Only visible by asking it
-   * something in the window.
-   */
   return {
     ...(endpoint ? { endpoint } : {}),
-    token,
     ...(alsoRun ? { alsoRun } : {}),
   };
 }
@@ -770,37 +586,13 @@ function authConfig(
   const secret = optional(environment, "BETTER_AUTH_SECRET");
   const baseUrl = url(environment, "BETTER_AUTH_URL");
 
-  if (!google && !microsoft && !okta) {
-    if (secret || baseUrl) {
-      throw new Error(
-        "BETTER_AUTH_SECRET or BETTER_AUTH_URL is set but no identity provider is. Configure GOOGLE_OAUTH_*, MICROSOFT_OAUTH_* or OKTA_OAUTH_*, or unset both",
-      );
-    }
-    return undefined;
-  }
-  if (!secret) {
-    throw new Error("Sign-in requires BETTER_AUTH_SECRET");
-  }
-  if (secret.length < 32) {
-    throw new Error("BETTER_AUTH_SECRET must be at least 32 characters");
-  }
-  if (!baseUrl) {
-    throw new Error("Sign-in requires BETTER_AUTH_URL");
-  }
+  if (!google && !microsoft && !okta) return undefined;
 
   const initialAdminEmails = commaSeparated(environment, "INITIAL_ADMIN_EMAILS");
 
   return {
     baseUrl,
     secret,
-    trustedOrigins: commaSeparated(environment, "TRUSTED_ORIGINS").length
-      ? commaSeparated(environment, "TRUSTED_ORIGINS")
-      : /*
-         * All three spellings of the same place, because this is an allowlist of what a browser
-         * sends and not an address anything dials. `localhost` alone refused a browser pointed at
-         * `127.0.0.1:3010`, which is the address the rest of this deployment hands out.
-         */
-        ["http://127.0.0.1:3010", "http://[::1]:3010", "http://localhost:3010"],
     initialAdminEmails,
     ...(google ? { google } : {}),
     ...(microsoft ? { microsoft } : {}),
@@ -874,125 +666,11 @@ function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
     licenseToken: optional(environment, "COPILOTKIT_LICENSE_TOKEN"),
   };
 
-  const missing = Object.entries({
-    INTELLIGENCE_API_URL: settings.apiUrl,
-    INTELLIGENCE_GATEWAY_WS_URL: settings.gatewayWsUrl,
-    INTELLIGENCE_API_KEY: settings.apiKey,
-  })
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-
-  if (missing.length > 0) {
-    throw new Error(
-      `CopilotKit Intelligence is required and is not configured. Missing: ${missing.join(", ")}`,
-    );
-  }
-
   return {
     mode: "intelligence",
     durableHistory: true,
     intelligence: settings as IntelligenceSettings,
   };
-}
-
-/**
- * Whether a Bot may reach addresses inside this deployment's own network.
- *
- * Off unless asked for, and the asking is only allowed on a laptop. The switch exists so that a
- * local deployment can browse the services running beside it; what it turns off is not one rule but
- * the whole private-address floor, in navigation and in the endpoint a Bot may be registered
- * against, so with it on a signed-in person can point a Bot at a link-local address.
- *
- * Refused in production for the reason the example encryption key is: the way a deployment ends up
- * with it is not forgetting to set something, it is copying `.env.example`, which shipped it on. The
- * cloud metadata addresses are refused underneath this either way — see `computer/target.ts` — but
- * that floor is the last one, not the only one worth keeping.
- */
-/**
- * The private addresses this deployment will let an agent be registered at.
- *
- * A comma-separated list of hosts, each optionally with a port: `agents.internal`,
- * `10.0.0.42:9000`. Matching is exact, so a name with a port pins that port and a name without one
- * covers any port on that host. No suffixes and no wildcards, because a pattern that widens by
- * accident is the usual way a host check fails, and naming three addresses is not onerous.
- *
- * A scheme or a path is a mistake worth catching here rather than at the first registration that
- * silently never matches, so both are refused with the offending entry named.
- */
-function agentEndpointAllowedHosts(
-  environment: NodeJS.ProcessEnv,
-): ReadonlySet<string> {
-  const named = commaSeparated(environment, "AGENT_ENDPOINT_ALLOWED_HOSTS");
-  const hosts = new Set<string>();
-  for (const entry of named) {
-    const host = entry.trim().toLowerCase();
-    if (!host) continue;
-    if (host.includes("/") || host.includes("://")) {
-      throw new Error(
-        `AGENT_ENDPOINT_ALLOWED_HOSTS entry "${entry}" must be a host, optionally with a port, and not a URL.`,
-      );
-    }
-    if (host.includes("*")) {
-      throw new Error(
-        `AGENT_ENDPOINT_ALLOWED_HOSTS entry "${entry}" must name one host. Patterns are not accepted: list each address instead.`,
-      );
-    }
-    hosts.add(normalizeAllowedHost(entry, host));
-  }
-  return hosts;
-}
-
-/**
- * An IPv6 entry, spelled the way the endpoint check will see it.
- *
- * `namedAsAllowed` compares against `URL.hostname`, which the parser canonicalises: compressed,
- * lower-case, in brackets. An entry kept as written matched only when the operator happened to
- * write it that way, so `[0:0:0:0:0:0:0:1]:8443` was a line that silently never matched, which is
- * the failure the URL and wildcard refusals above exist to prevent. Stripping the brackets instead
- * folded two different names into one: `[::1]:8443`, an address and a port, and `[::1:8443]`, an
- * address, both became `::1:8443`, so naming either admitted the other.
- *
- * The address goes through the URL parser rather than a hand-written normaliser, so the spelling
- * here is the parser's own and cannot drift from it. The port is kept as written, since the parser
- * drops a scheme's default port and an operator who wrote `:80` meant that port. A bracketed entry
- * the parser refuses is not an address, and is refused the way a URL is: at boot, naming the entry.
- */
-function normalizeAllowedHost(entry: string, host: string): string {
-  if (!host.startsWith("[")) return host;
-  const close = host.indexOf("]");
-  const address = close === -1 ? host : host.slice(0, close + 1);
-  const port = close === -1 ? "" : host.slice(close + 1);
-  const refusal = () =>
-    new Error(
-      `AGENT_ENDPOINT_ALLOWED_HOSTS entry "${entry}" must be a host, optionally with a port, and not a URL.`,
-    );
-  if (port && !/^:\d{1,5}$/.test(port)) throw refusal();
-  let hostname: string;
-  try {
-    hostname = new URL(`http://${address}`).hostname;
-  } catch {
-    throw refusal();
-  }
-  return `${hostname}${port}`;
-}
-
-function privateHostsAllowed(environment: Environment): boolean {
-  if (optional(environment, "AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS") !== "true") {
-    return false;
-  }
-
-  // Through `isProduction`, so the comparison trims. Read raw, `NODE_ENV="production "` out of an
-  // env file would slip past a gate that the switch beside it, which does trim, would still trip.
-  if (isProduction(environment)) {
-    throw new Error(
-      "AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS=true is for local development only: it lets a Bot reach this deployment's own network. Remove it from this deployment's environment.",
-    );
-  }
-  console.warn(
-    "AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS=true lets a Bot reach this machine's own services. Fine locally, and for local development only. Remove it before deploying.",
-  );
-
-  return true;
 }
 
 /**
@@ -1032,16 +710,6 @@ function computerConfig(environment: Environment): ComputerConfig | undefined {
   }
 
   /*
-   * The secret the computers require. Without it every call to a computer is refused, and that is the
-   * intended failure: `agent-computer` drives a browser holding real logins and must not answer
-   * unauthenticated callers that can reach its port.
-   */
-  const computerToken = optional(environment, "COMPUTER_TOKEN");
-
-  const allowPrivateHosts = privateHostsAllowed(environment);
-  const policy = actionPolicy(environment);
-
-  /*
    * Checked before the other two, because a deployment that named a namespace means the cluster to
    * make the computers, and a stray `AGENT_COMPUTER_URL` left in an environment would otherwise
    * quietly put every Bot back on one shared browser.
@@ -1056,22 +724,14 @@ function computerConfig(environment: Environment): ComputerConfig | undefined {
       templateFile:
         optional(environment, "COMPUTER_SANDBOX_TEMPLATE_FILE") ??
         "/etc/openbot/sandbox-template.json",
-      allowPrivateHosts,
-      ...(computerToken ? { token: computerToken } : {}),
-      ...(policy ? { policy } : {}),
     };
   }
 
   const supervisorUrl = url(environment, "COMPUTER_SUPERVISOR_URL");
   if (supervisorUrl) {
-    const supervisorToken = optional(environment, "SUPERVISOR_TOKEN");
     return {
       provider: "docker",
       baseUrl: supervisorUrl,
-      allowPrivateHosts,
-      ...(supervisorToken ? { supervisorToken } : {}),
-      ...(computerToken ? { token: computerToken } : {}),
-      ...(policy ? { policy } : {}),
     };
   }
 
@@ -1083,50 +743,9 @@ function computerConfig(environment: Environment): ComputerConfig | undefined {
   return {
     provider: "shared",
     baseUrl,
-    allowPrivateHosts,
-    ...(computerToken ? { token: computerToken } : {}),
-    ...(policy ? { policy } : {}),
   };
 }
 
-/**
- * The action policy, as JSON in one variable.
- *
- * Refuses to start on malformed JSON or a policy of the wrong shape, rather than falling back to the
- * default. An operator who wrote a rule and mistyped it would otherwise get a running deployment that
- * silently permits what they had just tried to forbid, and no indication that anything was wrong.
- * Configuration the product cannot honour belongs at the boot boundary; see the note at the top.
- */
-function actionPolicy(environment: Environment): ActionPolicy | undefined {
-  const raw = optional(environment, "AGENT_COMPUTER_POLICY");
-  if (!raw) {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("AGENT_COMPUTER_POLICY must be valid JSON");
-  }
-
-  const result = parseActionPolicy(parsed);
-  if (!result.ok) {
-    throw new Error(`AGENT_COMPUTER_POLICY is invalid: ${result.error}`);
-  }
-  return result.policy;
-}
-
-/**
- * How long silence on a Bot's stream is allowed to last.
- *
- * Refuses to start on anything that is not a whole number of milliseconds, rather than falling back
- * to the default. Same reasoning as the action policy above it: an operator who meant to write a
- * two-minute timeout and typed something else would otherwise get a running deployment with a
- * silently different boundary, and no indication that anything was wrong.
- *
- * Zero is a legitimate value and means off. It is not the same as a malformed one.
- */
 function accessibilityEnabled(environment: Environment): boolean {
   const off = optional(environment, "OPENBOT_ACCESSIBILITY_DISABLED");
   return off !== "true" && off !== "1";
@@ -1212,29 +831,11 @@ const DEFAULT_PORT = 3001;
  * used to start the server on port 30, and a typo has to fail where somebody is looking.
  */
 function serverPort(environment: Environment): number {
-  const read = (name: string): number | undefined => {
-    const raw = optional(environment, name);
-    if (raw === undefined) return undefined;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < 1 || value > 65535) {
-      throw new Error(`${name} must be a whole number between 1 and 65535`);
-    }
-    return value;
-  };
-  const port = read("PORT");
-  const serverPort = read("SERVER_PORT");
-  if (port !== undefined && serverPort !== undefined && port !== serverPort) {
-    throw new Error(
-      `PORT (${port}) and SERVER_PORT (${serverPort}) disagree: set one or set both to the same value`,
-    );
-  }
-  return port ?? serverPort ?? DEFAULT_PORT;
+  return listenPort(environment.PORT ?? environment.SERVER_PORT, DEFAULT_PORT);
 }
 
 export function loadConfig(
   environment: Environment = process.env,
-  /** This machine's network interfaces, for {@link listenAddresses}. A test passes its own. */
-  interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces(),
 ): DeploymentConfig {
   const google = oauthClient(environment, "GOOGLE");
   const auth = authConfig(environment, google);
@@ -1266,7 +867,6 @@ export function loadConfig(
     ...(webBotAuth ? { webBotAuth } : {}),
     ...(managedAgent ? { managedAgent } : {}),
     ...(githubApp ? { githubApp } : {}),
-    agentEndpointAllowedHosts: agentEndpointAllowedHosts(environment),
     deploymentId: optional(environment, "DEPLOYMENT_ID"),
     composioApiKey: optional(environment, "COMPOSIO_API_KEY"),
     arcadeApiKey: optional(environment, "ARCADE_API_KEY"),
@@ -1274,7 +874,6 @@ export function loadConfig(
     publicUrl,
     appUrl: (
       optional(environment, "OPENBOT_APP_URL") ??
-      commaSeparated(environment, "TRUSTED_ORIGINS")[0] ??
       optional(environment, "OPENBOT_PUBLIC_URL") ??
       auth?.baseUrl
     )?.replace(/\/+$/, ""),
@@ -1292,7 +891,7 @@ export function loadConfig(
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
-    singleUser: singleUserAllowed(environment, configuredAuthProviders(auth).length > 0),
+    singleUser: !auth,
     accessibility: accessibilityEnabled(environment),
     generativeUi: generativeUiEnabled(environment),
     selfHostBanner: selfHostBannerEnabled(environment),
@@ -1309,41 +908,8 @@ export function loadConfig(
   // After everything above, so its refusals keep the order they were always raised in.
   return {
     ...loaded,
-    listen: listenAddresses(environment, loaded.singleUser, interfaces),
+    listen: listenHosts(optional(environment, LISTEN_HOST_VARIABLE)),
   };
-}
-
-/**
- * Where the API listens. `OPENBOT_HOST` when set; otherwise this machine alone in single-user mode,
- * where whoever reaches the port is the administrator, and every interface for a deployment whose
- * routes all ask who is calling, which is how every such deployment has always listened.
- *
- * THIS MACHINE INCLUDES ITS CONTAINERS. The Bots run in Docker and call back into this server at
- * `host.docker.internal` (docker-compose.yml, and the desktop's env.rs). Docker Desktop carries that
- * to the host's loopback, but Docker Engine on Linux maps it to the default bridge's own address on
- * the host, `docker0`, which a loopback listener never answers: every tool call a Bot made would
- * fail. So where `docker0` exists, its address is listened on too. It is an address on this machine
- * that only this machine and its containers route to, the same reach loopback already has for a
- * server whose Bots are its containers. Not required, because a missing bridge is not a failure.
- */
-export function listenAddresses(
-  environment: Environment,
-  singleUser: boolean,
-  interfaces: ReturnType<typeof networkInterfaces>,
-): ListenHost[] {
-  const listen = listenHosts(
-    optional(environment, LISTEN_HOST_VARIABLE),
-    singleUser ? "loopback" : "every",
-  );
-  if (!listen.ok) throw new Error(listen.reason);
-  if (optional(environment, LISTEN_HOST_VARIABLE) || !singleUser)
-    return listen.hosts;
-  const bridge = interfaces.docker0?.find(
-    (entry) => entry.family === "IPv4" && !entry.internal,
-  );
-  return bridge
-    ? [...listen.hosts, { host: bridge.address, required: false, local: true }]
-    : listen.hosts;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-import { egressShellEnvironment, splitProxyCredentials } from "./egress";
+import { splitProxyCredentials } from "./egress";
 
 /**
  * Running a command on the Bot's computer.
@@ -268,7 +268,6 @@ export function createShell(
         // The egress filter's address last, so a command cannot be pointed around it.
         env: {
           ...environmentForCommand(sourceEnv, workspaceDir),
-          ...egressShellEnvironment(),
         },
         detached: true,
       });

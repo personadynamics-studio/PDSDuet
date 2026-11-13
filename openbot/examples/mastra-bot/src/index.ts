@@ -17,12 +17,7 @@ import { listenPort } from "../../../shared/listen-port";
  * as `agent-bot` and the LangGraph example.
  */
 
-const resolvedPort = listenPort(process.env.PORT, 4400);
-if (!resolvedPort.ok) {
-  console.error(resolvedPort.reason);
-  process.exit(1);
-}
-const PORT = resolvedPort.port;
+const PORT = listenPort(process.env.PORT, 4400);
 const MODEL = process.env.BOT_MODEL ?? "gpt-5.5";
 /**
  * `gpt-5.6-*` rejects function tools on `/v1/chat/completions` and needs the Responses API, which

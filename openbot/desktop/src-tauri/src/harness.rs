@@ -277,27 +277,6 @@ pub fn picked(
     }))
 }
 
-#[derive(Debug)]
-pub enum PickedAfterDeploymentError<E> {
-    Deployment(E),
-    Harness(String),
-}
-
-pub async fn picked_after_deployment_ready<E, Ready, ReadyFuture>(
-    root: &std::path::Path,
-    harness: Option<&HarnessChoice>,
-    ready: Ready,
-) -> Result<Option<crate::env::PickedHarness>, PickedAfterDeploymentError<E>>
-where
-    Ready: FnOnce() -> ReadyFuture,
-    ReadyFuture: std::future::Future<Output = Result<(), E>>,
-{
-    ready()
-        .await
-        .map_err(PickedAfterDeploymentError::Deployment)?;
-    picked(harness, root).map_err(PickedAfterDeploymentError::Harness)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::test_support::temp_root;

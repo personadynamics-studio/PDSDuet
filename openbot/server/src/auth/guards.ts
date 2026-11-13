@@ -1,8 +1,5 @@
-import { eq } from "drizzle-orm";
-import type { Context, MiddlewareHandler } from "hono";
-import type { Database } from "../db/client";
-import { userRoles } from "../db/schema";
-import type { OpenBotRole } from "./roles";
+import type { MiddlewareHandler } from "hono";
+import { roleForEmail, type OpenBotRole } from "./roles";
 
 export type AuthenticatedActor = {
   id: string;
@@ -28,30 +25,13 @@ export type AuthService = {
   };
 };
 
-export type RoleRepository = {
-  rolesForUser: (userId: string) => Promise<OpenBotRole[]>;
-};
-
 export type AppVariables = {
   actor: AuthenticatedActor;
 };
 
-export function createRoleRepository(database: Database): RoleRepository {
-  return {
-    rolesForUser: async (userId) => {
-      const records = await database
-        .select({ role: userRoles.role })
-        .from(userRoles)
-        .where(eq(userRoles.userId, userId));
-
-      return records.map((record) => record.role);
-    },
-  };
-}
-
 export function createRequireUser(
   auth: AuthService,
-  roleRepository: RoleRepository,
+  initialAdminEmails: readonly string[],
 ): MiddlewareHandler<{ Variables: AppVariables }> {
   return async (context, next) => {
     const session = await auth.api.getSession({
@@ -62,8 +42,7 @@ export function createRequireUser(
       return context.json({ error: "Authentication required." }, 401);
     }
 
-    const roles = await roleRepository.rolesForUser(session.user.id);
-    const role = roles.includes("admin") ? "admin" : "user";
+    const role = roleForEmail(session.user.email, initialAdminEmails);
 
     context.set("actor", {
       id: session.user.id,
@@ -76,10 +55,3 @@ export function createRequireUser(
   };
 }
 
-export function requireAdmin(context: Context<{ Variables: AppVariables }>) {
-  if (context.var.actor.role !== "admin") {
-    return context.json({ error: "Only an admin can do this." }, 403);
-  }
-
-  return undefined;
-}

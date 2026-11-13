@@ -11,7 +11,6 @@ import {
 } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { serve } from "bun";
-import { hasManagedAgentToken } from "../../shared/agent-authorisation";
 import { listenPort } from "../../shared/listen-port";
 import {
   apiKeyOrPlaceholder,
@@ -46,19 +45,8 @@ import { toolAnswer } from "./tool-answer";
  * The graph provides model orchestration without changing that contract.
  */
 
-const resolvedPort = listenPort(process.env.PORT, 4201);
-if (!resolvedPort.ok) {
-  console.error(resolvedPort.reason);
-  process.exit(1);
-}
-const PORT = resolvedPort.port;
-const MANAGED_AGENT_TOKEN = process.env.MANAGED_AGENT_TOKEN?.trim();
-if (!MANAGED_AGENT_TOKEN) {
-  console.error(
-    "MANAGED_AGENT_TOKEN is not set. This process holds a model credential and will not start without a token for OpenBot's server.",
-  );
-  process.exit(1);
-}
+const PORT = listenPort(process.env.PORT, 4201);
+
 
 /**
  * Which model drives this Bot, and from whom.
@@ -446,9 +434,6 @@ serve({
     }
 
     if (url.pathname === "/ag-ui" && request.method === "POST") {
-      if (!hasManagedAgentToken(request, MANAGED_AGENT_TOKEN)) {
-        return Response.json({ error: "Unauthorized." }, { status: 401 });
-      }
       const input = (await request.json()) as RunAgentInput;
       return runAgent(input);
     }

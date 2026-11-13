@@ -2,10 +2,8 @@ import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import {
   type CapabilityKey,
-  type EgressRule,
   type EnterpriseSettings,
   enterpriseKeys,
-  type NetworkMode,
 } from "./queries";
 
 const FALLBACK = "Could not save that enterprise control";
@@ -44,47 +42,6 @@ export function setEnterpriseSettingMutationOptions(queryClient: QueryClient) {
         body: { value: variables.value },
         fallback: FALLBACK,
       });
-    },
-    onSuccess: () => invalidateEnterprise(queryClient),
-  });
-}
-
-export function setNetworkPolicyMutationOptions(queryClient: QueryClient) {
-  return mutationOptions({
-    mutationFn: async (variables: {
-      scopeKind: "organization" | "group";
-      scopeId: string;
-      mode: NetworkMode;
-      rules: EgressRule[];
-      locked: boolean;
-    }) => {
-      await client("/api/admin/enterprise/network", {
-        method: "PUT",
-        body: variables,
-        fallback: FALLBACK,
-      });
-    },
-    onSuccess: () => invalidateEnterprise(queryClient),
-  });
-}
-
-export function removeNetworkPolicyMutationOptions(queryClient: QueryClient) {
-  return mutationOptions({
-    mutationFn: async (variables: {
-      scopeKind: "organization" | "group";
-      scopeId: string;
-    }) => {
-      const query =
-        variables.scopeKind === "group"
-          ? `?group=${encodeURIComponent(variables.scopeId)}`
-          : "";
-      await client(
-        `/api/admin/enterprise/network/${variables.scopeKind}${query}`,
-        {
-          method: "DELETE",
-          fallback: FALLBACK,
-        },
-      );
     },
     onSuccess: () => invalidateEnterprise(queryClient),
   });

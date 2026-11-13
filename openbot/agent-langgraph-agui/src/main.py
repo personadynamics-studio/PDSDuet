@@ -5,7 +5,6 @@ against writing adapters. This is the same framework served through `ag-ui-langg
 package the AG-UI project maintains, so the protocol stops being ours to keep working.
 """
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -16,8 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from model_providers import bot_settings
 
 from ag_ui_langgraph import add_langgraph_fastapi_endpoint
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
@@ -30,7 +28,6 @@ from .tool_runtime import (
     next_step,
 )
 
-TOKEN_HEADER = "x-openbot-agent-token"
 
 # Provider names supported by LangChain's public init_chat_model contract. A colon in an opaque
 # compatible model ID (for example qwen2.5:1.5b) is not a provider separator.
@@ -235,16 +232,6 @@ builder.add_edge("tools", "answer")
 graph = builder.compile(checkpointer=MemorySaver())
 
 app = FastAPI()
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

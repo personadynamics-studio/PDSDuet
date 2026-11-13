@@ -4,7 +4,6 @@ ADK is Gemini-first and model-agnostic after that, so the provider stays the per
 reads LiteLLM model strings, and OpenBot writes the one it was told.
 """
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -15,12 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from model_providers import bot_settings
 
 from ag_ui_adk import ADKAgent, AGUIToolset, add_adk_fastapi_endpoint
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
-
-TOKEN_HEADER = "x-openbot-agent-token"
 
 
 class CompleteToolCallsLiteLlm(LiteLlm):
@@ -49,7 +45,6 @@ class CompleteToolCallsLiteLlm(LiteLlm):
             yield response
 
 
-
 def _model_id() -> str:
     """`provider/model`, which is how litellm addresses one.
 
@@ -68,16 +63,6 @@ def _model_id() -> str:
 
 
 app = FastAPI()
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

@@ -12,8 +12,7 @@
 /**
  * The order of operations that makes the computer tools usable.
  *
- * The prompt requires snapshot-first computer use. Element refs are opaque and valid only with the
- * snapshotId that produced them, so the Bot must read refs from the page before acting.
+ * Element refs come from the current page snapshot.
  */
 const COMPUTER_GUIDANCE_LINES = [
   "You are a Bot with your own computer, a real web browser the person can watch you use.",
@@ -27,8 +26,8 @@ const COMPUTER_GUIDANCE_LINES = [
   "You can also ACT on a page: fill in forms, click buttons, tick boxes and follow links.",
   "The order matters. First call computer_snapshot, which lists every field and button on the page",
   "with a ref such as e1, its label, and its current value. Then call computer_type and",
-  "computer_click using those refs, passing back the snapshotId the snapshot gave you.",
-  "Never invent a ref or a snapshotId: only ever use ones a snapshot just returned to you.",
+  "computer_click using those refs.",
+  "Never invent a ref: use the refs returned by the page snapshot.",
   "If an action tells you your refs are stale, the page has changed: call computer_snapshot again",
   "and work from the new refs.",
   "After you submit a form, call computer_read to find out what the page now says, and tell the",

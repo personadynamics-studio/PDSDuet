@@ -21,8 +21,8 @@ export function ComputerControlButton({
         className="min-h-11"
         size="sm"
         variant={human ? "default" : "outline"}
-        disabled={busy || !control || control.transitioning}
-        aria-busy={busy || control?.transitioning}
+        disabled={busy || !control}
+        aria-busy={busy}
         onClick={async () => {
           if (await change?.(human ? "release" : "take")) {
             if (!human) onTakeControl?.();
@@ -31,11 +31,7 @@ export function ComputerControlButton({
       >
         {human ? "交回控制權" : "接管控制權"}
       </Button>
-      {control?.transitioning ? (
-        <span className="text-xs text-muted-foreground" role="status">
-          正在完成目前的操作…
-        </span>
-      ) : null}
+
       {problem ? (
         <span className="max-w-64 text-xs text-destructive" role="alert">
           {problem}
@@ -67,7 +63,6 @@ export function ComputerChatControls({
     control &&
       (control.requested ||
         control.holder === "human" ||
-        control.recoveryRequired ||
         control.secretWanted !== undefined),
   );
   const promptKey = needsYou

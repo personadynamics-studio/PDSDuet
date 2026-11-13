@@ -6,8 +6,7 @@ export type AgentVisibility = "public" | "private";
 /**
  * A coworker as the browser sees it.
  *
- * `canManage` and `systemOwned` are server-decided authorization facts; components render from the
- * returned flags rather than recomputing ownership rules.
+ * The server provides the coworker's configuration and roster metadata.
  */
 export type AgentProfile = {
   id: string;
@@ -42,12 +41,9 @@ export type AgentProfile = {
   /** A Team Bot an administrator assigned to this person; their Bots list always pins it. */
   assignedToMe?: boolean;
   systemOwned: boolean;
-  canManage: boolean;
   /**
    * Whether the signed-in person created this coworker.
    *
-   * Separate from `canManage`, which is also true for administrators on everybody's coworkers. Split
-   * a roster on `canManage` and an administrator's "mine" fills up with other people's work.
    */
   mine: boolean;
 };

@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { CredentialStore } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -17,13 +17,7 @@ import {
   mintCallbackToken,
   sameToken,
 } from "./callback-token";
-import {
-  assignedCondition,
-  assignedToActor,
-  teamBotAccess,
-} from "../team-bots/access";
-import { teamBotPublications } from "../db/schema/team-bots";
-import { canManageAgent } from "./profile-policy";
+import { assignedToActor } from "../team-bots/access";
 import type {
   AgentActor,
   AgentProfile,
@@ -39,15 +33,6 @@ export type ProfileReadExecutor = DatabaseExecutor;
 export type AgentProfileStore = {
   list(actor: AgentActor, hidden?: boolean): Promise<AgentProfile[]>;
   get(actor: AgentActor, id: string): Promise<AgentProfile | null>;
-  /**
-   * `get`, but on the caller's own transaction and holding the profile against deletion until that
-   * transaction ends.
-   *
-   * A caller that writes rows referencing an agent has to validate it here rather than through
-   * `get`. `get` borrows a second pooled connection, which deadlocks the caller's transaction once
-   * every connection is held by one, and reads an unlocked snapshot, so a deletion committing
-   * between the check and the insert leaves rows pointing at an agent that no longer runs.
-   */
   getWithin(
     executor: ProfileReadExecutor,
     actor: AgentActor,
@@ -105,19 +90,7 @@ export class AgentNotFoundError extends Error {
   }
 }
 
-export class AgentNotManageableError extends Error {
-  constructor(id: string) {
-    super(`Agent ${id} cannot be managed by this actor.`);
-    this.name = "AgentNotManageableError";
-  }
-}
 
-export class ProtectedAgentError extends Error {
-  constructor(id: string) {
-    super(`Agent ${id} is protected.`);
-    this.name = "ProtectedAgentError";
-  }
-}
 
 export class ManagedAgentUnavailableError extends Error {
   constructor() {
@@ -160,17 +133,6 @@ function joinedProfiles(executor: DatabaseExecutor, actor: AgentActor) {
       ),
     )
     .leftJoin(deploymentPackages, eq(deploymentPackages.id, agents.packageId));
-}
-
-function accessFilter(actor: AgentActor) {
-  if (actor.role === "admin") return undefined;
-
-  return or(
-    eq(agentProfiles.visibility, "public"),
-    eq(agentProfiles.ownerUserId, actor.id),
-    // A private Bot its owner published to the team, to this person, or to a group they are in.
-    teamBotAccess(actor.id, agentProfiles.agentId),
-  );
 }
 
 function mapProfile(
@@ -309,7 +271,7 @@ export function runForDuplicate(
   return managed ? { type: "remote_ag_ui", configuration: managed } : null;
 }
 
-async function findAccessibleProfile(
+async function findProfile(
   executor: DatabaseExecutor,
   actor: AgentActor,
   id: string,
@@ -318,43 +280,9 @@ async function findAccessibleProfile(
     and(
       eq(agents.id, id),
       isNull(agentProfiles.deletedAt),
-      accessFilter(actor),
     ),
   );
   return row ? mapProfile(row) : null;
-}
-
-async function lockProfileMutationRows(executor: DatabaseExecutor, id: string) {
-  await executor
-    .select({ id: agents.id })
-    .from(agents)
-    .where(eq(agents.id, id))
-    .for("update");
-  await executor
-    .select({ agentId: agentProfiles.agentId })
-    .from(agentProfiles)
-    .where(eq(agentProfiles.agentId, id))
-    .for("update");
-}
-
-/**
- * Share-lock a profile so it stays readable to concurrent callers but cannot be deleted or renamed
- * until this transaction ends. `lockProfileMutationRows` takes the exclusive counterpart, so a
- * deletion racing a reference blocks here instead of committing underneath it.
- */
-async function lockProfileReadRow(executor: DatabaseExecutor, id: string) {
-  await executor
-    .select({ agentId: agentProfiles.agentId })
-    .from(agentProfiles)
-    .where(eq(agentProfiles.agentId, id))
-    .for("share");
-}
-
-function requireManageable(actor: AgentActor, profile: AgentProfile) {
-  if (profile.systemOwned) throw new ProtectedAgentError(profile.id);
-  if (!canManageAgent(actor, profile)) {
-    throw new AgentNotManageableError(profile.id);
-  }
 }
 
 function newAgentId() {
@@ -391,14 +319,6 @@ async function findByTokenHash(
   return sameToken(row.hash, hash) ? { id: row.agentId } : null;
 }
 
-/** Hiding a Team Bot an administrator assigned to this person, which they cannot do. */
-export class AgentAssignedError extends Error {
-  constructor(_id: string) {
-    super("This Bot was assigned to you by an admin and can't be hidden.");
-    this.name = "AgentAssignedError";
-  }
-}
-
 export function createAgentProfileStore(
   database: Database,
   managedAgentAgUiUrl: URL | undefined,
@@ -417,7 +337,6 @@ export function createAgentProfileStore(
       const rows = await joinedProfiles(database, actor).where(
         and(
           isNull(agentProfiles.deletedAt),
-          accessFilter(actor),
           hidden
             ? isNotNull(agentPreferences.hiddenAt)
             : isNull(agentPreferences.hiddenAt),
@@ -427,12 +346,11 @@ export function createAgentProfileStore(
     },
 
     get(actor, id) {
-      return findAccessibleProfile(database, actor, id);
+      return findProfile(database, actor, id);
     },
 
     async getWithin(executor, actor, id) {
-      await lockProfileReadRow(executor, id);
-      return findAccessibleProfile(executor, actor, id);
+      return findProfile(executor, actor, id);
     },
 
     create(actor, input) {
@@ -447,10 +365,6 @@ export function createAgentProfileStore(
             id,
             name: input.name,
             type: "remote_ag_ui",
-            // Their endpoint if they gave one, ours if they did not. Validated before it reaches
-            // here; see endpoint.ts for why a stored URL is a security decision and not a text
-            // field.
-            //
             // The key, if there is one, goes to the vault and only its reference is stored here. See
             // auth-header.ts for why a bearer token must not sit next to the endpoint.
             configuration: {
@@ -502,7 +416,7 @@ export function createAgentProfileStore(
           visibility: input.visibility,
         });
 
-        const profile = await findAccessibleProfile(transaction, actor, id);
+        const profile = await findProfile(transaction, actor, id);
         if (!profile) throw new AgentNotFoundError(id);
         return profile;
       });
@@ -511,10 +425,8 @@ export function createAgentProfileStore(
     update(actor, id, input) {
       return database.transaction(
         async (transaction) => {
-          await lockProfileMutationRows(transaction, id);
-          const profile = await findAccessibleProfile(transaction, actor, id);
+          const profile = await findProfile(transaction, actor, id);
           if (!profile) throw new AgentNotFoundError(id);
-          requireManageable(actor, profile);
 
           const updatedAt = new Date();
           /**
@@ -548,10 +460,7 @@ export function createAgentProfileStore(
            * describes.
            *
            * Only for `built_in`, and that matters. A remote Bot has no `systemPrompt` and must not
-           * acquire one — its instruction travels as the standing role message instead — and the
-           * tenant package's Bots, whose `system_prompt` is deliberately not their
-           * `role_description`, cannot reach this code at all: `requireManageable` above throws
-           * `ProtectedAgentError` for anything the package owns.
+           * acquire one; its instruction travels as the standing role message instead.
            */
           const configuration = {
             ...previous,
@@ -603,7 +512,7 @@ export function createAgentProfileStore(
             })
             .where(eq(agentProfiles.agentId, id));
 
-          const updated = await findAccessibleProfile(transaction, actor, id);
+          const updated = await findProfile(transaction, actor, id);
           if (!updated) throw new AgentNotFoundError(id);
           return updated;
         },
@@ -613,7 +522,7 @@ export function createAgentProfileStore(
 
     duplicate(actor, id) {
       return database.transaction(async (transaction) => {
-        const source = await findAccessibleProfile(transaction, actor, id);
+        const source = await findProfile(transaction, actor, id);
         if (!source) throw new AgentNotFoundError(id);
 
         /*
@@ -655,7 +564,7 @@ export function createAgentProfileStore(
           visibility: "private",
         });
 
-        const duplicate = await findAccessibleProfile(
+        const duplicate = await findProfile(
           transaction,
           actor,
           duplicateId,
@@ -667,23 +576,8 @@ export function createAgentProfileStore(
 
     setHidden(actor, id, hidden) {
       return database.transaction(async (transaction) => {
-        const profile = await findAccessibleProfile(transaction, actor, id);
+        const profile = await findProfile(transaction, actor, id);
         if (!profile) throw new AgentNotFoundError(id);
-        // An administrator put this Team Bot in this person's sidebar; it stays there.
-        if (hidden) {
-          const [assigned] = await transaction
-            .select({ agentId: teamBotPublications.agentId })
-            .from(teamBotPublications)
-            .where(
-              and(
-                eq(teamBotPublications.agentId, id),
-                sql`${assignedCondition(actor.id)}`,
-              ),
-            )
-            .limit(1);
-          if (assigned) throw new AgentAssignedError(id);
-        }
-
         await transaction
           .insert(agentPreferences)
           .values({
@@ -706,7 +600,7 @@ export function createAgentProfileStore(
      */
     setPinned(actor, id, pinned) {
       return database.transaction(async (transaction) => {
-        const profile = await findAccessibleProfile(transaction, actor, id);
+        const profile = await findProfile(transaction, actor, id);
         if (!profile) throw new AgentNotFoundError(id);
 
         await transaction
@@ -726,10 +620,8 @@ export function createAgentProfileStore(
     softDelete(actor, id) {
       return database.transaction(
         async (transaction) => {
-          await lockProfileMutationRows(transaction, id);
-          const profile = await findAccessibleProfile(transaction, actor, id);
+          const profile = await findProfile(transaction, actor, id);
           if (!profile) throw new AgentNotFoundError(id);
-          requireManageable(actor, profile);
 
           const deletedAt = new Date();
           await transaction
@@ -769,8 +661,7 @@ export function createAgentProfileStore(
     issueCallbackToken(actor, id) {
       return database.transaction(
         async (transaction) => {
-          await lockProfileMutationRows(transaction, id);
-          const profile = await findAccessibleProfile(transaction, actor, id);
+          const profile = await findProfile(transaction, actor, id);
           if (!profile) throw new AgentNotFoundError(id);
           /*
            * Whoever may change the agent may credential it.
@@ -778,7 +669,6 @@ export function createAgentProfileStore(
            * The same gate as renaming it or repointing its endpoint, and repointing the endpoint is
            * the more dangerous of the two: it decides which process the token is for.
            */
-          requireManageable(actor, profile);
 
           const token = mintCallbackToken();
           const issuedAt = new Date();
@@ -801,10 +691,8 @@ export function createAgentProfileStore(
     revokeCallbackToken(actor, id) {
       return database.transaction(
         async (transaction) => {
-          await lockProfileMutationRows(transaction, id);
-          const profile = await findAccessibleProfile(transaction, actor, id);
+          const profile = await findProfile(transaction, actor, id);
           if (!profile) throw new AgentNotFoundError(id);
-          requireManageable(actor, profile);
 
           const now = new Date();
           await transaction

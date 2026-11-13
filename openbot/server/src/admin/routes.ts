@@ -8,12 +8,8 @@
 import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { recordAuditEvent } from "../audit";
-import { type AppVariables, requireAdmin } from "../auth/guards";
+import { type AppVariables } from "../auth/guards";
 import { scimStatus } from "../auth/scim";
-import {
-  DEFAULT_EGRESS_DESTINATIONS,
-  parseEgressRules,
-} from "../computer/policy-network";
 import { mcpServers } from "../db/schema";
 import { parsePageLimit } from "../paging";
 import { otelConfigured } from "../telemetry/otel";
@@ -67,14 +63,6 @@ const capabilityInput = z.strictObject({
   allowed: z.boolean().nullable(),
 });
 
-const networkInput = z.strictObject({
-  scopeKind: z.enum(["organization", "group"]),
-  scopeId: z.string().trim().max(200).default(""),
-  mode: z.enum(["allow_all", "defaults_plus_allowlist", "allowlist_only"]),
-  rules: z.array(z.unknown()).max(5_000),
-  locked: z.boolean().default(false),
-});
-
 const MODEL = z.string().trim().min(1).max(200);
 const SERVER = z.string().trim().min(1).max(200);
 
@@ -119,13 +107,6 @@ export function createEnterpriseAdminRoutes(
     });
   });
 
-  routes.use("*", async (context, next) => {
-    if (new URL(context.req.url).pathname.endsWith("/me")) return next();
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-    return next();
-  });
-
   routes.get("/", async (context) => {
     const controls = enterpriseControls();
     if (!controls) return unavailable(context);
@@ -133,7 +114,6 @@ export function createEnterpriseAdminRoutes(
     const rows = await controls.store.capabilityRows();
     const settings = await controls.store.settings();
     const groups = await controls.store.groups();
-    const network = await controls.store.networkPolicies();
     const servers = await controls.deps.database
       .select({
         id: mcpServers.id,
@@ -170,8 +150,6 @@ export function createEnterpriseAdminRoutes(
       })),
       settings,
       groups,
-      network,
-      defaultDestinations: DEFAULT_EGRESS_DESTINATIONS,
       mcpServers: servers,
       builtInModel: controls.deps.builtInModel ?? null,
       scim: scimStatus(controls.deps.env ?? process.env),
@@ -251,76 +229,6 @@ export function createEnterpriseAdminRoutes(
       },
     });
     return context.json({ key, value: parsed.data });
-  });
-
-  routes.put("/network", async (context) => {
-    const controls = enterpriseControls();
-    if (!controls) return unavailable(context);
-    const parsed = networkInput.safeParse(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.success) {
-      return context.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid policy." },
-        400,
-      );
-    }
-    const rules = parseEgressRules(parsed.data.rules);
-    if (!rules.ok) return context.json({ error: rules.error }, 400);
-    const input = {
-      ...parsed.data,
-      scopeId:
-        parsed.data.scopeKind === "organization" ? "" : parsed.data.scopeId,
-      rules: rules.rules,
-    };
-    if (input.scopeKind === "group" && !input.scopeId) {
-      return context.json({ error: "Name the group." }, 400);
-    }
-    await controls.store.setNetworkPolicy(input, context.var.actor.email);
-    await controls.refresh();
-    void controls.pushNetworkPolicies();
-    await recordAuditEvent(controls.deps.auditStore, {
-      eventType: "network_policy.changed",
-      targetType: "network_policy",
-      targetId:
-        input.scopeKind === "group" ? `group:${input.scopeId}` : "organization",
-      actorUserId: context.var.actor.id,
-      payload: {
-        scopeKind: input.scopeKind,
-        scopeId: input.scopeId,
-        mode: input.mode,
-        locked: input.locked,
-        ruleCount: input.rules.length,
-        rules: input.rules,
-        by: context.var.actor.email,
-      },
-    });
-    return context.json({ saved: input });
-  });
-
-  routes.delete("/network/:scopeKind", async (context) => {
-    const controls = enterpriseControls();
-    if (!controls) return unavailable(context);
-    const scopeKind = context.req.param("scopeKind");
-    if (scopeKind !== "organization" && scopeKind !== "group") {
-      return context.json({ error: "organization or group." }, 400);
-    }
-    const scopeId =
-      scopeKind === "group" ? (context.req.query("group") ?? "") : "";
-    const removed = await controls.store.removeNetworkPolicy(
-      scopeKind,
-      scopeId,
-    );
-    await controls.refresh();
-    void controls.pushNetworkPolicies();
-    await recordAuditEvent(controls.deps.auditStore, {
-      eventType: "network_policy.removed",
-      targetType: "network_policy",
-      targetId: scopeKind === "group" ? `group:${scopeId}` : "organization",
-      actorUserId: context.var.actor.id,
-      payload: { scopeKind, scopeId, removed, by: context.var.actor.email },
-    });
-    return context.json({ removed });
   });
 
   routes.get("/models/usage", async (context) => {

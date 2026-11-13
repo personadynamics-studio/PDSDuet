@@ -4,7 +4,6 @@ The AG-UI support is LlamaIndex's own package, `llama-index-protocols-ag-ui`, an
 FastAPI router. Mount it and stop.
 """
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -15,12 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from model_providers import bot_settings
 
 import litellm
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from llama_index.llms.litellm import LiteLLM
 from llama_index.protocols.ag_ui.router import get_ag_ui_workflow_router
-
-TOKEN_HEADER = "x-openbot-agent-token"
 
 
 def _model_id() -> str:
@@ -56,17 +52,6 @@ def _llm() -> LiteLLM:
 
 
 app = FastAPI()
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    """Everything but `/health`, which Compose polls before any token exists."""
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

@@ -11,12 +11,10 @@ import {
   type RunAssertion,
   sameToken,
 } from "./agents/callback-token";
-import { computerAccessCheck } from "./agents/computer-access";
 import {
   type BotLifecycleServices,
   createBotLifecycleRoutes,
 } from "./agents/lifecycle-routes";
-import type { BotAccessCheck } from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
 import { createApprovalRoutes } from "./approvals/routes";
@@ -37,11 +35,8 @@ import {
   type AppVariables,
   type AuthService,
   createRequireUser,
-  type RoleRepository,
-  requireAdmin,
 } from "./auth/guards";
 import type { IdentityProviderStore } from "./auth/identity-provider-store";
-import { desktopAuthPage } from "./auth/native-browser";
 import {
   createAttachmentRoutes,
   createChannelAttachmentRoutes,
@@ -58,7 +53,6 @@ import { createSandboxedRoutes } from "./components/sandboxed-routes";
 import type { ComponentStore } from "./components/store";
 import type { ComputerGateway } from "./computer/gateway";
 import type { PageFrameStore } from "./computer/page-frames";
-import type { PolicyStore } from "./computer/policy-store";
 import { createComputerRoutes } from "./computer/routes";
 import { configuredAuthProviders, type DeploymentConfig } from "./config";
 import {
@@ -227,7 +221,6 @@ async function recordPersonEvent(
 export function createApp(
   config: DeploymentConfig,
   auth?: AuthService,
-  roleRepository?: RoleRepository,
   auditReader?: AuditReader,
   credentialService?: CredentialAdminService,
   packageStatusReader?: PackageStatusReader,
@@ -239,10 +232,8 @@ export function createApp(
    * scope broke every server test that touches createApp even though none of them use CopilotKit.
    */
   copilotHandler?: HonoApp,
-  /** The single governed computer module: policy, audit trail, transport, and provider lifecycle. */
+  /** Computer transport and provider lifecycle. */
   computerGateway?: ComputerGateway,
-  /** What the gateway enforces, and what an administrator can change while running. */
-  computerPolicy?: PolicyStore,
   /** Bots as durable objects: profile, roster, visibility. */
   agentProfileStore?: AgentProfileStore,
   /** The durable channels a Bot runs in. */
@@ -520,14 +511,9 @@ export function createApp(
 
     }),
   );
-  app.on(["GET", "POST"], "/api/auth/*", (context) => {
-    if (context.req.method === "GET" && new URL(context.req.url).pathname === "/api/auth/desktop") {
-      return desktopAuthPage(context.req.raw, configuredAuthProviders(config.auth));
-    }
-    return auth
-      ? auth.handler(context.req.raw)
-      : context.json({ error: "No identity provider is configured." }, 503);
-  });
+  app.on(["GET", "POST"], "/api/auth/*", (context) => auth
+    ? auth.handler(context.req.raw)
+    : context.json({ error: "No identity provider is configured." }, 503));
 
   const authenticationUnavailable: MiddlewareHandler<{
     Variables: AppVariables;
@@ -537,8 +523,8 @@ export function createApp(
   // true when there is no provider, so a configured deployment cannot fall back to it.
   const requireUser = config.singleUser
     ? createDevRequireUser()
-    : auth && roleRepository
-      ? createRequireUser(auth, roleRepository)
+    : auth
+      ? createRequireUser(auth, config.auth?.initialAdminEmails ?? [])
       : authenticationUnavailable;
   app.route("/api/admin/enterprise", createEnterpriseAdminRoutes(requireUser));
   app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/*", (context) =>
@@ -703,23 +689,15 @@ export function createApp(
       createLearningRoutes(
         learning,
         requireUser,
-        [
-          ...(config.auth?.trustedOrigins ?? []),
-          ...(config.appUrl ? [config.appUrl] : []),
-        ],
+        config.appUrl ? [config.appUrl] : [],
         auditStore,
       ),
     );
   }
   app.get("/api/admin/status", requireUser, (context) => {
-    const denied = requireAdmin(context);
-    return denied ?? context.json({ status: "ok" });
+    return context.json({ status: "ok" });
   });
   app.get("/api/admin/audit-events", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!auditReader) {
       return context.json({ error: "Audit logging is not configured." }, 503);
     }
@@ -783,14 +761,9 @@ export function createApp(
   /*
    * Who is here, and what they may do.
    *
-   * Administrator-only, like every other route in this group. A plain user reading the list would
-   * learn every colleague's address and when they last signed in, which is not theirs to have.
+   * Available to signed-in users, like the other routes in this group.
    */
   app.get("/api/admin/people", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!peopleStore) {
       return context.json({ error: "People are not available." }, 503);
     }
@@ -833,10 +806,6 @@ export function createApp(
   });
 
   app.post("/api/admin/people/:userId/role", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!peopleStore) {
       return context.json({ error: "People are not available." }, 503);
     }
@@ -906,10 +875,6 @@ export function createApp(
   });
 
   app.post("/api/admin/people/:userId/access", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!peopleStore) {
       return context.json({ error: "People are not available." }, 503);
     }
@@ -975,10 +940,6 @@ export function createApp(
    * registered is a fact about the deployment, so every administrator sees the same list.
    */
   app.get("/api/admin/identity-providers", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!identityProviders) {
       return context.json(
         { error: "Identity providers are not available." },
@@ -1000,10 +961,6 @@ export function createApp(
     "/api/admin/identity-providers/:providerId",
     requireUser,
     async (context) => {
-      const denied = requireAdmin(context);
-      if (denied) {
-        return denied;
-      }
       if (!identityProviders) {
         return context.json(
           { error: "Identity providers are not available." },
@@ -1034,10 +991,6 @@ export function createApp(
   );
 
   app.get("/api/admin/credentials", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!credentialService) {
       return context.json(
         { error: "Credential storage is not configured." },
@@ -1048,10 +1001,6 @@ export function createApp(
     return context.json({ credentials: await credentialService.list() });
   });
   app.post("/api/admin/credentials", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
     if (!credentialService) {
       return context.json(
         { error: "Credential storage is not configured." },
@@ -1074,10 +1023,6 @@ export function createApp(
     "/api/admin/credentials/:credentialId/rotate",
     requireUser,
     async (context) => {
-      const denied = requireAdmin(context);
-      if (denied) {
-        return denied;
-      }
       if (!credentialService) {
         return context.json(
           { error: "Credential storage is not configured." },
@@ -1110,10 +1055,6 @@ export function createApp(
     "/api/admin/credentials/:credentialId/revoke",
     requireUser,
     async (context) => {
-      const denied = requireAdmin(context);
-      if (denied) {
-        return denied;
-      }
       if (!credentialService) {
         return context.json(
           { error: "Credential storage is not configured." },
@@ -1138,8 +1079,6 @@ export function createApp(
     },
   );
   app.get("/api/admin/package", requireUser, async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
     if (!packageStatusReader) {
       return context.json({ error: "Tenant package is not configured." }, 503);
     }
@@ -1234,37 +1173,8 @@ export function createApp(
     app.route("/", copilotHandler);
   }
 
-  /**
-   * May this person act as this Bot?
-   *
-   * The store's own read path already applies `canAccessAgent`, so asking it for the Bot is the same
-   * question the roster and the runtime ask, rather than a second copy of the rule.
-   *
-   * A deployment with no profile store has no agents table and therefore no private Bot to protect:
-   * its Bots come from the tenant package and are public to everybody who can sign in. Answering yes
-   * there keeps that deployment working without weakening one that has owners.
-   */
-  const canUseBot: BotAccessCheck = agentProfileStore
-    ? async (actor, botId) =>
-        (await agentProfileStore.get(actor, botId)) !== null
-    : async () => true;
-
-  // The Bot computer. Acting on a page needs the gateway and the policy it enforces, so both arrive
-  // together or the routes are not mounted. An ungoverned computer is not a reduced feature. It is
-  // the one shape of this feature that must not exist.
-  if (computerGateway && computerPolicy) {
-    app.route(
-      "/api/computers",
-      createComputerRoutes(
-        computerGateway,
-        computerPolicy,
-        requireUser,
-        // Not `canUseBot`: a Team Bot's teammates use the Bot, not its owner's signed-in computer.
-        agentProfileStore ? computerAccessCheck(agentProfileStore) : canUseBot,
-        pageFrames,
-        auditReader,
-      ),
-    );
+  if (computerGateway) {
+    app.route("/api/computers", createComputerRoutes(computerGateway, requireUser, pageFrames));
   }
 
   if (hostAccessBroker) {
@@ -1274,7 +1184,6 @@ export function createApp(
         broker: hostAccessBroker,
         desktopToken: desktopHostToken,
         requireUser,
-        canUseBot,
         auditStore,
         botName: agentProfileStore
           ? async (botId, actor) =>
@@ -1290,15 +1199,8 @@ export function createApp(
       createAgentRoutes(
         agentProfileStore,
         requireUser,
-        // The same stance the computer uses: a laptop legitimately talks to its own services, a hosted
-        // deployment must not. Passed from configuration rather than defaulted here, so "hosted and
-        // permissive" cannot happen by forgetting something.
-        config.computer?.allowPrivateHosts ?? false,
         // A Bot's own refusal goes in the same trail as everything else it does.
         auditStore,
-        // Addresses this deployment named, which is how a hosted one reaches an agent on its own
-        // network without dropping the floor for everything else.
-        config.agentEndpointAllowedHosts,
         /*
          * What the Bot's own screen needs to show, and change, which Bots it may hand work to.
          *
@@ -1323,17 +1225,6 @@ export function createApp(
         // stores as running at this address — can be told apart from one a person hosts.
         config.managedAgent?.endpoint?.toString(),
         coworker?.shared?.use,
-        // So testing one of our own addresses knocks with the token the run will use, rather than
-        // reporting a refusal for a Bot this deployment started itself.
-        config.managedAgent
-          ? {
-              token: config.managedAgent.token,
-              endpoints: [
-                config.managedAgent.endpoint,
-                config.managedAgent.alsoRun,
-              ].filter((url): url is URL => url !== undefined),
-            }
-          : undefined,
       ),
     );
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the
@@ -1469,8 +1360,6 @@ export function createApp(
       createSignInRoutes(
         coworker.passwords,
         requireUser,
-        // A sign-in is typed into the Bot's computer, so it answers to the same rule.
-        agentProfileStore ? computerAccessCheck(agentProfileStore) : canUseBot,
       ),
     );
     app.route(
@@ -1567,7 +1456,6 @@ export function createApp(
         componentStore,
         requireUser,
         auditStore,
-        canUseBot,
         sandboxedStore,
       ),
     );
@@ -1579,7 +1467,6 @@ export function createApp(
       createPluginRoutes(
         pluginStore,
         requireUser,
-        canUseBot,
         {
           encryptionKey: config.keyEncryptionKey,
           /*

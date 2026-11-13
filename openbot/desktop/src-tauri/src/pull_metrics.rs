@@ -23,52 +23,6 @@ pub struct PullMetrics {
     pub bytes: Option<u64>,
 }
 
-/// None preserves the existing implicit pull on providers without a missing-only pull policy.
-/// Such a provider gets no pull metric: timing the later `up` would also measure startup.
-/// Some(false) still measures explicit pulls, but the older progress format has unknown bytes.
-/// Podman delegates to its selected external Compose provider through this same command path.
-pub(crate) fn compose_pull_progress(engine: &Address) -> Option<bool> {
-    let policy_help = engine
-        .command()
-        .args(["compose", "pull", "--help"])
-        .output()
-        .ok()?;
-    if !policy_help.status.success()
-        || !(option_advertises(&policy_help.stdout, "--policy", "missing")
-            || option_advertises(&policy_help.stderr, "--policy", "missing"))
-    {
-        return None;
-    }
-    Some(
-        engine
-            .command()
-            .args(["compose", "--help"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .is_some_and(|output| {
-                supports_json_progress(&output.stdout) || supports_json_progress(&output.stderr)
-            }),
-    )
-}
-
-fn supports_json_progress(help: &[u8]) -> bool {
-    option_advertises(help, "--progress", "json")
-}
-
-fn option_advertises(help: &[u8], flag: &str, value: &str) -> bool {
-    let text = String::from_utf8_lossy(help);
-    let Some((_, option)) = text.split_once(flag) else {
-        return false;
-    };
-    option
-        .split("--")
-        .next()
-        .unwrap_or_default()
-        .split(|character: char| !character.is_ascii_alphabetic())
-        .any(|word| word == value)
-}
-
 #[derive(Deserialize)]
 struct Progress {
     id: String,
@@ -122,56 +76,16 @@ fn download_bytes(stdout: &[u8], stderr: &[u8]) -> Option<u64> {
     layers.total()
 }
 
-/// Pull a provider sign-in image without starting its CLI or creating a container.
-/// A tiny stdin Compose project gives the same missing-only policy and JSON progress as setup.
-/// Older Compose providers use an explicit native pull after a local presence check.
+/// Pull an image using the selected container CLI.
 pub fn pull_image(
     engine: &Address,
     image: &str,
     on_progress: impl FnMut(u64),
     on_complete: impl FnOnce(PullMetrics),
 ) -> Result<(), Problem> {
-    if crate::preparation::image_present(engine, image)? {
-        return Ok(());
-    }
-    let Some(json_progress) = compose_pull_progress(engine) else {
-        let mut command = engine.command();
-        command.args(["pull", image]);
-        return run_with_progress(command, None, false, on_progress, on_complete);
-    };
     let mut command = engine.command();
-    command.arg("compose");
-    if json_progress {
-        command.args(["--progress", "json"]);
-    }
-    command.args([
-        "--project-name",
-        "openbot-image-pull",
-        "-f",
-        "-",
-        "pull",
-        "--policy",
-        "missing",
-    ]);
-    let project = serde_json::json!({"services": {"image": {"image": image}}}).to_string();
-    run_with_progress(
-        command,
-        Some(project.as_bytes()),
-        json_progress,
-        on_progress,
-        on_complete,
-    )
-}
-
-/// Complete one explicit pull and report its outcome before the caller can start containers.
-/// A failed pull is returned as the same two-part Problem used by the existing startup path.
-pub(crate) fn run(
-    command: Command,
-    input: Option<&[u8]>,
-    json_progress: bool,
-    on_complete: impl FnOnce(PullMetrics),
-) -> Result<(), Problem> {
-    run_with_progress(command, input, json_progress, |_| {}, on_complete)
+    command.args(["pull", image]);
+    run_with_progress(command, None, false, on_progress, on_complete)
 }
 
 fn run_with_progress(

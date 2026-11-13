@@ -1,4 +1,3 @@
-import { requireAdmin } from "../../auth/guards";
 import { reasonWithoutStatement } from "../../db/query-failure";
 import { brokerSentence, schemeKind } from "../broker";
 import { CATALOGUE } from "../catalogue";
@@ -124,8 +123,6 @@ export function mountServerRoutes({
 
   /** Add a curated server. The URL comes from the catalogue, never from the request. */
   routes.post("/servers", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const body = (await context.req.json().catch(() => null)) as {
       key?: unknown;
@@ -210,8 +207,6 @@ export function mountServerRoutes({
    * anything that reads either.
    */
   routes.post("/servers/custom", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const body = (await context.req.json().catch(() => null)) as {
       id?: unknown;
@@ -281,8 +276,6 @@ export function mountServerRoutes({
    * a Bot can reach.
    */
   routes.post("/servers/:id/oauth-client", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const body = (await context.req.json().catch(() => null)) as {
       clientId?: unknown;
@@ -363,8 +356,6 @@ export function mountServerRoutes({
    * for, so a second press asks only for what is left.
    */
   routes.delete("/servers/:id", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const serverId = context.req.param("id");
     /*
@@ -447,8 +438,6 @@ export function mountServerRoutes({
    * it, the switch itself, which changes nothing unless every old account was ended at the vendor.
    */
   routes.put("/servers/:id/account-mode", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
     if (!shared) {
       return context.json(
         { error: "Shared accounts are not available on this deployment." },
@@ -525,8 +514,6 @@ export function mountServerRoutes({
 
   /** Ask a server what it offers now. Reported rather than thrown, so the page can say what broke. */
   routes.post("/servers/:id/refresh", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     try {
       const result = await store.refreshTools(

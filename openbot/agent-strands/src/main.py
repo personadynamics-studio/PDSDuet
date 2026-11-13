@@ -1,6 +1,5 @@
 """AWS Strands as a Bot, through `ag_ui_strands`, which AG-UI maintains."""
 
-import hmac
 import os
 import sys
 from pathlib import Path
@@ -11,8 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from model_providers import bot_settings
 
 from ag_ui_strands import StrandsAgent, add_strands_fastapi_endpoint
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from strands import Agent
 from strands.models.litellm import LiteLLMModel
 
@@ -35,19 +33,6 @@ def _model_id() -> str:
 
 
 app = FastAPI()
-
-TOKEN_HEADER = "x-openbot-agent-token"
-
-
-@app.middleware("http")
-async def refuse_without_the_server_token(request: Request, call_next):
-    """Everything but `/health`, which Compose polls before any token exists."""
-    if request.url.path != "/health":
-        expected = (os.environ.get("MANAGED_AGENT_TOKEN") or "").strip()
-        offered = (request.headers.get(TOKEN_HEADER) or "").strip()
-        if not expected or not hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
-            return JSONResponse({"error": "unauthorised"}, status_code=401)
-    return await call_next(request)
 
 
 @app.get("/health")

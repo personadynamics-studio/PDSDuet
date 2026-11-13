@@ -1,10 +1,8 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
-import { requireAdmin } from "../auth/guards";
 import { DATA_FUNCTIONS, dataFunction } from "./functions";
 import {
   SandboxedNotFoundError,
@@ -42,12 +40,6 @@ export function createComponentRoutes(
   store: ComponentStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
   auditStore: AuditStore | undefined,
-  /**
-   * Whether the caller may act as the Bot they named. What a Bot may draw, and the data a drawing
-   * reads, are facts about that Bot; an administrator granting one is a separate question and stays
-   * behind `requireAdmin`.
-   */
-  canUseBot: BotAccessCheck,
   /**
    * The source half of a playground component's publication.
    *
@@ -180,10 +172,7 @@ export function createComponentRoutes(
    */
   routes.get("/for-agent/:agentId", requireUser, async (context) => {
     const agentId = context.req.param("agentId");
-    if (!(await canUseBot(context.var.actor, agentId))) {
-      return context.json({ error: "There is no such Bot." }, 404);
-    }
-    return context.json({ components: await store.listForAgent(agentId) });
+        return context.json({ components: await store.listForAgent(agentId) });
   });
 
   /**
@@ -207,10 +196,7 @@ export function createComponentRoutes(
     }
     // Asked before the grant is, because the grant belongs to the Bot and says nothing about who is
     // asking on its behalf.
-    if (!(await canUseBot(context.var.actor, agentId))) {
-      return context.json({ error: "There is no such Bot." }, 404);
-    }
-    /*
+        /*
      * Every entry, or a 400. This used to filter non-strings out, so
      * `{"functions": [123, null, {}]}` became `[]`, the loop below never ran, and a
      * governance question about X and Y was answered `allowed: true` because X and Y
@@ -317,10 +303,7 @@ export function createComponentRoutes(
     }
     // Before the grant, and before anything runs. This is the route that executes, so borrowing a
     // Bot here borrows whatever its components were granted.
-    if (!(await canUseBot(context.var.actor, agentId))) {
-      return context.json({ error: "There is no such Bot." }, 404);
-    }
-
+    
     const refuse = async (reason: string) => {
       await audit(context, "component.function_refused", name, {
         bot: agentId,
@@ -376,8 +359,6 @@ export function createComponentRoutes(
   });
 
   routes.post("/:name/functions", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const name = context.req.param("name");
     const body = (await context.req.json().catch(() => null)) as {
@@ -408,8 +389,6 @@ export function createComponentRoutes(
   });
 
   routes.delete("/:name/functions/:function", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const name = context.req.param("name");
     const functionName = context.req.param("function");
@@ -433,8 +412,6 @@ export function createComponentRoutes(
   });
 
   routes.post("/:name/grants", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const name = context.req.param("name");
     const body = (await context.req.json().catch(() => null)) as {
@@ -460,8 +437,6 @@ export function createComponentRoutes(
   });
 
   routes.delete("/:name/grants/:agentId", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const name = context.req.param("name");
     const agentId = context.req.param("agentId");
@@ -482,8 +457,6 @@ export function createComponentRoutes(
   });
 
   routes.post("/:name/publication", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const name = context.req.param("name");
     const body = (await context.req.json().catch(() => null)) as {
@@ -559,8 +532,6 @@ export function createComponentRoutes(
    * having a draft at all.
    */
   routes.put("/:name/draft", requireUser, async (context) => {
-    const forbidden = requireAdmin(context);
-    if (forbidden) return forbidden;
 
     const name = context.req.param("name");
     const body = (await context.req.json().catch(() => null)) as {

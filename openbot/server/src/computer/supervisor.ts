@@ -28,7 +28,6 @@ type SupervisorComputerLocation = {
 
 export type SupervisorOptions = {
   baseUrl: string;
-  token?: string;
   /** How a published port becomes a URL the server can reach. */
   hostForPort?: (port: number) => string;
   fetchImpl?: typeof fetch;
@@ -58,31 +57,11 @@ export function createDockerSupervisorProvider(
   const hostForPort =
     options.hostForPort ?? ((port) => `http://127.0.0.1:${port}`);
 
-  /**
-   * The last container start time seen for each Bot, from the `/ensure` that located it.
-   *
-   * ONE MAP PER PROVIDER, not one per process. It was module-scope, so every provider built in a
-   * process shared it: two supervisors, or a test's second stack, answered each other's question
-   * about which run a Bot's computer is on, and the answer they gave was whichever one wrote last.
-   *
-   * Not a cache in front of the supervisor: `locate` still calls it every time, and a governed
-   * action locates before it asks. This only carries that answer the few lines to whoever needs to
-   * know which run of the computer they are talking to.
-   *
-   * Still process-local, and therefore never the only answer. A replica that has never located this
-   * Bot has nothing here, and an unknown run skips the generation check rather than failing it, so
-   * `sessionOf` falls back to asking rather than letting an empty map quietly stop checking.
-   */
-  const sessions = new Map<string, string>();
-
   async function call(path: string, method = "POST"): Promise<unknown> {
     let response: Response;
     try {
       response = await doFetch(`${base}${path}`, {
         method,
-        headers: options.token
-          ? { authorization: `Bearer ${options.token}` }
-          : {},
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
@@ -170,45 +149,10 @@ export function createDockerSupervisorProvider(
      * is an error rather than a URL, the alternative is a caller quietly falling back to somebody
      * else's computer.
      */
-    async sessionOf(botId: string): Promise<string | undefined> {
-      /*
-       * Read from the same `/ensure` every action already makes, and remembered rather than asked
-       * for again: on the replica that located this Bot, `locate` ran immediately before the call
-       * that needs this, so the value is as fresh as the address it was fetched with. Asking twice
-       * would double the supervisor's work on the hot path to learn something it just told us.
-       */
-      const known = sessions.get(botId);
-      if (known) return known;
-
-      /*
-       * Nothing here means another replica did the work, not that there is nothing to know.
-       *
-       * LISTING, NOT ENSURING, and the difference is the whole feature. `/ensure` starts a computer
-       * that is not running, so answering "which run is this" with it would wake every idle Bot that
-       * anything asked about, and a deployment that suspends idle computers would quietly never
-       * suspend one. Listing is a read: a Bot with no computer answers undefined, which is the same
-       * answer as before and leaves the check exactly where it was.
-       */
-      try {
-        const computers = await listRaw();
-        const startedAt = computers.find(
-          (computer) => computer.botId === botId,
-        )?.startedAt;
-        if (startedAt) sessions.set(botId, startedAt);
-        return startedAt;
-      } catch {
-        // Unknown, not mismatched. A supervisor that cannot be reached must not turn every ref into
-        // a refusal; the generation check goes back to being skipped, which is where it started.
-        return undefined;
-      }
-    },
-
     async locate(botId: string): Promise<string> {
       const state = (await call(
         `/computers/${encodeURIComponent(botId)}/ensure`,
       )) as SupervisorComputerLocation;
-      // Recorded on every ensure, so a replaced container is visible to whatever asks next.
-      if (state?.startedAt) sessions.set(botId, state.startedAt);
       // The supervisor says where it is, because only it knows whether these computers sit on a
       // shared network or answer on a published port.
       if (state?.url) return state.url;

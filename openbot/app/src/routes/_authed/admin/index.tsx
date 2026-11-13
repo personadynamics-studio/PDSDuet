@@ -9,7 +9,6 @@ import {
   IconLayoutGrid,
   IconListDetails,
   IconPuzzle,
-  IconShieldCheck,
   IconUsers,
 } from "@tabler/icons-react";
 import {
@@ -62,12 +61,6 @@ const SECTIONS: {
         description: "Keys and tokens for this deployment.",
         icon: IconKey,
         linkOptions: { to: "/admin/credentials" },
-      },
-      {
-        title: "Boundaries",
-        description: "Things no Bot may ever do.",
-        icon: IconShieldCheck,
-        linkOptions: { to: "/admin/boundaries" },
       },
       {
         title: "審批",

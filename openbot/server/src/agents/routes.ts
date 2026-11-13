@@ -6,16 +6,10 @@ import type { AppVariables } from "../auth/guards";
 import { afterExposureChange } from "../plugins/exposure-change";
 import type { SharedUseStore } from "../plugins/shared-use-store";
 import { testAgentConnection } from "./connection-test";
-import { checkAgentEndpoint } from "./endpoint";
-import { isManagedEndpoint } from "./managed-endpoint";
-import { canManageAgent } from "./profile-policy";
 import {
-  AgentAssignedError,
   AgentNotFoundError,
-  AgentNotManageableError,
   type AgentProfileStore,
   ManagedAgentUnavailableError,
-  ProtectedAgentError,
 } from "./profile-store";
 import type {
   AgentActor,
@@ -36,19 +30,7 @@ type AgentInputObject = {
   auth?: unknown;
 };
 
-/**
- * Parse and validate what a user typed into the agent form.
- *
- * `allowPrivateHosts` is passed in rather than read from configuration here so this stays a pure
- * function: a developer's own agent lives on localhost, and a hosted deployment must refuse exactly
- * that, so the answer depends on the deployment and the test suite needs to exercise both.
- */
-export function parseAgentInput(
-  input: unknown,
-  allowPrivateHosts = false,
-  /** Private addresses this deployment named as acceptable. Empty is the default posture. */
-  allowedHosts: ReadonlySet<string> = new Set(),
-): AgentInputParseResult {
+export function parseAgentInput(input: unknown): AgentInputParseResult {
   if (!isAgentInputObject(input)) {
     return { ok: false, error: "Agent input must be a JSON object." };
   }
@@ -82,18 +64,7 @@ export function parseAgentInput(
     return { ok: false, error: "Visibility must be public or private." };
   }
 
-  // The endpoint is optional and checked. Absent means the Bot in the box, which is what most people
-  // want on their first go. Present means this server will POST to an address a person chose, so it
-  // goes through the same target check as navigation before it is allowed anywhere near the database.
-  let endpoint: string | undefined;
-  if (input.endpoint !== undefined && input.endpoint !== "") {
-    const verdict = checkAgentEndpoint(input.endpoint, {
-      allowPrivateHosts,
-      allowedHosts,
-    });
-    if (!verdict.allowed) return { ok: false, error: verdict.reason };
-    endpoint = verdict.url;
-  }
+  const endpoint = typeof input.endpoint === "string" && input.endpoint.trim() ? input.endpoint.trim() : undefined;
 
   // The key is optional and write-only. An absent field leaves an existing key alone; sending one
   // replaces it. There is no way to read one back, here or anywhere.
@@ -239,17 +210,8 @@ const DEV_ACTOR_EMAIL = "dev@openbot.local";
 export function createAgentRoutes(
   store: AgentProfileStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
-  /** Whether this deployment may talk to its own network. True on a laptop, false when hosted. */
-  allowPrivateHosts = false,
   /** Where a Bot's own refusal is recorded. Absent in tests that do not care about the trail. */
   auditStore?: AuditStore,
-  /**
-   * Private addresses this deployment named as acceptable for an agent to live at.
-   *
-   * Separate from `allowPrivateHosts` on purpose: that one opens the network, this one opens an
-   * address. A hosted deployment sets this and leaves the other off.
-   */
-  allowedHosts: ReadonlySet<string> = new Set(),
   /**
    * Which Bots a Bot may hand work to, for the screen that grants it.
    *
@@ -297,18 +259,6 @@ export function createAgentRoutes(
    * already reports nothing rather than reach for a store that is not there.
    */
   sharedUse?: SharedUseStore,
-  /**
-   * The deployment's own token and the addresses it belongs to, so a connection test against one of
-   * them knocks the way a real run will.
-   *
-   * A named object rather than two more positional strings, for the reason the handoff parameter
-   * gives: everything above it is optional, and a misplaced string typechecks.
-   *
-   * `endpoints` is every address this deployment runs — the Bot in the box and any harness picked
-   * during setup — because the run path had to learn that same lesson: matching only the first left
-   * the picked harness answering 401 to everything.
-   */
-  managedRun?: { token: string; endpoints: readonly (string | URL)[] },
 ) {
   /** The dto with the one fact only this closure knows: whether the coworker runs on our own Bot. */
   const dto = (actor: AgentActor, agent: AgentProfile) => ({
@@ -429,8 +379,7 @@ export function createAgentRoutes(
    *
    * Deliberately not part of create: a person needs to know whether their agent answers before they
    * commit to it, and they need to be able to try again without creating dead
-   * Bots on the way. It runs the same target check as saving, so it cannot probe addresses that
-   * registration would refuse.
+   * Bots on the way.
    */
   routes.post("/test-connection", requireUser, async (context) => {
     const body = (await context.req.json().catch(() => null)) as {
@@ -441,31 +390,8 @@ export function createAgentRoutes(
     if (!parsed.ok) {
       return context.json({ error: parsed.error }, 400);
     }
-    /*
-     * An address this deployment runs is knocked on with this deployment's token.
-     *
-     * Nobody types that token — the run path attaches it by recognising the address — so a test
-     * that left it off reported "The agent refused this request. If it needs a key, add it as a
-     * header." for the Bot in the box and for the harness picked during setup. Both work; the
-     * advice was to break them.
-     *
-     * The person's own headers are applied over these rather than under, because a header they
-     * typed is a thing they can see and change, and this one is not.
-     */
-    const ours =
-      managedRun &&
-      typeof body?.endpoint === "string" &&
-      isManagedEndpoint(body.endpoint, managedRun.endpoints);
-    const headers = {
-      ...(ours ? { "x-openbot-agent-token": managedRun.token } : {}),
-      ...parsed.value,
-    };
     const result = await testAgentConnection(body?.endpoint, {
-      // Absent rather than empty when there is nothing to send, so a deployment with no managed Bot
-      // probes exactly as it did before this.
-      ...(Object.keys(headers).length > 0 ? { headers } : {}),
-      allowPrivateHosts,
-      allowedHosts,
+      ...(parsed.value ? { headers: parsed.value } : {}),
     });
     // 200 either way: the request succeeded, and the verdict is the payload. A failed connection test
     // is an answer, not an error, and a 4xx here would have the surface render it as a broken button.
@@ -515,8 +441,6 @@ export function createAgentRoutes(
     // Malformed JSON is a recoverable client-input error and is validated by the same parser.
     const parsed = parseAgentInput(
       await context.req.json().catch(() => null),
-      allowPrivateHosts,
-      allowedHosts,
     );
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
@@ -562,8 +486,6 @@ export function createAgentRoutes(
     // Malformed JSON is a recoverable client-input error and is validated by the same parser.
     const parsed = parseAgentInput(
       await context.req.json().catch(() => null),
-      allowPrivateHosts,
-      allowedHosts,
     );
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
@@ -821,10 +743,6 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     hasAuth: agent.hasAuth,
     // Whether one exists, never what it is.
     hasCallbackToken: agent.hasCallbackToken,
-    canManage: canManageAgent(actor, agent),
-    // Ownership, kept separate from permission. `canManage` is also true for an administrator on
-    // another user's coworker, so a roster that split "mine" on it would file other people's work
-    // under yours, and only for administrators, who are the least likely to notice.
     mine: agent.ownerUserId === actor.id,
     assignedToMe: agent.assignedToMe ?? false,
   };
@@ -834,20 +752,8 @@ function mapStoreError(context: Context, error: unknown): Response {
   if (error instanceof AgentNotFoundError) {
     return context.json({ error: "Couldn't find that Bot." }, 404);
   }
-  if (error instanceof AgentNotManageableError) {
-    return context.json({ error: "You can't manage this Bot." }, 403);
-  }
-  if (error instanceof ProtectedAgentError) {
-    return context.json(
-      { error: "This Bot is built in and can't be changed." },
-      403,
-    );
-  }
   if (error instanceof ManagedAgentUnavailableError) {
     return context.json({ error: error.message }, 400);
-  }
-  if (error instanceof AgentAssignedError) {
-    return context.json({ error: error.message }, 409);
   }
   throw error;
 }

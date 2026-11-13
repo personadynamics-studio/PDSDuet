@@ -23,7 +23,6 @@ export type PlanModelConfig = {
   provider: "chatgpt" | "claude";
   /** Resolved from the deployment's installed harness, never an agent registration. */
   endpoint: URL;
-  token: string;
 };
 export { PLAN_RUN_COMPLETED };
 
@@ -47,24 +46,14 @@ export function planModelForEnvironment(
     );
   }
   const address = environment.PICKED_HARNESS_URL?.trim();
-  const token = environment.MANAGED_AGENT_TOKEN?.trim();
-  if (!address || !token)
+  if (!address)
     throw new Error(
-      "The selected plan's owned harness endpoint and token are missing.",
+      "The selected plan's harness endpoint is missing.",
     );
   const endpoint = new URL(address);
-  if (
-    !["http:", "https:"].includes(endpoint.protocol) ||
-    endpoint.username ||
-    endpoint.password
-  ) {
-    throw new Error(
-      "The selected plan's harness must have an HTTP endpoint without URL credentials.",
-    );
-  }
   if (claude)
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/model`;
-  return { provider: claude ? "claude" : "chatgpt", endpoint, token };
+  return { provider: claude ? "claude" : "chatgpt", endpoint };
 }
 
 const UNKNOWN_USAGE: GenerateResult["usage"] = {
@@ -201,11 +190,9 @@ export class PlanModel implements PlanLanguageModel {
             `${config.endpoint.href.replace(/\/$/, "")}/cancel`,
             {
               method: "POST",
-              redirect: "error",
               signal: AbortSignal.timeout(5000),
               headers: {
                 "content-type": "application/json",
-                "x-openbot-agent-token": config.token,
               },
               body: JSON.stringify({ threadId: this.threadId }),
             },
@@ -267,11 +254,9 @@ export class PlanModel implements PlanLanguageModel {
     const names = new Set(tools.map((tool) => tool.name));
     const agent = new HttpAgent({
       url: this.config.endpoint.href,
-      headers: { "x-openbot-agent-token": this.config.token },
       fetch: (url, init) =>
         fetch(url, {
           ...init,
-          redirect: "error",
           signal: AbortSignal.any([
             ...(init?.signal ? [init.signal] : []),
             ...(options.abortSignal ? [options.abortSignal] : []),

@@ -23,7 +23,6 @@ export function assertPageAccess(
   }
 }
 
-/** Validate the destination before goto and the resulting page before callers read its content. */
 export async function navigateWebPage(
   page: Pick<Page, "goto" | "url">,
   url: string,
