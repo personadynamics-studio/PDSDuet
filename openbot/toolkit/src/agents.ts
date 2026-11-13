@@ -9,13 +9,10 @@ import {
   defer,
   finalize,
   from,
-  fromEvent,
   type Observable,
   switchMap,
-  takeUntil,
 } from "rxjs";
 import { sanitizeSeededHistory } from "./history-sanitize";
-import { nativeApprovalRun } from "./native-approval";
 
 /**
  * The local and remote agents OpenBot runs its Bots as: a built-in Bot that will not send a broken
@@ -70,19 +67,15 @@ export class CloningRemoteAgent extends AbstractAgent {
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
-    if (this.headers) {
-      this.remote.headers = { ...this.headers };
-    }
-    return this.remote.run(input);
+    return defer(() => {
+      const transport = this.remote.clone() as HeaderBearingAgent;
+      if (this.headers) transport.headers = { ...this.headers };
+      return transport.run(input).pipe(finalize(() => transport.abortRun()));
+    });
   }
 
   async getCapabilities() {
     return this.remote.getCapabilities?.() ?? {};
-  }
-
-  abortRun(): void {
-    this.remote.abortRun();
-    super.abortRun();
   }
 
   clone() {
@@ -156,9 +149,7 @@ export class BuiltInAgentWithSaneHistory extends NativeAgent {
      * this existed.
      */
     if (!inline)
-      return nativeApprovalRun({ ...input, messages: history }, () =>
-        observe(super.run({ ...input, messages: history })),
-      );
+      return observe(super.run({ ...input, messages: history }));
     /*
      * Deferred, because `run` has to answer with a stream straight away and reading the bytes is a
      * database round trip. `defer` puts that read on the subscription, which is where the run
@@ -170,9 +161,7 @@ export class BuiltInAgentWithSaneHistory extends NativeAgent {
         inline(history, input.threadId),
       ).pipe(
         switchMap((messages) =>
-          nativeApprovalRun({ ...input, messages }, () =>
-            observe(super.run({ ...input, messages })),
-          ),
+          observe(super.run({ ...input, messages })),
         ),
       ),
     );
@@ -217,11 +206,6 @@ export class BuiltInAgentWithSaneHistory extends NativeAgent {
  * for a message that is no longer the last one.
  */
 export class RunBuiltAgent extends AbstractAgent {
-  /**
-   * Stop must reach the pending build as well as the eventual model. Keep both in one per-run
-   * record so a late build or teardown cannot replace the next run's cancellation target.
-   */
-  private active?: { controller: AbortController; inner?: AbstractAgent };
   /** The same Bot with nothing narrowed, kept to answer questions that are not about one run. */
   private whole: AbstractAgent;
   private build: (
@@ -244,23 +228,14 @@ export class RunBuiltAgent extends AbstractAgent {
 
   run(input: RunAgentInput): Observable<BaseEvent> {
     return defer(() => {
-      const active: NonNullable<RunBuiltAgent["active"]> = {
-        controller: new AbortController(),
-      };
-      this.active = active;
-      const { signal } = active.controller;
+      const controller = new AbortController();
+      const { signal } = controller;
       return defer(() => this.build(input, signal)).pipe(
         switchMap((agent) => {
           signal.throwIfAborted();
-          active.inner = agent;
           return agent.run(input);
         }),
-        // Settle Stop even if a collaborator ignores the signal or rejects after cancellation.
-        takeUntil(fromEvent(signal, "abort")),
-        finalize(() => {
-          if (this.active === active) this.active = undefined;
-          active.controller.abort(PLAN_RUN_COMPLETED);
-        }),
+        finalize(() => controller.abort(PLAN_RUN_COMPLETED)),
       );
     });
   }
@@ -289,17 +264,9 @@ export class RunBuiltAgent extends AbstractAgent {
     const cloned = super.clone() as RunBuiltAgent;
     cloned.whole = this.whole;
     cloned.build = this.build;
-    // A clone owns its cancellation state, including while its build is pending.
-    cloned.active = undefined;
     return cloned;
   }
 
-  abortRun(): void {
-    const active = this.active;
-    active?.controller.abort();
-    active?.inner?.abortRun();
-    super.abortRun();
-  }
 }
 
 export class UnavailableAgent extends AbstractAgent {

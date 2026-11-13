@@ -2,11 +2,16 @@ import { z } from "zod";
 import type { AuditInitiator } from "./initiator";
 
 /** A tool a Bot holds, as the built-in runtime is handed it and executes it on the server. */
+export type ToolExecutionContext = {
+  toolCallId?: string;
+  signal?: AbortSignal;
+};
+
 export type GrantedTool = {
   name: string;
   description: string;
   parameters: z.ZodType;
-  execute: (args: unknown) => Promise<string>;
+  execute: (args: unknown, context?: ToolExecutionContext) => Promise<string>;
   initiator?: AuditInitiator;
   /**
    * `<serverId>/<toolName>`, carried alongside the name the model is offered.

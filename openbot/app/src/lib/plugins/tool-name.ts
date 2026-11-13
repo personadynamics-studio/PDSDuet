@@ -119,8 +119,6 @@ export function readToolName(
  * person. Named twice, for the moment and for afterwards, because only these lines are drawn while
  * running AND left on screen once done.
  *
- * The morning brief draws a card of its own, but the pill under the header's orb names it while it
- * runs, and its own line reads the words from here so the two cannot drift apart.
  */
 const OWN_TOOLS: Record<string, { running: string; done: string }> = {
   [SHOW_APP_ACCESS_TOOL]: {

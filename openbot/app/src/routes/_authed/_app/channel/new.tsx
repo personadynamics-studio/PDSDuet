@@ -29,6 +29,7 @@ import {
   agentQueryOptions,
 } from "@/lib/agents/queries";
 import { useStartChannel } from "@/lib/channels/start";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { searchTextEntry } from "@/lib/search-text";
 import { newId } from "../../../../lib/new-id";
@@ -56,6 +57,7 @@ function RouteComponent() {
   const { agent } = Route.useSearch();
   const navigate = Route.useNavigate();
   const { startChosen, startGroup, pending } = useStartChannel();
+  const { selectBot } = useSelectedBot();
   const { data: profiles, isError: rosterError } = useQuery(
     agentListQueryOptions(),
   );
@@ -243,6 +245,7 @@ function RouteComponent() {
         try {
           // Recorded, then started: a coworker picked here is as much a choice as an `@` on the
           // home screen, and the trail has to say so for both.
+          selectBot(recipient.id);
           await startChosen(recipient.id, draft.text);
         } catch (caught) {
           // Preserve the unsent draft when channel creation fails.

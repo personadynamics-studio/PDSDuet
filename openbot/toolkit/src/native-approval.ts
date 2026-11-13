@@ -1,215 +1,100 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  AbstractAgent,
-  type BaseEvent,
-  EventType,
-  type Message,
-  Middleware,
-  type RunAgentInput,
-} from "@ag-ui/client";
-import { Observable, type Subscription } from "rxjs";
+import type { Message, RunAgentInput } from "@ag-ui/client";
+import type { ToolExecutionOptions } from "ai";
 import { withApprovalContext } from "./continuation";
-import {
-  HeadlessToolSuspension,
-  OPENBOT_WAITING_METADATA,
-} from "./headless-tools";
+import type { ApprovalContinuation } from "./continuation";
+import { HeadlessToolSuspension } from "./headless-tools";
 import type { AuditInitiator } from "./initiator";
 
-export { OPENBOT_WAITING_METADATA };
+export { OPENBOT_WAITING_METADATA } from "./headless-tools";
 
-type NativeRun = {
+/** The SDK execution and its owning run, passed directly to the tool. */
+export type NativeToolExecution = ToolExecutionOptions & {
   input: RunAgentInput;
-  messages: Message[];
-  state: unknown;
-  waiting?: HeadlessToolSuspension;
-  waitForCall(id: string): Promise<void>;
-  suspend(error: HeadlessToolSuspension): void;
+  initialMessageCount: number;
+  run: { waiting?: HeadlessToolSuspension };
 };
-const nativeRuns = new AsyncLocalStorage<NativeRun>();
 
-/**
- * Whether the run the caller is part of is waiting on a person: one of its tool calls was held for
- * an approval or a question, and the run has stopped to wait for the answer.
- *
- * Read by a tool that must not act on a turn the person has not finished, such as the reply chips,
- * which would otherwise offer the next choice under an approval card nobody has answered yet.
- */
-export function nativeRunWaiting(): boolean {
-  return nativeRuns.getStore()?.waiting !== undefined;
+export function nativeMessageId(runId: string, step: number): string {
+  return `native:${runId}:${step}`;
+}
+
+/** SDK history contains previous steps; the current call comes from its execution arguments. */
+function continuationMessages(execution: NativeToolExecution): Message[] {
+  const messages = [...execution.input.messages];
+  let step = 0;
+  for (const message of execution.messages.slice(execution.initialMessageCount)) {
+    if (message.role === "assistant") {
+      const parts = typeof message.content === "string"
+        ? [{ type: "text" as const, text: message.content }]
+        : message.content;
+      messages.push({
+        id: nativeMessageId(execution.input.runId, step++),
+        role: "assistant",
+        content: parts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""),
+        toolCalls: parts.flatMap((part) => part.type === "tool-call" ? [{
+          id: part.toolCallId,
+          type: "function" as const,
+          function: { name: part.toolName, arguments: JSON.stringify(part.input) },
+        }] : []),
+      });
+    } else if (message.role === "tool") {
+      for (const part of message.content) {
+        if (part.type !== "tool-result") continue;
+        messages.push({
+          id: `tool-result:${part.toolCallId}`,
+          role: "tool",
+          toolCallId: part.toolCallId,
+          content: part.output.type === "text" || part.output.type === "error-text"
+            ? part.output.value
+            : JSON.stringify(part.output),
+        });
+      }
+    }
+  }
+  return messages;
 }
 
 export async function executeNativeApprovalTool<T>(
   name: string,
   args: unknown,
-  toolCallId: string | undefined,
+  execution: NativeToolExecution,
   initiator: AuditInitiator | undefined,
   execute: () => Promise<T>,
 ): Promise<T> {
-  const run = nativeRuns.getStore();
-  if (!run || !toolCallId) return execute();
-  if (run.waiting) throw run.waiting;
-  await run.waitForCall(toolCallId);
-  if (run.waiting) throw run.waiting;
-  const callMessage = run.messages.find(
-    (message) =>
-      message.role === "assistant" &&
-      message.toolCalls?.some((call) => call.id === toolCallId),
-  );
-  if (!callMessage)
-    throw new Error(
-      "The native tool call was not captured in its AG-UI conversation.",
-    );
-  const continuation = {
-    runId: run.input.runId,
-    threadId: run.input.threadId,
-    toolCallId,
-    toolName: name,
-    args,
-    messages: run.messages,
-    state: run.state,
-    context: run.input.context,
-    forwardedProps: run.input.forwardedProps,
-    initiator,
+  execution.abortSignal?.throwIfAborted();
+  if (execution.run.waiting) throw execution.run.waiting;
+  const messages = continuationMessages(execution);
+  const step = execution.messages.slice(execution.initialMessageCount)
+    .filter((message) => message.role === "assistant").length;
+  messages.push({
+    id: nativeMessageId(execution.input.runId, step),
+    role: "assistant",
+    content: "",
+    toolCalls: [{
+      id: execution.toolCallId,
+      type: "function",
+      function: { name, arguments: JSON.stringify(args) },
+    }],
+  });
+  const continuation: ApprovalContinuation = {
+      runId: execution.input.runId,
+      threadId: execution.input.threadId,
+      toolCallId: execution.toolCallId,
+      toolName: name,
+      args,
+      messages,
+      state: execution.input.state,
+      context: execution.input.context,
+      forwardedProps: execution.input.forwardedProps,
+      initiator,
   };
   try {
     return await withApprovalContext(continuation, execute);
   } catch (error) {
-    /*
-     * The run stops on the first decision. Another call the same step made can still stop on a
-     * decision of its own while this one is ending the run: that decision stands, is drawn as its
-     * own card, and is carried on with the first in one continuation once both are answered
-     * (`server/src/approvals/service.ts`, `carryOn`). It must not replace the decision the run
-     * already ended on.
-     */
-    if (error instanceof HeadlessToolSuspension && !run.waiting) {
-      run.waiting = error;
-      run.suspend(error);
+    if (error instanceof HeadlessToolSuspension) {
+      error.waiting.continuation ??= continuation;
+      execution.run.waiting ??= error;
     }
     throw error;
   }
-}
-
-class NativeStream extends AbstractAgent {
-  constructor(
-    private readonly source: () => Observable<BaseEvent>,
-    input: RunAgentInput,
-  ) {
-    super({ initialMessages: input.messages, initialState: input.state });
-  }
-  run() {
-    return this.source();
-  }
-}
-class NativeApprovalMiddleware extends Middleware {
-  run(input: RunAgentInput, next: AbstractAgent) {
-    return new Observable<BaseEvent>((subscriber) => {
-      let subscription: Subscription | undefined;
-      const captured = new Set<string>();
-      const awaiting = new Map<
-        string,
-        {
-          resolve(): void;
-          reject(error: Error): void;
-          timer: ReturnType<typeof setTimeout>;
-        }
-      >();
-      const run: NativeRun = {
-        input,
-        messages: input.messages,
-        state: input.state,
-        waitForCall(id) {
-          if (captured.has(id)) return Promise.resolve();
-          return new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(() => {
-              awaiting.delete(id);
-              reject(
-                new Error(
-                  "The native tool call was not emitted through AG-UI.",
-                ),
-              );
-            }, 2_000);
-            awaiting.set(id, { resolve, reject, timer });
-          });
-        },
-        suspend(error) {
-          subscriber.next({
-            type: EventType.CUSTOM,
-            name: "openbot.headless.waiting",
-            value: { ...error.waiting, message: error.message },
-          });
-          subscriber.next({
-            type: EventType.RUN_FINISHED,
-            runId: input.runId,
-            threadId: input.threadId,
-            outcome: {
-              type: "interrupt",
-              interrupts: [
-                {
-                  id: String(
-                    error.waiting.continuation &&
-                      typeof error.waiting.continuation === "object" &&
-                      "toolCallId" in error.waiting.continuation
-                      ? error.waiting.continuation.toolCallId
-                      : (error.waiting.requestId ?? "approval"),
-                  ),
-                  reason: "human_input",
-                  message: error.message,
-                  // Also on the interrupt: a run relayed through Intelligence arrives without the
-                  // CUSTOM event above, and the interrupt is what a headless turn still sees.
-                  metadata: {
-                    [OPENBOT_WAITING_METADATA]: {
-                      ...error.waiting,
-                      message: error.message,
-                    },
-                  },
-                },
-              ],
-            },
-          });
-          subscriber.complete();
-          subscription?.unsubscribe();
-        },
-      };
-      subscription = nativeRuns.run(run, () =>
-        this.runNextWithState(input, next).subscribe({
-          next({ event, messages, state }) {
-            run.messages = messages;
-            run.state = state;
-            if (!run.waiting) subscriber.next(event);
-            if (
-              event.type === EventType.TOOL_CALL_END &&
-              typeof event.toolCallId === "string"
-            ) {
-              captured.add(event.toolCallId);
-              const pending = awaiting.get(event.toolCallId);
-              if (pending) {
-                clearTimeout(pending.timer);
-                awaiting.delete(event.toolCallId);
-                pending.resolve();
-              }
-            }
-          },
-          error: (error) => subscriber.error(error),
-          complete: () => subscriber.complete(),
-        }),
-      );
-      return () => {
-        subscription?.unsubscribe();
-        for (const pending of awaiting.values()) {
-          clearTimeout(pending.timer);
-          pending.reject(new Error("The native tool run was stopped."));
-        }
-        awaiting.clear();
-      };
-    });
-  }
-}
-export function nativeApprovalRun(
-  input: RunAgentInput,
-  source: () => Observable<BaseEvent>,
-) {
-  return new NativeApprovalMiddleware().run(
-    input,
-    new NativeStream(source, input),
-  );
 }

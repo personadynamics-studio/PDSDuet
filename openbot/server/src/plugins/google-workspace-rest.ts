@@ -187,7 +187,7 @@ const TOOLS: readonly McpTool[] = Object.freeze([
   },
 ]);
 
-type Connection = { url: string; token?: string };
+type Connection = { url: string; token?: string; signal?: AbortSignal };
 
 /** The answer is this file, so nobody's credential is needed to read it. See Drive's adapter. */
 export const listNeedsCredential = false;
@@ -256,9 +256,12 @@ async function request<T>(
           : { "content-type": "application/json" }),
       },
       body: init.json === undefined ? undefined : JSON.stringify(init.json),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: connection.signal
+        ? AbortSignal.any([connection.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    connection.signal?.throwIfAborted();
     return {
       ok: false,
       message:

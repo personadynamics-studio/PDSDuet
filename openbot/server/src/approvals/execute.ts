@@ -24,7 +24,7 @@ export type ApprovedActionDependencies = {
     depth: number;
     initiator: AuditInitiator;
   }): Promise<unknown>;
-  gate(candidate: ApprovalCandidate): Promise<unknown>;
+  gate(candidate: ApprovalCandidate, context?: import("@openbot/toolkit/granted-tool").ToolExecutionContext): Promise<unknown>;
   computerTools(
     actorId: string,
     botId: string,
@@ -42,6 +42,7 @@ export type ApprovedActionDependencies = {
     actorId: string;
     initiator: AuditInitiator;
     credentialActorId?: string;
+    signal?: AbortSignal;
   }): Promise<{ text: string; isError: boolean }>;
   /**
    * Whose connected account a call goes out on: the live call path's rule (a Team Bot reaches its
@@ -58,6 +59,7 @@ export type ApprovedActionDependencies = {
     name: string;
     args: Record<string, unknown>;
     run: RunAssertion;
+    context?: import("@openbot/toolkit/granted-tool").ToolExecutionContext;
   }): Promise<{ text: string; isError: boolean } | null>;
   /** The signed run carried in the continuation, so a resumed hand-off keeps its original depth. */
   readRun?(forwardedProps: unknown): RunAssertion | null;
@@ -73,7 +75,8 @@ export type ApprovedActionDependencies = {
  * it would have asked about instead of acting.
  */
 export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
-  return async (action: ApprovalAction): Promise<unknown> => {
+  return async (action: ApprovalAction, signal: AbortSignal): Promise<unknown> => {
+    signal.throwIfAborted();
     const snapshot: ApprovalContinuation = parseApprovalContinuation(
       action.continuation,
     );
@@ -109,7 +112,7 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
         args: action.args,
         target: action.target,
         continuation: snapshot,
-      });
+      }, { signal, toolCallId: snapshot.toolCallId });
       return "The person allowed this. Nothing has been sent yet: make the same call now, unchanged, and it goes out once.";
     }
     const computer = await deps.computerTools(
@@ -127,7 +130,7 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
         );
       return tool.execute(snapshot.args, {
         toolCallId: snapshot.toolCallId,
-        signal: new AbortController().signal,
+        signal,
       });
     }
     if (snapshot.toolName.startsWith("host_")) {
@@ -138,7 +141,7 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
         throw new ApprovalRefusedError(
           "That host tool is no longer available.",
         );
-      const result = await tool.execute(snapshot.args);
+      const result = await tool.execute(snapshot.args, { toolCallId: snapshot.toolCallId, signal });
       if (result.startsWith(deps.refusalMarker))
         throw new ApprovalRefusedError(result);
       return result;
@@ -169,6 +172,7 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
         name: snapshot.toolName,
         args,
         run,
+        context: { signal, toolCallId: action.toolCallId },
       });
       if (!answered)
         throw new ApprovalRefusedError(
@@ -191,6 +195,7 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
             action.toolRef,
           );
       result = await deps.callTool({
+        signal,
         ref: action.toolRef,
         args,
         botId: action.botId,

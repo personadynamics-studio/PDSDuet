@@ -15,6 +15,13 @@
  * one. It leads with the marker the transcript reads, as this Bot's other two refusals in `callTool`
  * do. A success is passed on exactly as before.
  */
+export type ToolWait = { kind: string; requestId?: string; toolCallId: string; toolName?: string; message?: string };
+export class ToolWaiting extends Error {
+  constructor(readonly waiting: ToolWait) {
+    super(waiting.message ?? "The tool is waiting for the person.");
+  }
+}
+
 export async function toolAnswer(response: Response): Promise<string> {
   if (!response.ok) {
     const refusal = (await response.json().catch(() => null)) as {
@@ -26,6 +33,7 @@ export async function toolAnswer(response: Response): Promise<string> {
         : "";
     return `Refused. Tool callback returned HTTP ${response.status}.${reason}`;
   }
-  const body = (await response.json()) as { text?: string };
+  const body = (await response.json()) as { text?: string; waiting?: ToolWait };
+  if (body.waiting) throw new ToolWaiting(body.waiting);
   return body.text ?? "The tool returned nothing.";
 }

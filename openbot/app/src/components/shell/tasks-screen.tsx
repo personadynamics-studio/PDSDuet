@@ -1,8 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useRef, useState } from "react";
 import { DuetIcon, type DuetIconName } from "@/components/duet/icons";
-import { primaryBot } from "@/lib/agents/primary-bot";
-import { agentListQueryOptions } from "@/lib/agents/queries";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 import type { SortOrder } from "@/lib/tasks/groups";
 import { cn } from "@/lib/utils";
 import { NewTaskSheet } from "./new-task-sheet";
@@ -42,8 +40,7 @@ function rememberView(view: TasksView): void {
  * scrolls, with sort and search beside it, and the + at the foot adds a task.
  */
 export function TasksScreen() {
-  const agents = useQuery(agentListQueryOptions());
-  const bot = primaryBot(agents.data);
+  const { bot, agents } = useSelectedBot();
   const [view, setView] = useState<TasksView>(rememberedView);
   const [order, setOrder] = useState<SortOrder>("newest");
   const [searching, setSearching] = useState(false);

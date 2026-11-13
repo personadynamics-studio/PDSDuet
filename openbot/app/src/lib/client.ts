@@ -28,6 +28,13 @@ export type ClientOptions = {
   signal?: AbortSignal;
 };
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 /** Every request in this app is authenticated, and every one of them is JSON or nothing. */
 async function send(path: string, options: ClientOptions): Promise<Response> {
   return fetch(path, {
@@ -93,7 +100,7 @@ export async function client<T>(
       .json()
       .then((body: { error?: string }) => body.error)
       .catch(() => undefined);
-    throw new Error(message ?? options.fallback ?? "That request failed.");
+    throw new ApiError(message ?? options.fallback ?? "That request failed.", response.status);
   }
 
   if (key === undefined) return response;

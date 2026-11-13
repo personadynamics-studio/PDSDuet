@@ -107,7 +107,7 @@ export function createServerApprovalService(deps: {
       },
     },
     createApprovalQuestions(database, authoriseQuestion),
-    async (ownerUserId, botId, snapshot) => {
+    async (ownerUserId, botId, snapshot, signal) => {
       const source = await sourceForCoordinationRun({
         actorId: ownerUserId,
         botId,
@@ -120,10 +120,7 @@ export function createServerApprovalService(deps: {
         throw new ApprovalRefusedError(
           "That conversation is no longer available to this Bot and person.",
         );
-      // Intelligence saves a streaming run's messages a moment behind the stream, and the browser runs
-      // the tool as soon as the call arrives. A call that is not saved yet is waited for briefly; one
-      // that never appears is refused below.
-      let history = await threads.getThreadMessages({
+      const history = await threads.getThreadMessages({
         threadId: snapshot.threadId,
         userId: ownerUserId,
       });
@@ -131,13 +128,6 @@ export function createServerApprovalService(deps: {
         history.messages
           .flatMap((message) => message.role === "assistant" ? message.toolCalls ?? [] : [])
           .find((call) => call.id === snapshot.toolCallId);
-      for (let attempt = 0; !findCall() && attempt < 10; attempt++) {
-        await Bun.sleep(500);
-        history = await threads.getThreadMessages({
-          threadId: snapshot.threadId,
-          userId: ownerUserId,
-        });
-      }
       const canonicalCall = findCall();
       if (
         !canonicalCall ||
@@ -164,7 +154,7 @@ export function createServerApprovalService(deps: {
         throw new ApprovalRefusedError("That computer tool is not available.");
       return tool.execute(snapshot.args, {
         toolCallId: snapshot.toolCallId,
-        signal: new AbortController().signal,
+        signal,
       });
     },
     { review: deps.review },

@@ -9,6 +9,7 @@ import {
   Message as MessageRow,
 } from "@/components/ui/message";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { agentListQueryOptions } from "@/lib/agents/queries";
 import {
   type GroupMessage,
   groupQueryOptions,
@@ -24,12 +25,13 @@ import { TeamBotConsentCard } from "./team-bot-consent";
 export function GroupChat({ channelId }: { channelId: string }) {
   const queryClient = useQueryClient();
   const group = useQuery(groupQueryOptions(channelId));
+  const roster = useQuery(agentListQueryOptions());
   const me = useQuery(currentUserQueryOptions()).data;
   const send = useMutation(
     sendGroupMessageMutationOptions(queryClient, channelId),
   );
   const bots = group.data?.bots ?? [];
-  const names = new Map(bots.map((bot) => [bot.id, bot.name]));
+  const names = new Map([...(roster.data ?? []), ...bots].map((bot) => [bot.id, bot.name]));
   const messages = group.data?.messages ?? [];
   const working = messages.some(
     (message) => message.status === "running" || message.status === "queued",
@@ -66,15 +68,10 @@ export function GroupChat({ channelId }: { channelId: string }) {
               message={message}
               name={
                 message.agentId
-                  ? (names.get(message.agentId) ?? "已離開的機械人")
+                  ? (names.get(message.agentId) ?? message.agentId)
                   : message.ownerUserId === me?.id
                     ? "你"
                     : "團隊成員"
-              }
-              answeredBy={
-                message.answeredBy
-                  ? (names.get(message.answeredBy) ?? "another Bot")
-                  : undefined
               }
               mine={message.ownerUserId === me?.id}
             />
@@ -115,12 +112,10 @@ export function GroupChat({ channelId }: { channelId: string }) {
 function GroupLine({
   message,
   name,
-  answeredBy,
   mine,
 }: {
   message: GroupMessage;
   name: string;
-  answeredBy?: string;
   mine: boolean;
 }) {
   if (message.agentId === null)
@@ -148,7 +143,6 @@ function GroupLine({
       <MessageContent>
         <MessageHeader className="text-xs font-medium text-muted-foreground">
           {name}
-          {answeredBy ? ` · answer from ${answeredBy}` : null}
         </MessageHeader>
         {(message.status === "running" || message.status === "queued") &&
         !message.text ? (

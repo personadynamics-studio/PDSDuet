@@ -13,8 +13,6 @@ import {
   readChannelHello,
 } from "@openbot/shared/channel-hello";
 import { describeCheckIn, readCheckIn } from "@openbot/shared/check-in";
-import { readFirstDay } from "@openbot/shared/first-day";
-import { readMorningBrief } from "@openbot/shared/morning-brief";
 import { readFiring } from "@openbot/shared/routine-firing";
 import { readTaskBrief } from "@openbot/shared/task-brief";
 import type { Database } from "../db/client";
@@ -303,19 +301,10 @@ async function openingOf(
     threadId: owner.threadId,
     userId: owner.userId,
   });
-  /*
-   * Not a morning brief. Chat asks for one on later days for the person, and nobody typed it, so it
-   * is neither what they opened the conversation for nor a name for it; the opening is the first
-   * message that is not one.
-   */
-  const at = history.messages.findIndex(
-    (message) =>
-      message.role === "user" &&
-      readMorningBrief(textOf(message.content)) === null,
-  );
+  const at = history.messages.findIndex((message) => message.role === "user");
   const question = history.messages[at];
   if (!question) return null;
-  // The answer to that question, so a brief's reply above it is never paired with it.
+  // The first answer after the opening question.
   const answer = history.messages
     .slice(at + 1)
     .find((message) => message.role === "assistant");
@@ -323,15 +312,13 @@ async function openingOf(
   const rawAsked = textOf(question.content);
   if (!rawAsked) return null;
   // A channel a routine opened has the firing frame wrapped around its first message, not a
-  // person's words, and Chat's first day has the first-day frame around the request it sent for
-  // them. A check-in the Bot started has its own frame and what it found under it, and a task's
+  // person's words. A check-in has its own frame and what it found under it, and a task's
   // conversation has its frame around the person's ask. Unwrapped before any of them can become the
   // title, same as the transcript unwraps them before they can become what a person reads.
   // A channel's hello is the same: it names the channel, and the person typed none of it.
   const checkIn = readCheckIn(rawAsked);
   const hello = readChannelHello(rawAsked);
   const asked =
-    readFirstDay(rawAsked) ??
     readFiring(rawAsked) ??
     readTaskBrief(rawAsked) ??
     (checkIn ? describeCheckIn(checkIn) : null) ??

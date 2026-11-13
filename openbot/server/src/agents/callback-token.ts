@@ -114,8 +114,6 @@ export type RunAssertion = {
    * person, which is what those runs were.
    */
   initiator?: AuditInitiator;
-  /** The durable handoff claim under which a remote delivery may coordinate further work. */
-  handoff?: { key: string; owner: string };
 };
 
 type SignedRun = RunAssertion & { exp: number };
@@ -172,15 +170,6 @@ export function readRunAssertion(
       return null;
     }
     if (!options.ignoreExpiry && payload.exp <= now) return null;
-    if (
-      payload.handoff !== undefined &&
-      (!payload.handoff ||
-        typeof payload.handoff.key !== "string" ||
-        !payload.handoff.key ||
-        typeof payload.handoff.owner !== "string" ||
-        !payload.handoff.owner)
-    )
-      return null;
     return {
       botId: payload.botId,
       actorId: payload.actorId,
@@ -203,7 +192,6 @@ export function readRunAssertion(
       // Read as a person on anything unclear, for the reason depth reads as zero: an assertion
       // minted before this existed carries none, and a person is what those runs were.
       initiator: readInitiator(payload.initiator),
-      ...(payload.handoff ? { handoff: payload.handoff } : {}),
     };
   } catch {
     return null;

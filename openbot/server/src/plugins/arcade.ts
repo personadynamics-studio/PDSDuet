@@ -101,7 +101,7 @@ export type ArcadeActions = {
     tool_name: string;
     input: Record<string, unknown>;
     user_id: string;
-  }): Promise<{
+  }, options?: { signal?: AbortSignal }): Promise<{
     success?: boolean;
     output?: {
       value?: unknown;
@@ -639,7 +639,7 @@ const failureResult = (text: string): McpCallResult => ({
  * `stacktrace` are the vendor's words and stay out of `text`.
  */
 export async function callTool(
-  connection: { url: string; actorId?: string },
+  connection: { url: string; actorId?: string; signal?: AbortSignal },
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<McpCallResult> {
@@ -658,7 +658,7 @@ export async function callTool(
       tool_name: toolName,
       input: args,
       user_id: connection.actorId,
-    });
+    }, { signal: connection.signal });
     if (answer.output?.authorization) {
       return failureResult(
         `${toolName} has not been authorized on this account yet. Authorize it in Connections and ask again.`,
@@ -682,6 +682,7 @@ export async function callTool(
     }
     return { ...cap(value), isError: false };
   } catch (thrown) {
+    connection.signal?.throwIfAborted();
     const failure = arcadeFailure(thrown);
     if (failure && isAuthorizationRequired(failure)) {
       return failureResult(

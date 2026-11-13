@@ -44,19 +44,16 @@ import {
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
 import { approvalInboxOptions } from "@/lib/approvals";
-import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { useBotNames } from "@/lib/agents/bot-names";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
   type CheckIn,
   CheckInArrivalContext,
   readCheckIn,
 } from "@/lib/channels/check-in";
-import { readFirstDay } from "@/lib/channels/first-day";
-import { readMorningBrief } from "@/lib/channels/morning-brief";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
 import { readTaskBrief } from "@/lib/channels/task-brief";
-import { ReplyChips } from "@/lib/chat/reply-chips-tool";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { personToolLabel, readToolName } from "@/lib/plugins/tool-name";
@@ -70,7 +67,6 @@ import {
 import { readTeamBotConsent } from "@/lib/team-bots";
 import { cn } from "@/lib/utils";
 import { VOICE_CHAT_ACTIVITY, type VoiceChatEntry } from "@/lib/voice/archive";
-import { queryClient } from "@/query-client";
 import { AppAccessCard } from "./app-access-card";
 import {
   attachmentModality,
@@ -80,12 +76,6 @@ import {
 } from "./chat-messages";
 import { splitChatOrigin } from "./chat-origin";
 import type { QueuedMessage } from "./composer";
-import {
-  FIRST_DAY_PLAN,
-  firstDayPlan,
-  firstDayWelcome,
-  firstNameOf,
-} from "./first-day-greeting";
 import { ReplyHoldProvider } from "./reply-hold";
 import { TeamBotConsentCard } from "./team-bot-consent";
 import {
@@ -596,147 +586,6 @@ function RoutineFiring({ instruction }: { instruction: string }) {
   );
 }
 
-/**
- * The Bot's greeting on the person's first day, drawn where the message Chat sent for them sits.
- *
- * That message is a request wrapped in a frame addressed to the model (`shared/first-day.ts`), and
- * nobody typed it, so drawing it as the person's bubble would put words in their mouth. What goes
- * here instead is the Bot speaking first, in its own bubbles: a welcome, then what it is doing while
- * the run underneath it does it. The request itself is not shown; the plan says it in the Bot's
- * words.
- *
- * The name is read from the signed-in account through the app's one query client, the way the voice
- * widget reads it, because the transcript is drawn on screens with no provider of its own.
- */
-function FirstDayGreeting({
-  delay,
-  request,
-}: {
-  delay: number;
-  /** The request Chat sent, which says which plan went with it. */
-  request: string | null;
-}) {
-  const { data: me } = useQuery(currentUserQueryOptions(), queryClient);
-  return (
-    <MessageRow align="start">
-      <MessageContent>
-        <Arriving delay={delay}>
-          <Bubble align="start" className={AGENT_BUBBLE} variant="secondary">
-            <BubbleContent className={BUBBLE_CONTENT}>
-              {firstDayWelcome(firstNameOf(me?.name))}
-            </BubbleContent>
-          </Bubble>
-        </Arriving>
-        <Arriving delay={delay + FIRST_DAY_PLAN_DELAY_SECONDS}>
-          <Bubble align="start" className={AGENT_BUBBLE} variant="secondary">
-            <BubbleContent className={BUBBLE_CONTENT}>
-              {firstDayPlan(request)}
-            </BubbleContent>
-          </Bubble>
-        </Arriving>
-      </MessageContent>
-    </MessageRow>
-  );
-}
-
-/** The plan arrives a beat after the welcome, as a second message would. */
-const FIRST_DAY_PLAN_DELAY_SECONDS = 0.4;
-
-/** Keep the first-day answer in one bubble, including its paragraph breaks. */
-export function firstDayParts(text: string): string[] {
-  return [text];
-}
-
-function FirstDayAnswer({
-  delay,
-  text,
-  streaming,
-}: {
-  delay: number;
-  text: string;
-  streaming: boolean;
-}) {
-  return (
-    <MessageRow align="start">
-      <MessageContent>
-        <Arriving delay={delay}>
-          <Bubble align="start" className={AGENT_BUBBLE} variant="secondary">
-            <BubbleContent className={cn(BUBBLE_CONTENT, AGENT_PROSE)}>
-              <Streamdown
-                components={markdownComponents}
-                mode={streaming ? "streaming" : "static"}
-                isAnimating={streaming}
-              >
-                {text}
-              </Streamdown>
-            </BubbleContent>
-          </Bubble>
-        </Arriving>
-      </MessageContent>
-    </MessageRow>
-  );
-}
-
-/** The two answers to the first day's "who you are": the app's, not the model's. */
-export const FIRST_DAY_REPLIES = ["Sounds right", "Something's off"] as const;
-
-/**
- * Where the first day stands in a conversation: the first-day message's place, whether it read
- * mail, the Bot's answer to it, and whether anything has come from the person's side since: a
- * message of their own, or a later day's morning brief, which Chat asked for in their place.
- */
-export function firstDayOf(items: readonly TranscriptItem[]): {
-  mail: boolean;
-  answer: ReadonlySet<string>;
-  replied: boolean;
-} | null {
-  const at = items.findIndex(
-    (item) =>
-      item.kind === "text" &&
-      item.role === "user" &&
-      readFirstDay(item.text) !== null,
-  );
-  const opened = items[at];
-  if (opened?.kind !== "text") return null;
-  const answer = new Set<string>();
-  let replied = false;
-  for (const item of items.slice(at + 1)) {
-    if (
-      item.kind === "attachments" ||
-      (item.kind === "text" && item.role === "user")
-    ) {
-      replied = true;
-      break;
-    }
-    if (item.kind === "text" && item.role === "assistant") answer.add(item.id);
-  }
-  return {
-    mail: firstDayPlan(readFirstDay(opened.text)) === FIRST_DAY_PLAN,
-    answer,
-    replied,
-  };
-}
-
-/**
- * "Sounds right" and "Something's off" under the first day's answer, drawn by the app.
- *
- * NOT THE MODEL'S `suggest_replies`. Offered that tool on the first day, the model called it before
- * writing anything and the answer collapsed to its closing question (`NO_BUTTONS` in
- * shared/first-day.ts). The app knows when the first day's run has ended and what the two answers
- * are, so it draws them with the same chips, and a tap goes out as the person's own words.
- */
-function FirstDayReplies() {
-  return (
-    <MessageRow align="start">
-      <MessageContent>
-        <Arriving delay={0}>
-          <ReplyChips replies={FIRST_DAY_REPLIES} />
-        </Arriving>
-      </MessageContent>
-    </MessageRow>
-  );
-}
-
 /** "10:32 AM" in the reader's own clock and locale, or null for a time that cannot be read. */
 export function checkInTime(checkedAt: string | null): string | null {
   if (!checkedAt) return null;
@@ -831,8 +680,8 @@ function ResponsibilityFiring({
 const TranscriptMessage = memo(function TranscriptMessage({
   commandNames = "",
   delay,
-  firstDayAnswer = false,
   role,
+  senderName,
   text,
   seen = false,
   replay = false,
@@ -840,9 +689,8 @@ const TranscriptMessage = memo(function TranscriptMessage({
 }: {
   commandNames?: string;
   delay: number;
-  /** The Bot's answer to the first-day message, kept in one bubble. */
-  firstDayAnswer?: boolean;
   role: "user" | "assistant";
+  senderName?: string;
   text: string;
   /** The person's newest message, which the Bot has picked up and not yet answered in words. */
   seen?: boolean;
@@ -853,9 +701,6 @@ const TranscriptMessage = memo(function TranscriptMessage({
   const isUser = role === "user";
   if (isUser && replay) {
     return <p className="type-label text-duet-ink-3">正在重試。</p>;
-  }
-  if (!isUser && firstDayAnswer) {
-    return <FirstDayAnswer delay={delay} text={text} streaming={streaming} />;
   }
   /*
    * Checked before anything else a person's message gets. A firing is not a person's message: the
@@ -873,11 +718,6 @@ const TranscriptMessage = memo(function TranscriptMessage({
         </MessageContent>
       </MessageRow>
     );
-  }
-  // Chat's first message, sent for the person rather than by them: the Bot's greeting goes here.
-  const firstDay = isUser ? readFirstDay(text) : null;
-  if (firstDay !== null) {
-    return <FirstDayGreeting delay={delay} request={firstDay} />;
   }
   // A check-in the Bot started itself: a quiet line, and its own words follow.
   const checkIn = isUser ? readCheckIn(text) : null;
@@ -904,6 +744,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
     <MessageRow align={align}>
       <MessageContent>
         <Arriving delay={delay}>
+          {!isUser && senderName ? <p className="mb-1 text-xs font-medium text-muted-foreground">{senderName}</p> : null}
           {/*
             The film's bubbles: the Bot's in light grey and the person's in the accent tint,
             right-aligned, both rounded on every corner. Each Bot reply stays in one bubble,
@@ -1714,13 +1555,11 @@ export function isPersonSentMessage(
   replay = false,
 ): boolean {
   // A check-in is the same: the Bot started it, and it must not scroll the person's place away.
-  // So is a morning brief, which Chat asked for in the person's place.
   return (
     role === "user" &&
     !replay &&
     readFiring(text) === null &&
-    readCheckIn(text) === null &&
-    readMorningBrief(text) === null
+    readCheckIn(text) === null
   );
 }
 
@@ -1759,72 +1598,19 @@ function turnOf(item: TranscriptItem): string {
  * end to hold: the picture is the top of what the person sent, and anchoring on the caption
  * underneath it would scroll the picture off the top of the pane.
  */
-/** Whether the thread's newest turn is a morning brief: its last request is the brief's, not the person's. */
-export function newestTurnIsBrief(thread: readonly TranscriptItem[]): boolean {
-  const last = thread.findLast(
-    (item) => item.kind === "text" && item.role === "user",
-  );
-  return last?.kind === "text" && readMorningBrief(last.text) !== null;
-}
-
-function anchorRowIds(
-  items: readonly TranscriptItem[],
-  thread: readonly TranscriptItem[] = items,
-): Set<string> {
+function anchorRowIds(items: readonly TranscriptItem[]): Set<string> {
   const anchors = new Set<string>();
   const claimed = new Set<string>();
-  const drawn = new Set(items.map((item) => item.id));
-  /*
-   * A MORNING BRIEF'S TURN IS HELD BY ITS FIRST ROW. Nobody typed it, and its request is taken out
-   * of `items`, so the turn had no row of the person's to hold; with no anchor among the rows it
-   * appended, the scroller kept to the end, and a brief taller than the pane arrived bottom first,
-   * its greeting and first rows building in above the fold where nobody saw them. The first row
-   * the turn draws, the brief's own line and then its card, is held at the top instead, the way a
-   * question is, and the card builds in below it. Read off `thread`, which still has the request.
-   */
-  let briefTurn = false;
-
-  for (const item of thread) {
-    if (
-      item.kind === "text" &&
-      item.role === "user" &&
-      readMorningBrief(item.text) !== null
-    ) {
-      briefTurn = true;
-      continue;
-    }
-    if (!drawn.has(item.id)) continue;
-    if (briefTurn) {
-      briefTurn = false;
-      anchors.add(item.id);
-      claimed.add(turnOf(item));
-      continue;
-    }
-    const sent =
-      item.kind === "attachments" ||
-      (item.kind === "text" &&
-        isPersonSentMessage(item.role, item.text, item.taskInput?.replay));
+  for (const item of items) {
+    const sent = item.kind === "attachments" || (item.kind === "text" && isPersonSentMessage(item.role, item.text, item.taskInput?.replay));
     if (!sent) continue;
-
     const turn = turnOf(item);
     if (claimed.has(turn)) continue;
     claimed.add(turn);
     anchors.add(item.id);
   }
-
   return anchors;
 }
-
-/**
- * The only way to actually enforce exhaustiveness over `VisibleChatItem`: the
- * `item` parameter is typed `never`, so a branch that reaches here with a
- * member of the union still unhandled fails to compile, rather than a
- * trailing `: null` that accepts anything and renders nothing for it.
- */
-function assertNever(_item: never): null {
-  return null;
-}
-
 const SEND_SCROLL_MS = 700;
 
 function useSmoothSendScroll(
@@ -1874,6 +1660,7 @@ export function ChatTranscript({
   folded = false,
 }: ChatTranscriptProps) {
   const isDrawn = useDrawnTool();
+  const botName = useBotNames();
   /*
    * NOT MEMOISED, AND THAT IS DELIBERATE. `useMemo` keyed on `messages` looks obviously right and
    * silently broke the transcript: the agent hands back the SAME array and mutates it, so the
@@ -1887,39 +1674,7 @@ export function ChatTranscript({
   const thread = folded
     ? []
     : groupToolSteps(repliesLast(toVisibleChatItems(messages)), isDrawn);
-  /*
-   * The first day's answer and its two replies. The replies only once the run has ended, while
-   * nothing the person said or parked comes after it, and only on a first day that read mail: they
-   * answer "who you are", which the first day without mail doesn't say.
-   *
-   * Read off the whole thread, morning briefs included. A later day's brief ends the first day's
-   * answer just as a message of the person's would: without it, the brief's reply read as more of
-   * that answer, and "Sounds right" moved down under the brief.
-   */
-  const firstDay = firstDayOf(thread);
-  /*
-   * A MORNING BRIEF DRAWS NOTHING WHERE IT SITS. Chat asked for it in the person's place, so it is
-   * not their bubble, and the Bot speaks first: what the person finds is its reply and the brief's
-   * card (shared/morning-brief.ts). Taken out here rather than in `toVisibleChatItems`, where a new
-   * channel's hello is dropped, so the turn it starts keeps its start for `firstDayOf` above and for
-   * the grouping before it; everything below (rows, "Seen", the scroll anchors, the Thinking line)
-   * reads the thread without it.
-   */
-  const items = thread.filter(
-    (item) =>
-      !(
-        item.kind === "text" &&
-        item.role === "user" &&
-        readMorningBrief(item.text) !== null
-      ),
-  );
-  const firstDayReplies =
-    firstDay?.mail === true &&
-    firstDay.answer.size > 0 &&
-    !firstDay.replied &&
-    !busy &&
-    queued.length === 0;
-
+  const items = thread;
   /*
    * ONLY WHILE THERE IS NOTHING ELSE TO LOOK AT. Once a reply starts streaming, or a tool line
    * appears, the transcript is already saying the Bot is working — a second indicator under a
@@ -1960,16 +1715,6 @@ export function ChatTranscript({
     )?.id ?? null;
   useSmoothSendScroll(viewportRef, newestUserMessageId);
   /*
-   * NO FOLLOWING THE BOTTOM WHILE A MORNING BRIEF ARRIVES. The scroller holds the brief's row at the
-   * top (`anchorRowIds`), but it lets go of a held turn the moment that turn outgrows the pane: its
-   * spare space below drops to nothing and it starts following the bottom, which suits an answer
-   * streaming in a line at a time. A brief's card lands at its full height in one step, so it let
-   * go at once and showed the card's bottom while the greeting built in above the fold (found
-   * recording the demo on 035acb0). Off for that turn only; once the turn ends it is back on, and
-   * the scroller stays where it is until the person moves.
-   */
-  const briefArriving = busy && newestTurnIsBrief(thread);
-  /*
    * Where the turn being written starts: rows after it wait for the Bot's words while `busy`
    * (reply-hold.tsx), so a card made before its line enters under the finished line, not above it.
    */
@@ -1983,7 +1728,7 @@ export function ChatTranscript({
     : undefined;
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
-  const anchorRows = anchorRowIds(items, thread);
+  const anchorRows = anchorRowIds(items);
   const seenId = useSettled(seenMessageId(items), SEEN_SETTLE_MS);
 
   /*
@@ -2012,7 +1757,7 @@ export function ChatTranscript({
 
   return (
     <MessageScrollerProvider
-      autoScroll={!folded && !briefArriving}
+      autoScroll={!folded}
       scrollPreviousItemPeek={48}
     >
       <MessageScroller>
@@ -2157,8 +1902,8 @@ export function ChatTranscript({
                   <TranscriptMessage
                     commandNames={commandNames}
                     delay={delays.delayFor(item.id, index, items.length)}
-                    firstDayAnswer={firstDay?.answer.has(item.id) === true}
                     role={item.role}
+                    senderName={item.senderBotId ? botName(item.senderBotId) : undefined}
                     replay={item.taskInput?.replay}
                     seen={item.id === seenId}
                     streaming={item.id === streamingMessageId}
@@ -2183,11 +1928,6 @@ export function ChatTranscript({
                 assertNever(item)
               ),
             )}
-            {firstDayReplies ? (
-              <MessageScrollerItem messageId="first-day-replies">
-                <FirstDayReplies />
-              </MessageScrollerItem>
-            ) : null}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         {/* A floating disc, like the shell's own controls. */}

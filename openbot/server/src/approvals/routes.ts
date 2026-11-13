@@ -66,6 +66,7 @@ export function createApprovalRoutes(
           context.var.actor.id,
           context.req.param("botId"),
           await context.req.json(),
+          context.req.raw.signal,
         ),
       });
     } catch (error) {

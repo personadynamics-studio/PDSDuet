@@ -3,7 +3,7 @@ import type { TaskReplyContext } from "@openbot/shared/task-reply";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { attachmentModality } from "./chat-messages";
-import { toAgentOptions, type ComposerDraft } from "./composer";
+import { type ComposerDraft } from "./composer";
 import { ConversationView } from "./conversation-view";
 import { takeFirstMessage } from "./transcript-messages";
 import { VoiceCallWidget } from "./voice-call-widget";
@@ -119,7 +119,7 @@ function ChannelChatSession({ channel, runtimeAgentId, inShell = false, topic, t
       <ConversationProvider ask={(text) => { void send(text).catch(() => {}); }}>
         <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
           <VoiceCallWidget call={call} agentId={runtimeAgentId} name={botName} avatarSeed={agents.data?.find((bot) => bot.id === runtimeAgentId)?.avatarSeed ?? runtimeAgentId} taskRunning={busy} />
-          <ConversationView messages={messages} busy={busy} pending={busy} restoring={thread.restoring} disabled={!channel.active} stoppable={Boolean(thread.activeRun && thread.activeRun.id !== "starting")} onStop={() => { void thread.stop(); }} onSubmit={submit} queueWhileBusy={!task?.send} channelId={task?.send && !task.durable ? undefined : channel.id} serverQueued={task?.queued} agents={toAgentOptions(agents.data, channel.agentIds)} commands={task?.send && !task.durable ? undefined : skillCommands} approvals={inbox.data?.requests} inShell={inShell} folded={folded} lead={lead ?? (topic ? <Topic>{topic}</Topic> : null)} placeholder={`傳送訊息給 ${botName}`} stopped={thread.error ?? undefined} voiceCall={call.available ? { active: call.active, supported: call.supported, onStart: call.open } : undefined} notice={<>{!channel.active ? <p role="status">這段對話已無法接收新訊息。</p> : null}{thread.reconnecting ? <p role="status" className="text-sm text-muted-foreground">正在重新連線並取回對話進度…</p> : null}{archive.error ? <p role="alert" className="text-sm text-destructive">無法載入語音對話。</p> : null}</>} />
+          <ConversationView messages={messages} busy={busy} pending={busy} restoring={thread.restoring} disabled={!channel.active} stoppable={Boolean(thread.activeRun)} onStop={() => { void thread.stop(); }} onSubmit={submit} queueWhileBusy={!task?.send} channelId={task?.send && !task.durable ? undefined : channel.id} serverQueued={task?.queued} commands={task?.send && !task.durable ? undefined : skillCommands} approvals={inbox.data?.requests} inShell={inShell} folded={folded} lead={lead ?? (topic ? <Topic>{topic}</Topic> : null)} placeholder={`傳送訊息給 ${botName}`} stopped={thread.error ?? undefined} voiceCall={call.available ? { active: call.active, supported: call.supported, onStart: call.open } : undefined} notice={<>{!channel.active ? <p role="status">這段對話已無法接收新訊息。</p> : null}{thread.reconnecting ? <p role="status" className="text-sm text-muted-foreground">正在重新連線並取回對話進度…</p> : null}{archive.error ? <p role="alert" className="text-sm text-destructive">無法載入語音對話。</p> : null}</>} />
         </div>
       </ConversationProvider>
     </ToolResponses>

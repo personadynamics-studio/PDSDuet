@@ -35,7 +35,7 @@ import {
 import { ChatSuggestionCard } from "@/components/shell/chat-suggestion";
 import type { ApprovalRequest } from "@/lib/approvals";
 import { attachmentUrl } from "@/lib/channels/attachments";
-import { isThreadBusyError } from "@/lib/channels/run-lifecycle";
+import { ApiError } from "@/lib/client";
 import { useFocusMessage } from "@/lib/tasks/focus-message";
 import { newId } from "../../lib/new-id";
 
@@ -382,13 +382,13 @@ export function ConversationView({
       const run = next.run;
       /*
        * A SEND THAT MET A TURN ALREADY GOING IS PARKED, NOT FAILED. The caller says so with
-       * `ThreadBusyError` when another run held the thread (a continuation after Allow once, another
+       * HTTP 409 when another run held the thread (a continuation after Allow once, another
        * tab, another device). The words become Queued, exactly as if the composer had known the
        * conversation was busy, and run when that turn ends; the composer is told it went, so it does
        * not put the same words back in the box beside them.
        */
       const started = startRef.current(run).catch((error: unknown) => {
-        if (!isThreadBusyError(error)) throw error;
+        if (!(error instanceof ApiError) || error.status !== 409) throw error;
         apply({ busy: true, draft: run, id: newId(), type: "submit" });
       });
       /*
@@ -512,7 +512,7 @@ export function ConversationView({
       // Met a turn already going: parked again, to run when it ends. Not held back, because nothing
       // failed; the turn it waits behind keeps the conversation busy until then, and this send's
       // own `running` falling is an edge this effect sees either way.
-      if (isThreadBusyError(error)) {
+      if (error instanceof ApiError && error.status === 409) {
         apply({ messages: carried, type: "restore" });
         return;
       }

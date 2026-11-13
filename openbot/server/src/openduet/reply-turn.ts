@@ -1,9 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { BaseEvent } from "@ag-ui/client";
 import { resolveLocalModel } from "@openbot/toolkit/native-agent";
-import { readFirstDay } from "@openbot/shared/first-day";
-import { readMorningBrief } from "@openbot/shared/morning-brief";
-import { nativeRunWaiting } from "@openbot/toolkit/native-approval";
 import { Observable } from "rxjs";
 import type { PlanLanguageModel } from "../agents/plan-model";
 import { REFUSAL_MARKER } from "../plugins/tools";
@@ -12,9 +9,7 @@ import {
   REPLIES_ALREADY_HELD,
   REPLIES_ALREADY_SHOWN,
   REPLIES_DRAWN_PREFIX,
-  REPLIES_FIRST_DAY,
   REPLIES_HELD,
-  REPLIES_MORNING_BRIEF,
   REPLIES_SHOWN,
   REPLIES_SHOWN_ASK,
   REPLIES_TOOL,
@@ -45,9 +40,7 @@ import {
  *   in words that match the set it lost to: "write your full answer" beside a held one, "end your
  *   turn" beside a shown one.
  * - A call made while another tool in its step waits on the person's approval is REFUSED: the next
- *   choice belongs under the reply once the action is done, not under an unanswered card. So is a
- *   call on the first day, whose replies the app draws itself, and one in a morning brief, whose
- *   card already holds what the person can start.
+ *   choice belongs under the reply once the action is done, not under an unanswered card.
  *
  * WHY HELD AND NOT REFUSED. Refusing the early call, and telling the Bot to answer and call again,
  * was tried first, live, with five wordings over 22 turns. Once it said nothing was on screen, the
@@ -75,6 +68,7 @@ export type ToolExecution = {
   toolCallId?: string;
   /** The messages the step was asked with: one array per step, shared by its calls. */
   messages?: readonly unknown[];
+  run?: { waiting?: unknown };
 };
 
 type Step = { text: string; calls: string[] };
@@ -251,11 +245,8 @@ async function decide(
   step: Executed[],
   run: () => Promise<string>,
 ): Promise<string> {
-  if (nativeRunWaiting()) return REPLIES_AFTER_APPROVAL;
+  if (execution?.run?.waiting) return REPLIES_AFTER_APPROVAL;
   const messages = execution?.messages ?? [];
-  const asked = lastPersonText(messages);
-  if (readFirstDay(asked) !== null) return REPLIES_FIRST_DAY;
-  if (readMorningBrief(asked) !== null) return REPLIES_MORNING_BRIEF;
   const earlier = earlierInTurn(messages);
 
   // A copy of the chips call beside it is not a read; any other tool is.
@@ -295,20 +286,6 @@ async function decide(
   if (!asksAQuestion(written)) return REPLIES_SHOWN_ASK;
   turn.ended = true;
   return REPLIES_SHOWN;
-}
-
-/**
- * The text of the person's last message, which says whether this turn is one the app asked for in
- * their place: the first day's request, or a later day's morning brief, framed as the app sends them.
- */
-function lastPersonText(messages: readonly unknown[]): string {
-  const person = messages.findLast((message) => roleOf(message) === "user");
-  const content = (person as { content?: unknown } | undefined)?.content;
-  return typeof content === "string"
-    ? content
-    : partsOf(content)
-        .map((part) => (typeof part.text === "string" ? part.text : ""))
-        .join("");
 }
 
 /** The call's start as the run's events carried it, waited for briefly if it has not arrived. */

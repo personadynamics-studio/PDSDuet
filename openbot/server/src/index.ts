@@ -27,7 +27,7 @@ import {
 } from "./agents/callback-token";
 import { wireCoordination } from "./agents/coordination-wiring";
 import { createHandoffDesk } from "./agents/handoff";
-import { createHandoffRunner } from "./agents/handoff-runner";
+import type { ToolExecutionContext } from "@openbot/toolkit/granted-tool";
 import { startHandoffDelivery } from "./agents/handoff-wiring";
 import {
   configureBotLifecycle,
@@ -231,10 +231,7 @@ import {
 } from "./openduet/channels";
 import { createPageStore } from "./openduet/pages";
 import { withRunChannels } from "./openduet/run-channel";
-import {
-  createSetupSources,
-  primaryBotIdOf,
-} from "./openduet/setup";
+import { createSetupSources } from "./openduet/setup";
 import {
   createTaskReportReader,
   threadHistory,
@@ -255,7 +252,7 @@ import { createUserPreferencesStore } from "./user-preferences";
 import { createVoiceSessionStore } from "./voice/sessions";
 import { createVoiceSummarizer } from "./voice/summary";
 import { repeatAfterEach } from "./work/loop";
-import { createWorkQueue, type WorkOfferedListener } from "./work/queue";
+import { createWorkQueue, DEFAULT_MAX_ATTEMPTS, type WorkOfferedListener } from "./work/queue";
 
 /**
  * Who is asking to read or run a local conversation.
@@ -490,18 +487,34 @@ const channelSourceForRun = async (run: RunAssertion) => {
         isNull(channels.deletedAt),
       ),
     );
-  return (
-    sources.find((source) => source.botId === run.botId) ??
-    (run.handoff ? (sources[0] ?? null) : null)
-  );
+  return sources.find((source) => source.botId === run.botId) ?? null;
 };
 
 /*
  * A run's source conversation: a channel's own thread, or a Bot's thread in a group conversation.
  * The group lookup applies the same live-membership and own-Bot checks. See channels/group.ts.
  */
-const sourceForCoordinationRun = async (run: RunAssertion) =>
-  (await channelSourceForRun(run)) ?? groupSourceForRun(database, run);
+const sourceForCoordinationRun = async (run: RunAssertion) => {
+  const sourceOf=async(identity:RunAssertion)=>{
+    const channel=await channelSourceForRun(identity);
+    if(channel)return {...channel,group:false};
+    const group=await groupSourceForRun(database,identity);
+    return group?{...group,group:true}:null;
+  };
+  const direct=await sourceOf(run);
+  if(direct)return direct;
+  const ancestry=await database.execute<{threadId:string;botId:string}>(sql`with recursive source as (
+    select id,parent_run_id,thread_id,agent_id,user_id from local_runs where id=${run.runId} and user_id=${run.actorId}
+    union all select parent.id,parent.parent_run_id,parent.thread_id,parent.agent_id,parent.user_id from local_runs parent
+      join source child on child.parent_run_id=parent.id where parent.user_id=${run.actorId}
+  ) select thread_id as "threadId",agent_id as "botId" from source`);
+  for(const parent of ancestry){
+    const identity={...run,threadId:parent.threadId,botId:parent.botId};
+    const source=await sourceOf(identity);
+    if(source)return source;
+  }
+  return null;
+};
 
 const authoriseQuestion = async (question: PersonQuestion) => {
   const source = await sourceForCoordinationRun({
@@ -548,6 +561,7 @@ const chooseSkills = createModelCompleter({
 
 const threads = createLocalThreadStore(database);
 await threads.initialize();
+await threads.listen(config.databaseUrl);
 const approvalComputerTools = async (
   ownerUserId: string,
   agentId: string,
@@ -1342,21 +1356,15 @@ const signRunForActor =
       previousAssertion,
       config.keyEncryptionKey,
     );
-    if (previous?.handoff) {
-      if (previous.botId !== botId || previous.actorId !== actorId)
-        throw new Error(
-          "The delegated run identity does not match this Bot and owner.",
-        );
-      return previousAssertion as string;
-    }
+    if(previous&&(previous.botId!==botId||previous.actorId!==actorId))throw new Error("The run identity does not match this Bot and owner.");
     return mintRunAssertion(
       {
         botId,
         actorId,
         runId,
         threadId,
-        initiator,
-        ...(depth ? { depth } : {}),
+        initiator: previous?.initiator ?? initiator,
+        depth: previous?.depth ?? depth ?? 0,
       },
       config.keyEncryptionKey,
     );
@@ -1419,7 +1427,6 @@ const { coordination, coordinationForActor } = wireCoordination({
   approvalService,
   agentProfileStore,
   actorFor,
-  channelSourceForRun,
   database,
   pluginStore,
   bootAuditStore,
@@ -1632,7 +1639,7 @@ const responsibilityAnswerTurn = ({
           description: tool.description,
           parameters: z.toJSONSchema(tool.parameters),
         },
-        execute: (args: unknown) => tool.execute(args),
+        execute: (args: unknown, context: ToolExecutionContext) => tool.execute(args, context),
       })),
     ],
   });
@@ -1777,6 +1784,7 @@ const groupConversations = createGroupConversations({
 
 const approvalSweep = repeatAfterEach(
   createApprovalResumeTick({
+    threads,
     approvalQueue,
     approvalOwner,
     approvalService,
@@ -2127,7 +2135,6 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
     bootAuditStore,
     actorFor,
     localRuntime,
-    threadIdentity,
     groupConversations,
     channelStore,
   });
@@ -2145,22 +2152,11 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
  * Every replica reaps; the statement is a delete by age, so two doing it is the same as one doing it.
  * Its own loop rather than a phase of the sweep, so an hour of failing to reap never delays an answer.
  */
-const reaper = createHandoffRunner({
-  queue: createWorkQueue(database),
-  owner: workOwner("reaper"),
-  sign: () => "",
-  auditStore: bootAuditStore,
-  // Never called: `reap` deletes rows by age and claims nothing.
-  delivery: {
-    deliver: async () => {
-      throw new Error("the reaper does not deliver hops");
-    },
-  },
-});
+const handoffQueue = createWorkQueue(database);
 repeatAfterEach(
   async () => {
     try {
-      const purged = await reaper.reap();
+      const purged = await handoffQueue.purge({kind:HANDOFF_KIND,olderThanMs:24*60*60_000,maxAttempts:DEFAULT_MAX_ATTEMPTS});
       if (purged > 0) {
         console.info(JSON.stringify({ type: "bot-handoff-reaped", purged }));
       }
@@ -2321,7 +2317,7 @@ const app = createApp(
       ...(input.initiator ? { initiator: input.initiator } : {}),
     }).find((candidate) => candidate.name === input.name);
     if (followUp) {
-      const text = await followUp.execute(input.args);
+      const text = await followUp.execute(input.args, input.context);
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     const { name, args, botId, actorId, initiator } = input;
@@ -2332,7 +2328,7 @@ const app = createApp(
       agentId: botId,
     }).find((candidate) => candidate.name === name);
     if (memory) {
-      const text = await memory.execute(args);
+      const text = await memory.execute(args, input.context);
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     if (!name.startsWith("host_")) return null;
@@ -2349,7 +2345,7 @@ const app = createApp(
         isError: true,
       };
     }
-    const text = await tool.execute(args);
+    const text = await tool.execute(args, input.context);
     return { text, isError: text.startsWith(REFUSAL_MARKER) };
   },
   // The app directory, behind the same client the plugin store and the transport already share.
@@ -2369,6 +2365,7 @@ const app = createApp(
     channels: channelStore,
   },
   {
+    runtimeThreads: threads,
     approvals: approvalService,
     shared: { modes: accountModes, use: sharedUseStore },
     ...(signInService ? { passwords: signInService } : {}),
@@ -2421,10 +2418,6 @@ const app = createApp(
         },
         credentials: credentialStore,
         plugins: pluginStore,
-        primaryBot: primaryBotIdOf(
-          tenantPackage.agents.map((agent) => agent.id),
-          tenantPackage.tenantId,
-        ),
         computer: Boolean(config.computer),
         apps: {
           configured: Boolean(composio),
@@ -2451,7 +2444,7 @@ const app = createApp(
         softDeleteChannel: (actor, channelId) =>
           channelStore.softDelete(actor, channelId),
       }),
-      activity: createActivityStore(database),
+      activity: createActivityStore(database, input => localRuntime.runner.stop(input)),
       wakeUps: wakeUpStore,
       profiles: agentProfileStore,
       auditStore: bootAuditStore,
@@ -2486,6 +2479,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     groupSweep.stop();
     for (const sweep of deliverySweeps) sweep.stop();
     void Promise.allSettled([
+      threads.close(),
       channelActivityListener.stop(),
       policyListener.stop(),
       // Started only where handing work between Bots is switched on, so it is often not there.

@@ -82,7 +82,9 @@ async function answer(
     grantId?: string;
   },
   run: () => Promise<unknown>,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   await auditHostAccess(audit, {
     operation: audit.operation,
     grantId: audit.grantId,
@@ -97,6 +99,7 @@ async function answer(
     });
     return resultText(result);
   } catch (error) {
+    signal?.throwIfAborted();
     if (error instanceof HeadlessToolSuspension) throw error;
     const reason =
       error instanceof Error ? error.message : "That host operation failed.";
@@ -146,7 +149,8 @@ export function hostAccessTools(options: {
       description:
         "List the host folders this person has explicitly granted to this Bot, including the grantId to use with host file and command tools.",
       parameters: empty,
-      execute: async () => {
+      execute: async (_args, context) => {
+        context?.signal?.throwIfAborted();
         if (grants.length === 0) {
           await auditHostAccess(audit("list_folders"), {
             operation: "list_folders",
@@ -179,7 +183,7 @@ export function hostAccessTools(options: {
       description:
         "List files in a host folder this person granted to this Bot. First call host_list_folders for grantId values.",
       parameters: grantPath,
-      execute: async (args) => {
+      execute: async (args, context) => {
         const parsed = grantPath.parse(args ?? {});
         return answer(audit("list_files", parsed.grantId), () =>
           broker.callHost({
@@ -188,7 +192,8 @@ export function hostAccessTools(options: {
             actorId,
             grantId: parsed.grantId,
             relativePath: parsed.path ?? ".",
-          }),
+          }, context?.signal),
+          context?.signal,
         );
       },
     },
@@ -198,7 +203,7 @@ export function hostAccessTools(options: {
       description:
         "Read one file from a granted host folder. Use only paths relative to that folder.",
       parameters: readFile,
-      execute: async (args) => {
+      execute: async (args, context) => {
         const parsed = readFile.parse(args ?? {});
         return answer(audit("read_file", parsed.grantId), () =>
           broker.callHost({
@@ -207,7 +212,8 @@ export function hostAccessTools(options: {
             actorId,
             grantId: parsed.grantId,
             relativePath: parsed.path,
-          }),
+          }, context?.signal),
+          context?.signal,
         );
       },
     },
@@ -217,7 +223,7 @@ export function hostAccessTools(options: {
       description:
         "Request an exact native-owner-confirmed file write in a granted host folder. The native app backs up the original and refuses unless the owner approves this operation.",
       parameters: writeFile,
-      execute: async (args) => {
+      execute: async (args, context) => {
         const parsed = writeFile.parse(args ?? {});
         return answer(audit("write_file", parsed.grantId), () =>
           broker.callHost({
@@ -227,7 +233,8 @@ export function hostAccessTools(options: {
             grantId: parsed.grantId,
             relativePath: parsed.path,
             content: parsed.content,
-          }),
+          }, context?.signal),
+          context?.signal,
         );
       },
     },
@@ -237,7 +244,7 @@ export function hostAccessTools(options: {
       description:
         "Request an exact native-owner-confirmed shell command in the offline sandbox for a granted host folder. Set writable true only if the command needs write access; native still prompts before running.",
       parameters: runCommand,
-      execute: async (args) => {
+      execute: async (args, context) => {
         const parsed = runCommand.parse(args ?? {});
         return answer(audit("run_command", parsed.grantId), () =>
           broker.callHost({
@@ -248,7 +255,8 @@ export function hostAccessTools(options: {
             relativePath: parsed.path,
             command: parsed.command,
             writable: parsed.writable === true,
-          }),
+          }, context?.signal),
+          context?.signal,
         );
       },
     },

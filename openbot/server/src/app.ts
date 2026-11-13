@@ -19,6 +19,9 @@ import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
 import { createApprovalRoutes } from "./approvals/routes";
 import type { ApprovalService } from "./approvals/service";
+import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
+import { withApprovalContext } from "@openbot/toolkit/continuation";
+import type { LocalThreadStore } from "./runtime/thread-store";
 import {
   type AuditInitiator,
   auditEventsToCsv,
@@ -178,6 +181,7 @@ export const UPLOAD_BODY_LIMIT_BYTES =
  * reading the trail a year later and the user row may be gone by then.
  */
 export type DeploymentToolCallInput = {
+  context?: import("@openbot/toolkit/granted-tool").ToolExecutionContext;
   name: string;
   args: Record<string, unknown>;
   botId: string;
@@ -365,6 +369,7 @@ export function createApp(
   userPreferences?: UserPreferencesStore,
   voiceSessions?: VoiceSessionServices,
   coworker?: {
+    runtimeThreads?: Pick<LocalThreadStore, "getThread" | "getThreadMessages">;
     demonstrations?: {
       store: DemonstrationStore;
       recorder: DemonstrationRecorder;
@@ -1210,8 +1215,6 @@ export function createApp(
         requireUser,
         channelEvents,
         auditStore,
-        coworker?.proactive?.engine.startFirstDay,
-        coworker?.proactive?.engine.startMorningBrief,
       ),
     );
   }
@@ -1468,6 +1471,7 @@ export function createApp(
         name?: string;
         args?: Record<string, unknown>;
         run?: unknown;
+        toolCallId?: unknown;
       } | null;
 
       const verdict = await authoriseAgentCall({
@@ -1519,6 +1523,7 @@ export function createApp(
       }
 
       try {
+        const invoke = async () => {
         const deploymentResult = await deploymentToolCaller?.({
           name: parsedCall.value.ref,
           args: parsedCall.value.args,
@@ -1526,6 +1531,10 @@ export function createApp(
           actorId: verdict.actorId,
           initiator: verdict.initiator,
           run: verdict.run,
+          context: {
+            signal: context.req.raw.signal,
+            ...(typeof body?.toolCallId === "string" ? { toolCallId: body.toolCallId } : {}),
+          },
         });
         if (deploymentResult) return context.json(deploymentResult);
 
@@ -1537,6 +1546,7 @@ export function createApp(
         }
 
         const result = await pluginStore.callTool({
+          signal: context.req.raw.signal,
           ref: parsedCall.value.ref,
           args: parsedCall.value.args,
           botId: verdict.botId,
@@ -1550,7 +1560,40 @@ export function createApp(
           text: vendorAnswer(result),
           isError: result.isError,
         });
+        };
+        const toolCallId = typeof body?.toolCallId === "string" ? body.toolCallId : undefined;
+        const threadId = verdict.run.threadId;
+        if (!toolCallId || !threadId || !coworker?.runtimeThreads) return await invoke();
+        const scope = { threadId, userId: verdict.actorId };
+        const thread = await coworker.runtimeThreads.getThread(scope);
+        const { messages } = await coworker.runtimeThreads.getThreadMessages(scope);
+        const recorded = messages.some((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.id === toolCallId));
+        return await withApprovalContext({
+          runId: verdict.run.runId,
+          threadId,
+          toolCallId,
+          toolName: parsedCall.value.ref,
+          args: parsedCall.value.args,
+          messages: recorded ? messages : [...messages, {
+            id: toolCallId, role: "assistant", content: "", toolCalls: [{
+              id: toolCallId, type: "function", function: { name: parsedCall.value.ref, arguments: JSON.stringify(parsedCall.value.args) },
+            }],
+          }],
+          state: thread.state,
+          context: [],
+          forwardedProps: { openbotRun: body?.run },
+          initiator: verdict.initiator,
+        }, invoke);
       } catch (error) {
+        if (error instanceof HeadlessToolSuspension) {
+          return context.json({ waiting: {
+            kind: error.waiting.kind,
+            requestId: error.waiting.requestId,
+            toolCallId: body?.toolCallId,
+            toolName: parsedCall.value.ref,
+            message: error.message,
+          } });
+        }
         /*
          * A refusal is an answer, not a failure: the Bot says what was blocked and carries on. The
          * marker leads it so a transcript can draw a refusal without reading the wording.

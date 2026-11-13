@@ -98,6 +98,7 @@ export async function resumePersonQuestion(input: {
       initiator,
       instruction: "",
       userMessage,
+      parentRunId: question.runId,
     });
     return { ...outcome, responsibilityId: responsibility.id };
   }
@@ -109,5 +110,6 @@ export async function resumePersonQuestion(input: {
     initiator,
     instruction: "",
     userMessage,
+    parentRunId: question.runId,
   });
 }

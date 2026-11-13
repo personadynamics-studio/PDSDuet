@@ -50,7 +50,7 @@ export function ReplyChips({
 }: {
   /**
    * The call that offered them, which keeps them live only on the Bot's latest turn. Absent for
-   * chips the app draws itself, such as the first day's (`FirstDayReplies` in chat-transcript.tsx),
+   * chips drawn directly by the current conversation,
    * whose caller draws them only while they answer the latest turn.
    */
   toolCallId?: string;

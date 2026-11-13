@@ -25,8 +25,10 @@ import {
   type AuditStore,
   recordAuditEvent,
 } from "../audit";
-import type { GrantedTool } from "@openbot/toolkit/granted-tool";
+import type { GrantedTool, ToolExecutionContext } from "@openbot/toolkit/granted-tool";
 import type { RunAssertion } from "./callback-token";
+import type { CoordinationSource } from "./handoff";
+import { RunStoppedError } from "../runtime/thread-store";
 
 /** What the model is offered. One name, so a transcript can find every escalation by searching. */
 export const ESCALATE_TOOL = "ask_person";
@@ -47,6 +49,9 @@ export type EscalationRoute = (input: {
   botId: string;
   threadId?: string;
   runId: string;
+  toolCallId: string;
+  signal?: AbortSignal;
+  source?: CoordinationSource;
   /** Preserved for a durable question routed from an unattended routine or delegated run. */
   initiator?: AuditInitiator;
   question: string;
@@ -102,7 +107,9 @@ export function escalationTool(options: {
       "and prefer it to asking another Bot when no other Bot could settle it either. Say what you " +
       "need and why, then stop and wait for their answer.",
     parameters,
-    execute: async (args: unknown) => {
+    execute: async (args: unknown, context?: ToolExecutionContext) => {
+      context?.signal?.throwIfAborted();
+      if (!context?.toolCallId) throw new Error("The question is missing its tool call ID.");
       const parsed = parameters.safeParse(args);
       if (!parsed.success) {
         return "That was not put to anybody: say what you need a person to answer.";
@@ -157,11 +164,15 @@ export function escalationTool(options: {
           botId: from.botId,
           ...(from.threadId ? { threadId: from.threadId } : {}),
           runId: from.runId,
+          toolCallId: context.toolCallId,
+          signal: context.signal,
           ...(from.initiator ? { initiator: from.initiator } : {}),
           question,
           ...(parsed.data.why ? { why: parsed.data.why } : {}),
         });
       } catch (error) {
+        context.signal?.throwIfAborted();
+        if (error instanceof RunStoppedError) throw error;
         /*
          * The thrown text goes in the trail and not into the answer.
          *

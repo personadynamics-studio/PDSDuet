@@ -96,8 +96,6 @@ CREATE TABLE "channels" (
   "last_message" text,
   "last_message_source_id" text,
   "last_message_needs_input" boolean,
-  "first_day_started_at" timestamp with time zone,
-  "morning_brief_on" text,
   "busy_claims" jsonb DEFAULT '{}'::jsonb NOT NULL,
   "last_message_at" timestamp with time zone,
   "last_message_agent_id" text,

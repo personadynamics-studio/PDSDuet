@@ -147,7 +147,7 @@ function RosterRows({
             {index > 0 ? <Separator /> : null}
             <Item
               render={
-                <Link params={{ agentId: agent.id }} to="/bots/$agentId" />
+                <Link search={{ agent: agent.id }} to="/bot" />
               }
               size="sm"
             >

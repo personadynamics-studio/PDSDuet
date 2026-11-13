@@ -82,7 +82,7 @@ export function actionsFor(context: ClientContext): ComposioActions {
       return tools.map((row, position) => actionOf(row, position, toolkit));
     },
 
-    async execute(call, args): Promise<ComposioResult> {
+    async execute(call, args, options): Promise<ComposioResult> {
       /*
        * THE TOOL IS RESOLVED BEFORE IT IS RUN, AND THAT COSTS A ROUND TRIP ON PURPOSE.
        *
@@ -112,7 +112,7 @@ export function actionsFor(context: ClientContext): ComposioActions {
         () =>
           vendor.tools.getRawComposioToolBySlug(call.slug, {
             version: call.version,
-          }),
+          }, options),
       );
 
       /*
@@ -194,7 +194,7 @@ export function actionsFor(context: ClientContext): ComposioActions {
             ...(call.connectedAccountId === undefined
               ? {}
               : { connectedAccountId: call.connectedAccountId }),
-          }),
+          }, options),
       );
     },
   };

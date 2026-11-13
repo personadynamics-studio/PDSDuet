@@ -137,6 +137,7 @@ export type ComposioVendor = {
     getRawComposioToolBySlug(
       slug: string,
       options?: { version?: string },
+      requestOptions?: { signal?: AbortSignal },
     ): Promise<VendorTool>;
     execute(
       slug: string,
@@ -155,6 +156,7 @@ export type ComposioVendor = {
          */
         connectedAccountId?: string;
       },
+      options?: { signal?: AbortSignal },
     ): Promise<ComposioResult>;
   };
   toolkits: {

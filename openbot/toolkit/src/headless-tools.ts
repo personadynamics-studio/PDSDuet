@@ -47,9 +47,6 @@ export class HeadlessToolSuspension extends Error {
   }
 }
 
-const MAX_TOOL_SEGMENTS = 30;
-
-
 export class HeadlessToolsMiddleware extends Middleware {
   constructor(
     private readonly tools: HeadlessTool[],
@@ -83,7 +80,7 @@ export class HeadlessToolsMiddleware extends Middleware {
               .map((tool) => tool.definition),
           ],
         };
-        for (let segment = 0; segment <= MAX_TOOL_SEGMENTS; segment += 1) {
+        for (;;) {
           if (subscriber.closed) return;
           const historical = new Set(
             request.messages.flatMap((message) =>
@@ -160,10 +157,6 @@ export class HeadlessToolsMiddleware extends Middleware {
             subscriber.next(terminal);
             return;
           }
-          if (segment === MAX_TOOL_SEGMENTS)
-            throw new Error(
-              "The headless tool continuation limit was reached.",
-            );
           const results = new Map<string, string>();
           for (const call of owned) {
             if (subscriber.closed) return;

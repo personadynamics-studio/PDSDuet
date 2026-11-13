@@ -9,6 +9,7 @@ import {
   approvalTeamSettings,
 } from "../db/schema/approvals";
 import { workItems } from "../db/schema/work";
+import { RunStoppedError } from "../runtime/thread-store";
 import {
   type ApprovalAction,
   ApprovalNotFoundError,
@@ -101,6 +102,10 @@ export function createApprovalStore(database: Database): ApprovalStore {
     },
     async open(action) {
       return database.transaction(async (tx) => {
+        const source = await tx.execute<{ stopRequested: boolean }>(sql`
+          select stop_requested as "stopRequested" from local_runs where id=${action.runId} for update`);
+        if (!source[0] || source[0].stopRequested)
+          throw new RunStoppedError("The source work was cancelled.");
         // A request the policy gate opened was opened because something asked for the person; a
         // saved "always" rule was already weighed there and must not approve it behind that.
         const [rule] = action.policy

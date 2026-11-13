@@ -18,6 +18,7 @@ import { PRIVATE_SHARE_TOOL_REF } from "../proactive/private-share";
 import { recordTaskContinuation } from "../proactive/store";
 import type { ResponsibilityStore } from "../responsibilities/types";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
+import { RunStoppedError, type LocalThreadStore } from "../runtime/thread-store";
 import type { ApprovalResumeDependencies, ApprovalService } from "./service";
 
 /**
@@ -33,6 +34,7 @@ export function createApprovalResumeTick(deps: {
   approvalService: ApprovalService;
   executeApprovedAction: ApprovalResumeDependencies["execute"];
   database: Database;
+  threads: Pick<LocalThreadStore, "onStop" | "run">;
   responsibilityStore: ResponsibilityStore;
   groupConversations: Pick<GroupConversations, "continueWaiting">;
   approvalContinuationRunner: TurnRunner;
@@ -66,6 +68,8 @@ export function createApprovalResumeTick(deps: {
       if (!item) return;
       // Set once the item is understood, so its last failed try can still tell the Bot.
       let abandon: ((reason: string) => Promise<void>) | undefined;
+      let unlisten: (() => void) | undefined;
+      let signal: AbortSignal | undefined;
       try {
         const input = z
           .object({
@@ -73,7 +77,18 @@ export function createApprovalResumeTick(deps: {
             approvalId: z.string().min(1),
           })
           .parse(item.payload);
+        const request = await approvalService.store.get(input.ownerUserId, input.approvalId);
+        const execution = new AbortController();
+        signal = execution.signal;
+        unlisten = deps.threads.onStop((runId) => {
+          if (runId === request.action.runId) execution.abort(new RunStoppedError("The work was cancelled."));
+        });
+        const source = await deps.threads.run(request.action.runId);
+        if (!source || source.stopRequested || source.status === "stopped")
+          execution.abort(new RunStoppedError("The work was cancelled."));
+        signal.throwIfAborted();
         const resumeDependencies: ApprovalResumeDependencies = {
+          signal,
           // Asked before the action runs: with Use Bots off, or the Bot's model off the allowlist,
           // nothing is carried out and the refusal is final rather than retried.
           refusal: (action) =>
@@ -83,7 +98,7 @@ export function createApprovalResumeTick(deps: {
             }),
           validate: (action) =>
             approvalService.validateReentry(action, () =>
-              executeApprovedAction(action),
+              executeApprovedAction(action, execution.signal),
             ),
           execute: executeApprovedAction,
           carriedOutByContinuation: (action) =>
@@ -180,6 +195,8 @@ export function createApprovalResumeTick(deps: {
                     threadId: snapshot.threadId,
                     instruction: "",
                     initiator: snapshot.initiator ?? PERSON_INITIATOR,
+                    signal: execution.signal,
+                    parentRunId: snapshot.runId,
                     continuation: { snapshot, result, messageId },
                   }),
               );
@@ -272,6 +289,10 @@ export function createApprovalResumeTick(deps: {
             "The approval work lease was lost before completion.",
           );
       } catch (error) {
+        if (signal?.aborted) {
+          await approvalQueue.finish({ kind: item.kind, key: item.key, owner: approvalOwner });
+          return;
+        }
         const reason = error instanceof Error ? error.message : String(error);
         // The queue will not hand this item out again, so the conversation hears now or never.
         if (abandon && item.attempts >= DEFAULT_MAX_ATTEMPTS) {
@@ -302,6 +323,8 @@ export function createApprovalResumeTick(deps: {
           reason,
         });
         throw error;
+      } finally {
+        unlisten?.();
       }
     } catch (error) {
       console.error(

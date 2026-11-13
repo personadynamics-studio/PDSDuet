@@ -23,7 +23,7 @@ import {
 import { toLangChainMessages } from "./history";
 import { readReasoningEffort } from "./model-options";
 import { streamRun } from "./stream";
-import { toolAnswer } from "./tool-answer";
+import { toolAnswer, ToolWaiting } from "./tool-answer";
 
 /**
  * The same Bot, on a framework.
@@ -231,6 +231,8 @@ async function callTool(
   run: string,
   name: string,
   args: Record<string, unknown>,
+  signal: AbortSignal,
+  toolCallId: string,
 ): Promise<string> {
   if (!TOOL_TOKEN) {
     return "Refused. This Bot has no credential for calling tools back through its deployment.";
@@ -244,6 +246,7 @@ async function callTool(
   }
   try {
     const response = await fetch(TOOL_URL, {
+      signal,
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -256,10 +259,12 @@ async function callTool(
        * acting for. It is not in a position to know, and anything holding the token could claim
        * anything, so the deployment says it and this only carries the note.
        */
-      body: JSON.stringify({ name, args, run }),
+      body: JSON.stringify({ name, args, run, toolCallId }),
     });
     return await toolAnswer(response);
   } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof ToolWaiting) throw error;
     // Reported to the model as a result rather than thrown: the run continues and says what broke.
     return `That tool could not be called: ${
       error instanceof Error ? error.message : "unknown error"
@@ -316,7 +321,7 @@ function callsTheSurface(
  * Now it answers, calls what it needs, reads the results and answers again, which is what a harness
  * is for. `recursionLimit` bounds a model that would otherwise call tools in a circle.
  */
-function buildGraph(input: RunAgentInput) {
+function buildGraph(input: RunAgentInput, signal: AbortSignal) {
   const model = buildModel();
   const run = runAssertionOf(input);
 
@@ -326,7 +331,7 @@ function buildGraph(input: RunAgentInput) {
 
   return new StateGraph(MessagesAnnotation)
     .addNode("answer", async (state) => ({
-      messages: [await bound.invoke(state.messages)],
+      messages: [await bound.invoke(state.messages, { signal })],
     }))
     .addNode("tools", async (state) => {
       const last = state.messages.at(-1) as AIMessage;
@@ -343,10 +348,12 @@ function buildGraph(input: RunAgentInput) {
               run,
               call.name,
               (call.args ?? {}) as Record<string, unknown>,
+              signal,
+              call.id!,
             );
             return new ToolMessage({
               content: text,
-              tool_call_id: call.id ?? call.name,
+              tool_call_id: call.id!,
               name: call.name,
             });
           }),
@@ -378,13 +385,16 @@ function buildGraph(input: RunAgentInput) {
     .compile();
 }
 
-async function runAgent(input: RunAgentInput): Promise<Response> {
+async function runAgent(input: RunAgentInput, requestSignal: AbortSignal): Promise<Response> {
   const encoder = new EventEncoder();
+  const cancellation = new AbortController();
+  const signal = AbortSignal.any([requestSignal, cancellation.signal]);
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const utf8 = new TextEncoder();
-      const send = (event: BaseEvent) =>
-        controller.enqueue(utf8.encode(encoder.encodeSSE(event)));
+      const send = (event: BaseEvent) => {
+        if (!signal.aborted) controller.enqueue(utf8.encode(encoder.encodeSSE(event)));
+      };
 
       send({
         type: "RUN_STARTED",
@@ -396,16 +406,17 @@ async function runAgent(input: RunAgentInput): Promise<Response> {
       // is reported as RUN_ERROR through the same path as a failure mid-stream.
       await streamRun(
         async () =>
-          buildGraph(input).streamEvents(
+          buildGraph(input, signal).streamEvents(
             { messages: toLangChainMessages(input, PROVIDER) },
-            { version: "v2" },
+            { version: "v2", signal },
           ),
         input,
         send,
       );
 
-      controller.close();
+      if (!signal.aborted) controller.close();
     },
+    cancel(reason) { cancellation.abort(reason); },
   });
 
   return new Response(stream, {
@@ -435,7 +446,7 @@ serve({
 
     if (url.pathname === "/ag-ui" && request.method === "POST") {
       const input = (await request.json()) as RunAgentInput;
-      return runAgent(input);
+      return runAgent(input, request.signal);
     }
 
     return Response.json({ error: "Not found." }, { status: 404 });

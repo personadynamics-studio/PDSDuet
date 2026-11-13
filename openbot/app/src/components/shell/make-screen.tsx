@@ -7,8 +7,7 @@ import { DuetIcon, type DuetIconName } from "@/components/duet/icons";
 import { DuetCard } from "@/components/duet/kit";
 import { PageCard, previewKind } from "@/components/duet/page-card";
 import { TaskStatusPill } from "@/components/duet/task-card";
-import { primaryBot } from "@/lib/agents/primary-bot";
-import { agentListQueryOptions } from "@/lib/agents/queries";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 import {
   type PageSummary,
   pageKeys,
@@ -147,8 +146,7 @@ export function stillBeingMade(
 
 export function MakeScreen() {
   const queryClient = useQueryClient();
-  const agents = useQuery(agentListQueryOptions());
-  const bot = primaryBot(agents.data);
+  const { bot, agents } = useSelectedBot();
   const name = bot?.name;
   const [filter, setFilter] = useState<MakeFilter>("all");
   const [fanned, setFanned] = useState(false);

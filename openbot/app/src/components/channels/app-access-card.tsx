@@ -5,7 +5,7 @@ import {
 } from "@/components/plugins/app-access-action";
 import { PluginLogo } from "@/components/plugins/plugin-logo";
 import { type AppAccess, botAppQueryOptions } from "@/lib/app-access/queries";
-import { useDeclaredBotId } from "@/lib/chat/active-bot";
+import { useActiveBotId } from "@/lib/chat/active-bot";
 import type { ConnectPrompt } from "@openbot/shared/connect-prompt";
 import { ConnectAppCard } from "./connect-app-card";
 
@@ -33,7 +33,7 @@ import { ConnectAppCard } from "./connect-app-card";
  * than the refusal and is drawn as it is.
  */
 export function AppAccessCard({ prompt }: { prompt: ConnectPrompt }) {
-  const declared = useDeclaredBotId();
+  const declared = useActiveBotId();
   const agentId = prompt.agentId ?? declared;
   /*
    * A refusal from before refusals named their Bot, on a surface that declared none: there is no Bot

@@ -221,9 +221,9 @@ export function createComposioClient(apiKey: string): {
       // The listing is the raw client's because the wrapper has no cursor; the single-tool read and
       // the execute stay the SDK's, because both are one call about one action and neither pages.
       list: (query) => client.tools.list(query),
-      getRawComposioToolBySlug: (slug, options) =>
-        composio.tools.getRawComposioToolBySlug(slug, options),
-      execute: (slug, body) => composio.tools.execute(slug, body),
+      getRawComposioToolBySlug: (slug, options, requestOptions) =>
+        composio.tools.getRawComposioToolBySlug(slug, options, requestOptions),
+      execute: (slug, body, options) => composio.tools.execute(slug, body, options),
     },
     toolkits: {
       list: (query) => client.toolkits.list(query),

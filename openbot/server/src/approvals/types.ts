@@ -200,6 +200,7 @@ export type ApprovalPermit = {
 };
 export type ApprovalGate = (
   candidate: ApprovalCandidate,
+  context?: import("@openbot/toolkit/granted-tool").ToolExecutionContext,
 ) => Promise<ApprovalPermit | undefined>;
 export type ApprovalStore = {
   enabled(ownerUserId: string): Promise<boolean>;

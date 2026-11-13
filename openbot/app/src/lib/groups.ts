@@ -18,8 +18,6 @@ export type GroupMessage = {
   createdAt: string;
   /** Why a waiting Bot is waiting, when it is. */
   reason?: string;
-  /** For an answer relayed from another Bot through `message_bot`: which Bot answered. */
-  answeredBy?: string;
   /** A Team Bot asking the person whose turn it was to use their own account. */
   consent?: { botId: string; serverId: string };
 };

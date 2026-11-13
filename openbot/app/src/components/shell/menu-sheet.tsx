@@ -3,6 +3,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, type LinkOptions, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { BotsNavBadge } from "@/components/bot-profile/attention";
+import { AbstractAvatar } from "@/components/agents/abstract-avatar";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 import { ChannelGlyph } from "@/components/duet/channel-look";
 import { DuetIcon, type DuetIconName } from "@/components/duet/icons";
 import {
@@ -131,6 +133,7 @@ export function MenuSheet({
   const manage = useRememberedGroup(MANAGE_STORAGE_KEY);
   const archived = useRememberedGroup(ARCHIVED_STORAGE_KEY);
   const { bot, list } = useDuetChannels();
+  const { agents, selectBot } = useSelectedBot();
   const unarchive = useMutation(archiveDuetChannelMutationOptions(queryClient));
   const close = () => onOpenChange(false);
   // In the order they were made, so a channel keeps its place however recently it was used.
@@ -181,6 +184,25 @@ export function MenuSheet({
           aria-label="選單"
           className="flex min-h-0 flex-1 flex-col px-3 pb-4"
         >
+          <div className="mb-3 flex max-h-[40svh] shrink-0 flex-col overflow-y-auto" aria-label="可用機械人">
+            <h2 className="px-3 py-2 text-sm font-medium text-duet-ink-2">機械人</h2>
+            {agents.isPending ? <p className="px-3 py-2 text-sm" role="status">正在載入…</p> : agents.error && !agents.data ? (
+              <p className="px-3 py-2 text-sm text-destructive" role="alert">無法載入機械人。</p>
+            ) : (agents.data ?? []).map((agent) => (
+              <Link
+                key={agent.id}
+                to="/"
+                aria-current={bot?.id === agent.id ? "page" : undefined}
+                className={cn(ROW, bot?.id === agent.id && "bg-duet-tile")}
+                onClick={() => { selectBot(agent.id); close(); }}
+              >
+                <AbstractAvatar id={agent.id} name={agent.name} size={28} />
+                <span className="min-w-0 truncate">{agent.name}</span>
+              </Link>
+            ))}
+            {!agents.isPending && agents.data?.length === 0 ? <p className="px-3 py-2 text-sm text-duet-ink-2">尚未有機械人。</p> : null}
+            <Link to="/bots" search={{ new: true }} className={ROW} onClick={close}><RowIcon name="plus" />新增機械人</Link>
+          </div>
           {/* Exact, as on the tab bar, so Everything is marked current on Chat alone. */}
           <Link
             activeOptions={{ exact: true }}

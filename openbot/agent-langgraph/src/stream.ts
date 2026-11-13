@@ -10,6 +10,7 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import type { AIMessage } from "@langchain/core/messages";
 import { textOfChunk } from "./deltas";
+import { ToolWaiting } from "./tool-answer";
 
 /**
  * The line a run ends on when it produced nothing a person can see.
@@ -78,6 +79,7 @@ export async function streamRun(
    */
   let sentVisibleText = false;
   let sentToolCall = false;
+  const pending = new Map<string, { name: string; args: Record<string, unknown> }>();
 
   try {
     const events = await makeEvents();
@@ -86,10 +88,6 @@ export async function streamRun(
     // fragments and AG-UI wants one call. The framework hands back assembled `tool_calls` on the
     // final message, which is precisely the plumbing agent-bot does by hand.
     /** Calls seen on the way past, so a result can be paired with the arguments it answered. */
-    const pending = new Map<
-      string,
-      { name: string; args: Record<string, unknown> }
-    >();
 
     for await (const event of events) {
       if (event.event === "on_chat_model_stream") {
@@ -124,7 +122,7 @@ export async function streamRun(
         const output = event.data?.output as AIMessage | undefined;
         if (output) {
           for (const call of output.tool_calls ?? []) {
-            pending.set(call.id ?? call.name, {
+            pending.set(call.id!, {
               name: call.name,
               args: (call.args ?? {}) as Record<string, unknown>,
             });
@@ -227,6 +225,22 @@ export async function streamRun(
     // error is reported. agent-bot has the same hazard and the same ordering.
     if (textOpen) {
       send({ type: "TEXT_MESSAGE_END", messageId } as BaseEvent);
+    }
+    if (error instanceof ToolWaiting) {
+      for (const [id, call] of pending) {
+        send({ type: "TOOL_CALL_START", toolCallId: id, toolCallName: call.name } as BaseEvent);
+        send({ type: "TOOL_CALL_ARGS", toolCallId: id, delta: JSON.stringify(call.args) } as BaseEvent);
+        send({ type: "TOOL_CALL_END", toolCallId: id } as BaseEvent);
+      }
+      send({ type: "CUSTOM", name: "openbot.headless.waiting", value: error.waiting } as BaseEvent);
+      send({ type: "RUN_FINISHED", runId: input.runId, threadId: input.threadId, outcome: {
+        type: "interrupt", interrupts: [{
+          id: error.waiting.toolCallId, toolCallId: error.waiting.toolCallId,
+          reason: "human_input", message: error.message,
+          metadata: { openbotWaiting: error.waiting },
+        }],
+      } } as BaseEvent);
+      return;
     }
     send({
       type: "RUN_ERROR",

@@ -1,6 +1,6 @@
 import { IconPlus } from "@tabler/icons-react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChannelChat } from "@/components/channels/channel-chat";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { stashFirstMessage } from "@/components/channels/transcript-messages";
@@ -8,13 +8,14 @@ import { createChannelMutationOptions } from "@/lib/channels/mutations";
 import { ongoingChannel } from "@/lib/channels/ongoing";
 import { type AgentChannel, channelListQueryOptions } from "@/lib/channels/queries";
 import { queryClient } from "@/query-client";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ComputerChatControls } from "@/components/computer/computer-controls";
 import { ComputerViewPanel } from "@/components/computer/computer-panel";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
 import { Button } from "@/components/ui/button";
-import { defaultAgentId } from "@/lib/agents/default-agent";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
+import { BotSelector } from "@/components/agents/bot-selector";
 import {
   type AgentProfile,
   agentKeys,
@@ -86,7 +87,8 @@ function RouteComponent() {
     isError,
     isPending,
   } = useQuery(agentListQueryOptions());
-  const agentId = agent ?? defaultAgentId(agents);
+  const { bot: selectedBot } = useSelectedBot();
+  const agentId = agent ?? selectedBot?.id;
   const listedBot = agents?.find((candidate) => candidate.id === agentId);
   const detailAgentId = agent ?? "";
   const shouldLoadExplicitBot =
@@ -127,11 +129,11 @@ function RouteComponent() {
   if (!agentId || !known) {
     return (
       <div className="flex h-screen items-center justify-center p-6">
-        <p className="text-muted-foreground text-sm">
+        <div className="w-full max-w-lg"><BotSelector /><p className="mt-4 text-muted-foreground text-sm">
           {agent
             ? `There's no Bot called "${agent}".`
-            : "There are no Bots yet."}
-        </p>
+            : "請選擇要對話的機械人。"}
+        </p></div>
       </div>
     );
   }
@@ -144,6 +146,8 @@ function RouteComponent() {
 }
 
 function BotChat({ agentId, name }: { agentId: string; name: string }) {
+  const { selectBot } = useSelectedBot();
+  useEffect(() => { selectBot(agentId); }, [agentId, selectBot]);
   const channels = useInfiniteQuery(channelListQueryOptions());
   const [started, setStarted] = useState<AgentChannel | null>(null);
   const channel = started ?? ongoingChannel(channels.data, agentId);
@@ -162,7 +166,7 @@ function BotChat({ agentId, name }: { agentId: string; name: string }) {
         <SidebarToggleBar />
         <header className="flex items-center justify-between gap-3 border-b px-6 py-3">
           <h1 className="text-lg font-semibold">{name}</h1>
-          <div className="flex gap-2"><ComputerChatControls botId={agentId} open={watch === true} onOpenChange={showComputer} /><Button onClick={() => { void start().catch(() => {}); }} disabled={create.isPending} size="sm" variant="ghost"><IconPlus />新增對話</Button></div>
+          <div className="flex gap-2"><Button variant="ghost" size="sm" render={<Link to="/bots/$agentId" params={{ agentId }} />}>設定</Button><ComputerChatControls botId={agentId} open={watch === true} onOpenChange={showComputer} /><Button onClick={() => { void start().catch(() => {}); }} disabled={create.isPending} size="sm" variant="ghost"><IconPlus />新增對話</Button></div>
         </header>
         {create.error ? <p role="alert" className="px-6 py-2 text-destructive text-sm">{create.error.message}</p> : null}
         {channel ? <ChannelChat channel={channel} runtimeAgentId={agentId} /> : <ConversationView messages={[]} restoring={channels.isPending} busy={create.isPending} disabled={channels.isPending || create.isPending} notice={channels.error?.message} placeholder={`傳送訊息給 ${name}`} onSubmit={(draft) => start(draft.text)} />}

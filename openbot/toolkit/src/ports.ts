@@ -11,14 +11,19 @@ import type { AuditInitiator } from "./initiator";
  * Whether a turn may start, and the signal that stops it if that changes while it runs.
  *
  * Throws to refuse: a paused Bot, or a person without "Use Bots" or on a model off the allowlist.
- * Resolves with a signal that aborts when the Bot is paused mid-turn, joined with the caller's own
- * signal when there is one.
+ * Resolves with the running turn's signal and its disposal. The caller disposes the registration
+ * when the turn exits, including failures before model execution starts.
  */
+export type TurnAdmissionScope = {
+  signal: AbortSignal;
+  dispose(): void;
+};
+
 export type TurnAdmission = (input: {
   ownerUserId: string;
   agentId: string;
   signal?: AbortSignal;
-}) => Promise<AbortSignal>;
+}) => Promise<TurnAdmissionScope>;
 
 /**
  * The display components a Bot can draw in a turn with no browser, so it can still answer with a
@@ -35,34 +40,3 @@ export type ComponentCatalog = {
   }) => Promise<HeadlessTool[]>;
 };
 
-/**
- * The conversation's run lock.
- *
- * ONE RUN AT A TIME PER CONVERSATION, taken before anything is streamed. The platform hands the lock
- * out through an ordinary authenticated call and hands back the token that proves it: a run that
- * skips this and starts streaming is refused, because it is claiming to be a run nobody was told
- * about. That is what every delivery did before this existed, and the refusal read like a platform
- * limitation rather than a missing step.
- *
- * Taken with `NX`, so a conversation somebody else is already running in refuses rather than queues.
- * That is the right answer and the hop simply waits its turn: it is released back to the queue and
- * tried again, which is a wait rather than a failure.
- */
-export type ThreadLock = {
-  /**
-   * The run id the platform issued, or null when somebody else is running in this conversation.
-   *
-   * ITS OWN ID, NOT THE ONE ASKED FOR. That id is what the gateway checks every streamed event
-   * against, so a run that used the local one would be claiming to be a run nobody was told about.
-   */
-  acquire: (input: {
-    threadId: string;
-    runId: string;
-    userId: string;
-    agentId: string;
-  }) => Promise<{ runId: string } | null>;
-  /** Keep it while the addressed Bot works. The lock expires on its own otherwise. */
-  renew: (input: { threadId: string; runId: string }) => Promise<void>;
-  /** Give it back, so the next run does not wait out the whole expiry. */
-  release: (input: { threadId: string; runId: string }) => Promise<void>;
-};

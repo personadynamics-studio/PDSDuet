@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { PERSON_INITIATOR } from "../audit";
 import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
+import { mergeContinuationHistory } from "@openbot/toolkit/history-sanitize";
 import {
   decideAction,
   effectiveHostCommandPolicy,
@@ -103,6 +104,7 @@ class ApprovalValidated extends HeadlessToolSuspension {
   }
 }
 export type ApprovalResumeDependencies = {
+  signal: AbortSignal;
   /**
    * Whether the deployment still lets this Bot run for this person (Use Bots, the model allowlist).
    * Asked before anything else, so a refused action is never carried out, and final: the Bot cannot
@@ -111,7 +113,7 @@ export type ApprovalResumeDependencies = {
   refusal?(action: ApprovalAction): Promise<string | null>;
   /** Resolve the target again and recheck current policy/grants; never trust approval as authority. */
   validate(action: ApprovalAction): Promise<ApprovalAction>;
-  execute(action: ApprovalAction): Promise<unknown>;
+  execute(action: ApprovalAction, signal: AbortSignal): Promise<unknown>;
   /**
    * Whether the approved action is carried out by the continuation rather than here: a private
    * share, which the Bot sends again. Such a request is not consumed here. The send consumes it
@@ -176,39 +178,21 @@ function stepContinuation(
   own: ApprovalContinuation,
   others: Answered[],
 ): ApprovalContinuation {
-  let base = own;
-  const width = (snapshot: ApprovalContinuation) =>
-    stepCalls(snapshot, own.toolCallId).size;
+  let messages = own.messages;
   for (const other of others) {
-    const snapshot = other.action.continuation;
-    if (snapshot && width(snapshot) > width(base)) base = snapshot;
+    if (other.action.continuation)
+      messages = mergeContinuationHistory(messages, other.action.continuation.messages);
   }
-  const calls = stepCalls(base, own.toolCallId);
-  const answered = new Set(
-    base.messages.flatMap((message) =>
-      message.role === "tool" ? [message.toolCallId] : [],
-    ),
-  );
-  const results: ApprovalContinuation["messages"] = others
-    .filter(
-      (other) =>
-        calls.has(other.action.toolCallId) &&
-        !answered.has(other.action.toolCallId),
-    )
-    .map((other) => ({
-      id: `approval:${other.id}`,
-      role: "tool" as const,
-      toolCallId: other.action.toolCallId,
-      content: other.result.content,
-      ...(other.result.error ? { error: other.result.error } : {}),
-    }));
+  const results: ApprovalContinuation["messages"] = others.map((other) => ({
+    id: `approval:${other.id}`,
+    role: "tool",
+    toolCallId: other.action.toolCallId,
+    content: other.result.content,
+    ...(other.result.error ? { error: other.result.error } : {}),
+  }));
   return {
-    ...base,
-    toolCallId: own.toolCallId,
-    toolName: own.toolName,
-    args: own.args,
-    ...(own.initiator ? { initiator: own.initiator } : {}),
-    messages: [...base.messages, ...results],
+    ...own,
+    messages: mergeContinuationHistory(messages, [], results),
   };
 }
 export type ApprovalService = ReturnType<typeof createApprovalService>;
@@ -220,6 +204,7 @@ export function createApprovalService(
     ownerUserId: string,
     botId: string,
     snapshot: ApprovalContinuation,
+    signal: AbortSignal,
   ) => Promise<unknown>,
   options: {
     /** The deployment's configured model, for auto-review and pre-approval checks. */
@@ -254,10 +239,13 @@ export function createApprovalService(
           (other) => other.action.runId === runId,
         );
     const mine = stepCalls(request.action.continuation, toolCallId);
+    const parentMessage = (record: ApprovalRecord) => record.action.continuation?.messages.find((message) =>
+      message.role === "assistant" && message.toolCalls?.some((call) => call.id === record.action.toolCallId))?.id;
+    const parentId = parentMessage(request);
     return inRun.filter(
       (other) =>
         other.id !== request.id &&
-        (mine.has(other.action.toolCallId) ||
+        ((parentId !== undefined && parentMessage(other) === parentId) || mine.has(other.action.toolCallId) ||
           stepCalls(other.action.continuation, other.action.toolCallId).has(
             toolCallId,
           )),
@@ -276,7 +264,7 @@ export function createApprovalService(
   async function carryOn(
     ownerUserId: string,
     request: Answered,
-    dependencies: Pick<ApprovalResumeDependencies, "continue">,
+    dependencies: Pick<ApprovalResumeDependencies, "continue" | "signal">,
     final: boolean,
   ): Promise<void> {
     const continuation = request.action.continuation;
@@ -298,6 +286,7 @@ export function createApprovalService(
       const saved = await store.get(ownerUserId, other.id);
       others.push({ ...saved, result: saved.result ?? unknown });
     }
+    dependencies.signal.throwIfAborted();
     if (continuation)
       await dependencies.continue({
         approvalId: request.id,
@@ -316,6 +305,7 @@ export function createApprovalService(
   /** Safety, rules, auto-review and the person's default, settled once per action and audited. */
   async function evaluate(
     candidate: ApprovalCandidate,
+    signal?: AbortSignal,
   ): Promise<ApprovalPolicyOutcome | undefined> {
     const policy = store.policy;
     if (!policy) return undefined;
@@ -327,6 +317,7 @@ export function createApprovalService(
     ]);
     const continuation = candidate.continuation ?? currentApprovalContext();
     const outcome = await decideAction({
+      signal,
       candidate,
       messages: continuation?.messages,
       team: teamRules,
@@ -357,7 +348,7 @@ export function createApprovalService(
   }
   return {
     store,
-    async frontendAction(ownerUserId: string, botId: string, input: unknown) {
+    async frontendAction(ownerUserId: string, botId: string, input: unknown, signal: AbortSignal) {
       if (!frontend)
         throw new ApprovalRefusedError(
           "Computer approvals are unavailable in this deployment.",
@@ -389,7 +380,7 @@ export function createApprovalService(
           "The action does not match an unanswered tool call in this conversation.",
         );
       return withApprovalContext(snapshot, () =>
-        frontend(ownerUserId, botId, snapshot),
+        frontend(ownerUserId, botId, snapshot, signal),
       );
     },
     async validateReentry(
@@ -413,7 +404,9 @@ export function createApprovalService(
     },
     async gate(
       candidate: ApprovalCandidate,
+      context?: import("@openbot/toolkit/granted-tool").ToolExecutionContext,
     ): Promise<ApprovalPermit | undefined> {
+      context?.signal?.throwIfAborted();
       const probe = validationProbe.getStore();
       if (probe) {
         probe.action = approvalAction(candidate);
@@ -472,7 +465,8 @@ export function createApprovalService(
           throw new ApprovalRefusedError(DECLINED_BY_PERSON);
         }
       }
-      const outcome = await evaluate(candidate);
+      const outcome = await evaluate(candidate, context?.signal);
+      context?.signal?.throwIfAborted();
       if (outcome) {
         if (outcome.behaviour === "allow") return;
       } else if (
@@ -666,6 +660,7 @@ export function createApprovalService(
       id: string,
       dependencies: ApprovalResumeDependencies,
     ): Promise<void> {
+      dependencies.signal.throwIfAborted();
       const request = await store.get(ownerUserId, id);
       if (request.status === "completed") return;
       if (request.status === "pending")
@@ -768,7 +763,7 @@ export function createApprovalService(
                     digest: approved.actionDigest,
                     owner: ownerUserId,
                   },
-                  () => dependencies.execute(approved),
+                  () => dependencies.execute(approved, dependencies.signal),
                 ),
               );
               const content =
@@ -777,6 +772,14 @@ export function createApprovalService(
                 throw new Error("The approved action returned no result.");
               result = { content };
             } catch (error) {
+              if (dependencies.signal.aborted) {
+                await store.saveResult(ownerUserId, id, {
+                  content: "The work was cancelled. An action that already started was not repeated.",
+                  error: "STOPPED",
+                });
+                await store.finish(ownerUserId, id);
+                return;
+              }
               const reason =
                 error instanceof Error ? error.message : String(error);
               result = { content: reason, error: reason };

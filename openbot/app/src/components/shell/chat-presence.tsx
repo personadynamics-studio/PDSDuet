@@ -17,8 +17,7 @@ import {
 } from "react";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import { FINISH_MS, type MicOrbState } from "@/components/duet/mic-orb";
-import { primaryBot } from "@/lib/agents/primary-bot";
-import { agentListQueryOptions } from "@/lib/agents/queries";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 import {
   type ApprovalInboxData,
   type ApprovalRequest,
@@ -260,13 +259,12 @@ export function useChatServerBusy(onChat: boolean): {
   busy: boolean;
   threadId?: string;
 } {
-  const agents = useQuery({ ...agentListQueryOptions(), enabled: onChat });
+  const { bot } = useSelectedBot();
   const channels = useInfiniteQuery({
     ...channelListQueryOptions(),
     enabled: onChat,
   });
   if (!onChat) return { busy: false };
-  const bot = primaryBot(agents.data);
   const chat = bot ? ongoingChannel(channels.data, bot.id) : undefined;
   return chat
     ? { busy: chat.busy === true, threadId: chat.threadId }

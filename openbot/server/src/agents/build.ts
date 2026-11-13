@@ -14,6 +14,7 @@ import { parametersFor } from "@openbot/toolkit/granted-tool";
 import { HeadlessToolsMiddleware } from "@openbot/toolkit/headless-tools";
 import { sanitizeSeededHistory } from "@openbot/toolkit/history-sanitize";
 import { executeNativeApprovalTool } from "@openbot/toolkit/native-approval";
+import type { NativeToolExecution } from "@openbot/toolkit/native-approval";
 import { defer, from, switchMap } from "rxjs";
 import { z } from "zod";
 import {
@@ -44,7 +45,6 @@ import {
   answerReplies,
   endingTurns,
   noteToolStep,
-  type ToolExecution,
   watchReplyTurn,
 } from "../openduet/reply-turn";
 import type { SelectableSkill, Selection } from "../plugins/selection";
@@ -435,34 +435,25 @@ export function builtInAgentConfiguration(
              * `suggest_replies` call can tell whether it shares that step with a read and wait for a
              * send beside it to reach its approval. See openduet/reply-turn.ts.
              */
-            execute: (args: unknown, execution?: ToolExecution) => {
+            execute: (args: unknown, execution: NativeToolExecution) => {
               const settled = executeNativeApprovalTool(
                 tool.name,
                 args,
-                execution?.toolCallId,
+                execution,
                 tools.find((granted) => granted.name === tool.name)?.initiator,
                 () =>
                   tool.name === REPLIES_TOOL
-                    ? answerReplies(execution, () => tool.execute(args))
-                    : tool.execute(args),
+                    ? answerReplies(execution, () => tool.execute(args, { toolCallId: execution.toolCallId, signal: execution.abortSignal }))
+                    : tool.execute(args, { toolCallId: execution.toolCallId, signal: execution.abortSignal }),
               );
               noteToolStep(tool.name, execution, settled);
               return settled;
             },
           })),
-          maxSteps: TOOL_STEPS,
         }
       : {}),
   };
 }
-
-/**
- * How many turns of the tool loop one run may take.
- *
- * Enough for a Bot to search, read what came back, search again on a better term, and answer.
- * Beyond that a model is not making progress, and every extra step is somebody's money.
- */
-const TOOL_STEPS = 8;
 
 /**
  * Build the built-in and remote AG-UI agent map the runtime serves.
@@ -1409,7 +1400,7 @@ function remoteAgentWithStandingRole(
                 unknown
               >,
             },
-            execute: (args) => tool.execute(args),
+            execute: (args, context) => tool.execute(args, context),
           })),
           initiator,
         ).run(prepared, next);

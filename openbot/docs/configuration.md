@@ -36,9 +36,9 @@ token and the agent returns HTTP 401. Restart the API after changing this settin
 
 ## General variables
 
-`VITE_PRIMARY_BOT_ID` optionally selects the Bot used by the Chat, Tasks and Make tabs for this
-deployment. Set it to an existing Bot id and rebuild the app. It selects only from the current
-user's accessible Bots; an unset, missing or inaccessible id keeps the existing fallback.
+The left menu lists the current person's available Bots. Their explicit selection is used by Chat,
+Tasks and Make. If no Bot is selected or available, Chat opens the selection and creation dialog.
+There is no environment, tenant, harness or first-row fallback, and opening Chat starts no model work.
 
 | Variable             | Default                            | Meaning                                                             |
 | -------------------- | ---------------------------------- | ------------------------------------------------------------------- |
@@ -1183,7 +1183,7 @@ Each skill becomes a deployment skill on boot: everybody sees it in the `/` menu
 
 Refs are `serverId/toolName`, the same form a grant is written in. A package may name tools for a connector nobody has added — the ref sits inert until that connector exists, because what a Bot is offered is always intersected with what it was granted. **Naming a tool here grants nothing.**
 
-One slug is load-bearing. A Bot granted `skill-creator` is offered the four tools that let a conversation end in a saved skill, so a package shipping that skill should also grant it to a Bot in `agents.yaml` — shipping it and granting it to nobody boots a deployment where writing a skill in the composer quietly does nothing. It declares no `tools`, and should not: those four are the app's own rather than a connector's, so they are not `serverId/toolName` refs. See [architecture.md](architecture.md#writing-a-skill-in-a-conversation).
+Create and edit skills through the Skills page, then explicitly grant them to the intended Bots. A skill contains instructions and declared tool references; it does not implicitly register browser authoring tools. See [architecture.md](architecture.md#creating-and-editing-skills).
 
 Slugs are 2 to 40 lowercase letters, digits and hyphens, starting and ending with a letter or digit, the same rule the skills API and the app's form apply. A slug declared twice in `skills.yaml` stops the server. If a package ships a slug somebody in the deployment already wrote a skill under, theirs keeps the name, the package loses that skill, and startup continues.
 

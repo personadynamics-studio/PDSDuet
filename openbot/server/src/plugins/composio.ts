@@ -225,6 +225,7 @@ export type ComposioActions = {
       connectedAccountId?: string;
     },
     args: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
   ): Promise<ComposioResult>;
 };
 
@@ -1577,7 +1578,7 @@ function reportedFailure(
  * classifies a failure twice. See {@link ActionAnswer} for what reading `isError` as a verdict cost.
  */
 export async function callTool(
-  connection: { url: string; actorId?: string; accountId?: string | null },
+  connection: { url: string; actorId?: string; accountId?: string | null; signal?: AbortSignal },
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<McpCallResult> {
@@ -1630,7 +1631,7 @@ export type ActionAnswer = {
  * being sorted into a kind afterwards by matching on the sentence it happens to carry.
  */
 export async function askAction(
-  connection: { url: string; actorId?: string; accountId?: string | null },
+  connection: { url: string; actorId?: string; accountId?: string | null; signal?: AbortSignal },
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<ActionAnswer> {
@@ -1738,8 +1739,10 @@ export async function askAction(
         ...(account === null ? {} : { connectedAccountId: account }),
       },
       rest,
+      { signal: connection.signal },
     );
   } catch (error) {
+    connection.signal?.throwIfAborted();
     /*
      * A SENTENCE THIS DEPLOYMENT AUTHORED BEATS ANYTHING THE VENDOR SAID, and the order was
      * inverted here against the one `routes.ts` uses on the identical class of error.

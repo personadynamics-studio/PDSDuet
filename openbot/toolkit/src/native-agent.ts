@@ -2,16 +2,18 @@ import { AbstractAgent, type BaseEvent, type Message, type RunAgentInput } from 
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { jsonSchema, stepCountIs, streamText, type ModelMessage, type ToolSet } from "ai";
+import { jsonSchema, streamText, type ModelMessage, type ToolExecutionOptions, type ToolSet } from "ai";
 import { Observable } from "rxjs";
+import { type HeadlessToolSuspension, OPENBOT_WAITING_METADATA } from "./headless-tools";
+import { nativeMessageId, type NativeToolExecution } from "./native-approval";
+import type { ApprovalContinuation } from "./continuation";
 
 export type LocalLanguageModel = LanguageModelV3;
 export type NativeAgentConfiguration = {
   model?: string | LanguageModelV3;
   apiKey?: string;
   prompt?: string;
-  tools?: { name: string; description: string; parameters: unknown; execute(args: unknown, context?: { toolCallId?: string; messages?: readonly unknown[] }): Promise<unknown> }[];
-  maxSteps?: number;
+  tools?: { name: string; description: string; parameters: unknown; execute(args: unknown, context: NativeToolExecution): Promise<unknown> }[];
   type?: "custom";
   factory?: () => AsyncGenerator<unknown>;
 };
@@ -60,53 +62,55 @@ function modelMessages(messages: Message[]): ModelMessage[] {
 
 /** Model and tool execution uses the public AI SDK; the host owns storage and run control. */
 export class NativeAgent extends AbstractAgent {
-  private active?: AbortController;
   constructor(private readonly config: NativeAgentConfiguration) { super(); }
   run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable((subscriber) => {
       const controller = new AbortController();
-      this.active = controller;
+      const run: { waiting?: HeadlessToolSuspension } = {};
       const emit = (event: Record<string, unknown>) => subscriber.next(event as BaseEvent);
       const work = async () => {
         if (this.config.factory) { for await (const _ of this.config.factory()) {} return; }
         if (!this.config.model) throw new Error("Model is not configured.");
         emit({ type: "RUN_STARTED", threadId: input.threadId, runId: input.runId });
+        const resumed = (input.resume ?? []).filter((entry)=>!input.messages.some((message)=>message.role==="tool"&&message.toolCallId===entry.interruptId)).map((entry) => ({ id: crypto.randomUUID(), role: "tool" as const, toolCallId: entry.interruptId, content: typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload ?? null) }));
+        const initialMessages = modelMessages([...input.messages, ...resumed]);
         const owned = new Map((this.config.tools ?? []).map((tool) => [tool.name, tool]));
         const definitions = new Map(input.tools.map((tool) => [tool.name, tool]));
         for (const tool of owned.values()) definitions.set(tool.name, { name: tool.name, description: tool.description, parameters: tool.parameters as Record<string, unknown> });
         const tools: ToolSet = {};
         const calls = new Set<string>();
         const ids = new Map<string, string>();
+        let step = -1;
         const startCall = (id: string, name: string) => {
           if (calls.has(id)) return;
           calls.add(id);
-          emit({ type: "TOOL_CALL_START", toolCallId: id, toolCallName: name, parentMessageId: ids.get("message") ?? input.runId });
+          emit({ type: "TOOL_CALL_START", toolCallId: id, toolCallName: name, parentMessageId: nativeMessageId(input.runId, step) });
         };
         for (const tool of definitions.values()) {
           const executor = owned.get(tool.name);
           tools[tool.name] = {
             description: tool.description,
             inputSchema: tool.parameters && typeof tool.parameters === "object" && "safeParse" in tool.parameters ? tool.parameters as any : jsonSchema(tool.parameters as Record<string, any>),
-            ...(executor ? { execute: async (args: unknown, options: { toolCallId: string; messages: ModelMessage[] }) => {
-              return executor.execute(args, options);
+            ...(executor ? { execute: async (args: unknown, options: ToolExecutionOptions) => {
+              return executor.execute(args, { ...options, input, initialMessageCount: initialMessages.length, run });
             } } : {}),
           };
         }
-        const resumed = (input.resume ?? []).filter((entry)=>!input.messages.some((message)=>message.role==="tool"&&message.toolCallId===entry.interruptId)).map((entry) => ({ id: crypto.randomUUID(), role: "tool" as const, toolCallId: entry.interruptId, content: typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload ?? null) }));
         const result = streamText({
           model: resolveLocalModel(this.config.model, this.config.apiKey),
           system: [this.config.prompt, ...input.context.map((entry) => `${entry.description}: ${entry.value}`)].filter(Boolean).join("\n\n"),
-          messages: modelMessages([...input.messages, ...resumed]),
+          messages: initialMessages,
           tools,
-          stopWhen: stepCountIs(this.config.maxSteps ?? 8),
+          stopWhen: () => false,
           abortSignal: controller.signal,
           maxRetries: 0,
           providerOptions: { openai: { store: false } },
         });
         for await (const part of result.fullStream) {
           switch (part.type) {
+            case "start-step": step += 1; break;
             case "text-start": {
-              const id = crypto.randomUUID(); ids.set(part.id, id); ids.set("message", id);
+              const id = nativeMessageId(input.runId, step); ids.set(part.id, id);
               emit({ type: "TEXT_MESSAGE_START", messageId: id, role: "assistant" }); break;
             }
             case "text-delta": emit({ type: "TEXT_MESSAGE_CONTENT", messageId: ids.get(part.id), delta: part.text }); break;
@@ -116,17 +120,26 @@ export class NativeAgent extends AbstractAgent {
               emit({ type: "TOOL_CALL_ARGS", toolCallId: part.toolCallId, delta: JSON.stringify(part.input) });
               emit({ type: "TOOL_CALL_END", toolCallId: part.toolCallId });
               break;
-            case "tool-result": emit({ type: "TOOL_CALL_RESULT", messageId: crypto.randomUUID(), toolCallId: part.toolCallId, role: "tool", content: typeof part.output === "string" ? part.output : JSON.stringify(part.output) }); break;
+            case "tool-result": emit({ type: "TOOL_CALL_RESULT", messageId: `tool-result:${part.toolCallId}`, toolCallId: part.toolCallId, role: "tool", content: typeof part.output === "string" ? part.output : JSON.stringify(part.output) }); break;
             case "tool-error": throw part.error;
             case "error": throw part.error;
           }
         }
         emit({ type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId });
       };
-      void work().then(() => subscriber.complete(), (error) => subscriber.error(error));
-      return () => { controller.abort(); if (this.active === controller) this.active = undefined; };
+      void work().then(() => subscriber.complete(), (error) => {
+        const waiting = run.waiting;
+        if (!waiting) { subscriber.error(error); return; }
+        const continuation = waiting.waiting.continuation as ApprovalContinuation;
+        const id = continuation.toolCallId;
+        emit({ type: "CUSTOM", name: "openbot.headless.waiting", value: { ...waiting.waiting, message: waiting.message } });
+        emit({ type: "RUN_FINISHED", runId: input.runId, threadId: input.threadId, outcome: {
+          type: "interrupt", interrupts: [{ id, toolCallId: id, reason: "human_input", message: waiting.message, metadata: { [OPENBOT_WAITING_METADATA]: waiting.waiting } }],
+        } });
+        subscriber.complete();
+      });
+      return () => controller.abort();
     });
   }
-  abortRun(): void { this.active?.abort(); super.abortRun(); }
   clone(): NativeAgent { return new NativeAgent(this.config); }
 }

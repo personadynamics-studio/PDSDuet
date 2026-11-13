@@ -22,7 +22,7 @@ import {
  * so a brief can only ever contain what this Bot was granted and this person connected.
  */
 
-/** Declared with the frame that asks for it (shared/morning-brief.ts), which names it to the model. */
+/** Shared name of the manually requested mail and calendar tool. */
 export const BRIEF_TOOL = MORNING_BRIEF_TOOL;
 export const GMAIL_SEARCH = "google-workspace/gmail_search_messages";
 export const CALENDAR_LIST = "google-workspace/calendar_list_events";

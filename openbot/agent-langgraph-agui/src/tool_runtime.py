@@ -13,20 +13,27 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 import httpx
-from ag_ui.core import Context, EventType, RunAgentInput, RunErrorEvent, Tool
+from ag_ui.core import Context, CustomEvent, EventType, RunAgentInput, RunErrorEvent, RunFinishedEvent, Tool
 from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.graph import END
 
 from .parallel_tools import ParallelToolAgent
 
 
-@dataclass(frozen=True)
+class ToolWaiting(Exception):
+    def __init__(self, waiting):
+        self.waiting = waiting
+        super().__init__(waiting.get("message", "The tool is waiting for the person."))
+
+
+@dataclass
 class RunTools:
     tools: tuple[Tool, ...] = ()
     context: tuple[Context, ...] = ()
     deployment: frozenset[str] = frozenset()
     assertion: str = field(default="", repr=False)
     connection: dict = field(default_factory=dict, compare=False, repr=False)
+    waiting: ToolWaiting | None = field(default=None, repr=False)
 
 
 _current: ContextVar[RunTools | None] = ContextVar("openbot_run_tools", default=None)
@@ -38,6 +45,28 @@ def current_tools() -> RunTools:
 
 class UnofferedToolError(ValueError):
     pass
+
+
+def _waiting_events(input, waiting):
+    value = waiting.waiting
+    return (
+        CustomEvent(type=EventType.CUSTOM, name="openbot.headless.waiting", value=value),
+        RunFinishedEvent(
+            type=EventType.RUN_FINISHED,
+            thread_id=input.thread_id,
+            run_id=input.run_id,
+            outcome={
+                "type": "interrupt",
+                "interrupts": [{
+                    "id": value["toolCallId"],
+                    "toolCallId": value["toolCallId"],
+                    "reason": "human_input",
+                    "message": str(waiting),
+                    "metadata": {"openbotWaiting": value},
+                }],
+            },
+        ),
+    )
 
 
 class ToolAwareAgent(ParallelToolAgent):
@@ -74,6 +103,10 @@ class ToolAwareAgent(ParallelToolAgent):
                 super().run(input.model_copy(update={"forwarded_props": clean_props}))
             ) as stream:
                 async for event in stream:
+                    if context.waiting and event.type in {EventType.RUN_ERROR, EventType.RUN_FINISHED}:
+                        for waiting_event in _waiting_events(input, context.waiting):
+                            yield waiting_event
+                        return
                     if event.type == EventType.RUN_ERROR and context.connection.get(
                         "authentication_failed"
                     ):
@@ -87,6 +120,10 @@ class ToolAwareAgent(ParallelToolAgent):
                 message="The model requested a tool that was not offered for this run.",
             )
         except Exception:
+            if context.waiting:
+                for waiting_event in _waiting_events(input, context.waiting):
+                    yield waiting_event
+                return
             if not context.connection.get("authentication_failed"):
                 raise
             yield RunErrorEvent(
@@ -192,6 +229,7 @@ async def _call_tool(call, context):
                         "name": call["name"],
                         "args": call["args"],
                         "run": context.assertion,
+                        "toolCallId": call["id"],
                     },
                 )
             if not response.is_success:
@@ -201,6 +239,9 @@ async def _call_tool(call, context):
                     True,
                 )
             body = response.json()
+            if isinstance(body, dict) and isinstance(body.get("waiting"), dict):
+                context.waiting = ToolWaiting(body["waiting"])
+                raise context.waiting
             if not isinstance(body, dict) or not isinstance(body.get("text"), str):
                 return "The tool callback returned no readable result.", True
             return body["text"], False
@@ -225,7 +266,6 @@ async def execute_tools(state):
         raise ValueError(
             "This turn must return to the surface before tools can execute."
         )
-    results = await asyncio.gather(
-        *[_call_tool(call, context) for call in state["messages"][-1].tool_calls]
-    )
-    return {"messages": results}
+    async with asyncio.TaskGroup() as group:
+        tasks = [group.create_task(_call_tool(call, context)) for call in state["messages"][-1].tool_calls]
+    return {"messages": [task.result() for task in tasks]}

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { parse } from "yaml";
 import type { Database } from "./db/client";
 import {
@@ -13,6 +13,7 @@ import {
   pluginGrants,
   skills as skillTable,
   skillTools,
+  workItems,
 } from "./db/schema";
 
 const approvedThemeVariables = new Set([
@@ -801,6 +802,52 @@ export async function synchronizeTenantPackage(
 
     if (!deploymentPackage) {
       throw new Error("Tenant package could not be synchronized");
+    }
+
+    // Retire this package's removed default Bots while keeping their conversations readable.
+    if (tenantPackage.tenantId === "openduet") {
+      const retiredBots = transaction
+        .select({ id: agentTable.id })
+        .from(agentTable)
+        .innerJoin(agentProfiles, eq(agentProfiles.agentId, agentTable.id))
+        .where(and(
+          eq(agentTable.packageId, deploymentPackage.id),
+          inArray(agentTable.id, ["openduet", "your-agent", "picked-harness"]),
+          isNull(agentProfiles.ownerUserId),
+        ));
+      await transaction.delete(pluginGrants).where(or(
+        inArray(pluginGrants.agentId, retiredBots),
+        and(eq(pluginGrants.kind, "bot"), inArray(pluginGrants.ref, retiredBots)),
+      ));
+      await transaction.delete(workItems).where(and(
+        inArray(workItems.kind, ["openduet.first-day", "openduet.morning-brief"]),
+        sql`${workItems.payload}->>'agentId' in (${retiredBots})`,
+      ));
+      const retiredAt = new Date();
+      await transaction.update(agentProfiles)
+        .set({ deletedAt: retiredAt, updatedAt: retiredAt })
+        .where(and(inArray(agentProfiles.agentId, retiredBots), isNull(agentProfiles.deletedAt)));
+      await transaction.update(channelTable)
+        .set({ deletedAt: retiredAt, updatedAt: retiredAt })
+        .where(and(
+          eq(channelTable.packageId, deploymentPackage.id),
+          inArray(channelTable.id, ["openduet", "your-agent", "picked-harness"]),
+          isNull(channelTable.deletedAt),
+        ));
+
+      const retiredSkills = transaction.select({ id: skillTable.id })
+        .from(skillTable)
+        .where(and(
+          inArray(skillTable.slug, ["morning-brief", "first-day", "bot-creator", "skill-creator"]),
+          sql`${skillTable.id} = ${skillTable.slug}`,
+          eq(skillTable.origin, "catalogue"),
+          isNull(skillTable.ownerUserId),
+          isNull(skillTable.installedBy),
+        ));
+      await transaction.delete(pluginGrants).where(and(
+        eq(pluginGrants.kind, "skill"), inArray(pluginGrants.ref, retiredSkills),
+      ));
+      await transaction.delete(skillTable).where(inArray(skillTable.id, retiredSkills));
     }
 
     // Disable only explicitly unconfigured agents still owned by this package. Keep canonical

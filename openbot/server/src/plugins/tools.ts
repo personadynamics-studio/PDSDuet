@@ -293,9 +293,10 @@ export async function grantedTools(options: {
     initiator,
     description: tool.description,
     parameters: parametersFor(tool.inputSchema),
-    execute: async (args: unknown) => {
+    execute: async (args: unknown, context) => {
       try {
         const result = await store.callTool({
+          signal: context?.signal,
           ref: tool.ref,
           // The runtime hands through whatever the model produced. Anything that is not an object
           // is not a set of arguments, and the vendor should be the one to say so.
@@ -312,6 +313,7 @@ export async function grantedTools(options: {
         });
         return vendorAnswer(result);
       } catch (error) {
+        context?.signal?.throwIfAborted();
         if (error instanceof HeadlessToolSuspension) throw error;
         if (
           error instanceof PluginRefusedError ||

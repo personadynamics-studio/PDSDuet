@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../db/client";
 import { workItems } from "../db/schema/work";
+import { RunStoppedError } from "../runtime/thread-store";
 import { ApprovalNotFoundError, ApprovalRefusedError } from "./types";
 
 const questionSchema = z.object({
@@ -119,6 +120,10 @@ export function createApprovalQuestions(
         );
       await authorise(parsed.data);
       return database.transaction(async (tx) => {
+        const source = await tx.execute<{ stopRequested: boolean }>(sql`
+          select stop_requested as "stopRequested" from local_runs where id=${parsed.data.runId} for update`);
+        if (!source[0] || source[0].stopRequested)
+          throw new RunStoppedError("The question's source work was cancelled.");
         const [row] = await tx
           .select()
           .from(workItems)

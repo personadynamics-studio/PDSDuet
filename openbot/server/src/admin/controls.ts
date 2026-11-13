@@ -612,7 +612,7 @@ type HostAccessLike = {
     botId: string;
     kind: string;
     command?: string;
-  }): Promise<unknown>;
+  }, signal?: AbortSignal): Promise<unknown>;
 };
 
 /** Refuse the member's own machine to somebody without "Local computer access", and record commands. */
@@ -641,7 +641,7 @@ export function guardHostAccess<T extends HostAccessLike>(
       throw refuse(capabilityRefusal("localComputer"));
     return requestFolderGrant(input);
   }) as T["requestFolderGrant"];
-  broker.callHost = (async (input: Parameters<T["callHost"]>[0]) => {
+  broker.callHost = (async (input: Parameters<T["callHost"]>[0], signal?: AbortSignal) => {
     if (!(await allowed(input.actorId)))
       throw refuse(capabilityRefusal("localComputer"));
     const controls = enterpriseControls();
@@ -660,7 +660,7 @@ export function guardHostAccess<T extends HostAccessLike>(
         .catch(() => undefined);
     };
     try {
-      const result = await callHost(input);
+      const result = await callHost(input, signal);
       record("allowed");
       return result;
     } catch (error) {

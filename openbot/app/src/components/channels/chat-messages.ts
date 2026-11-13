@@ -1,4 +1,5 @@
 import type { ActivityMessage, Message, ToolCall } from "@ag-ui/core";
+import type { ThreadMessage } from "@openbot/shared/thread-events";
 import { classifyAttachment } from "@/lib/channels/attachments";
 import { asText, REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { readChannelHello } from "@/lib/channels/channel-hello";
@@ -14,6 +15,7 @@ export type VisibleChatItem =
       id: string;
       role: "user" | "assistant";
       text: string;
+      senderBotId?: string;
       /** One accepted reply may open several executions, each retaining its own row ID. */
       taskInput?: { id: string; replay: boolean };
     }
@@ -328,7 +330,7 @@ function isDrawableMessage(message: Readonly<Message>): boolean {
 }
 
 export function toVisibleChatItems(
-  messages: ReadonlyArray<Readonly<Message>>,
+  messages: ReadonlyArray<Readonly<ThreadMessage>>,
 ): VisibleChatItem[] {
   // Gather results first so calls render with their current completion state in the same pass.
   const results = new Map<string, string>();
@@ -364,6 +366,7 @@ export function toVisibleChatItems(
           id: message.id,
           role: "assistant",
           text: message.content,
+          senderBotId: message.senderBotId,
         });
       }
       // A `toolCalls` that is not a list is not iterable, and `for...of` reports that by throwing.

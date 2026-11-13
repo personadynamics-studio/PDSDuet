@@ -107,6 +107,7 @@ export type VendorTransport = {
       actorId?: string;
       /** The Bot the run belongs to. A routine runs as its Bot, which is never a name a model supplies. */
       botId?: string;
+      signal?: AbortSignal;
     },
     toolName: string,
     args: Record<string, unknown>,

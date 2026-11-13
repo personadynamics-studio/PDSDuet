@@ -382,7 +382,7 @@ export function createGroupStore(
  */
 export async function groupSourceForRun(
   database: Database,
-  run: { threadId?: string; actorId: string; botId: string; handoff?: unknown },
+  run: { threadId?: string; actorId: string; botId: string },
 ): Promise<{ channelId: string; botId: string } | null> {
   if (!run.threadId) return null;
   const [row] = await database
@@ -408,7 +408,7 @@ export async function groupSourceForRun(
     )
     .limit(1);
   if (!row) return null;
-  return row.botId === run.botId || run.handoff ? row : null;
+  return row.botId === run.botId ? row : null;
 }
 
 /**
@@ -1057,75 +1057,38 @@ export function createGroupConversations(deps: {
         throw error;
       }
     },
-    /**
-     * A `message_bot` answer relayed into a Bot's group thread, shown in the shared transcript in that
-     * Bot's voice (the only voice its thread admits) and naming the Bot that answered. Returns false
-     * for a thread that is not a group's, so the caller can announce it the ordinary way.
-     */
-    async announceHandoff(input: {
-      threadId: string;
-      actorId: string;
-      agentId: string;
-      text: string;
-    }): Promise<boolean> {
+    /** Resolve the existing share decision without publishing outside the handoff transaction. */
+    async prepareHandoff(input: {
+      threadId: string; actorId: string; agentId: string; text: string; messageId: string;
+    }): Promise<Parameters<GroupStore["append"]>[0] | null> {
       const thread = await deps.store.threadRow(input.threadId);
-      if (!thread || thread.ownerUserId !== input.actorId) return false;
-      const bots = await orderedRoster(thread.ownerUserId, thread.channelId);
-      if (!bots?.some((bot) => bot.id === thread.agentId)) return true;
-      const id = `handoff:${createHash("sha256")
-        .update(`${input.threadId}\n${input.agentId}\n${input.text}`)
-        .digest("hex")
-        .slice(0, 32)}`;
+      if (!thread || thread.ownerUserId !== input.actorId) return null;
+      if (!(await orderedRoster(thread.ownerUserId, thread.channelId))) return null;
       const gate = await shareGate({
-        ownerUserId: thread.ownerUserId,
-        channelId: thread.channelId,
-        agentId: thread.agentId,
-        threadId: input.threadId,
-        rowId: id,
-        runId: runIdFor(id),
-        text: input.text,
+        ownerUserId: thread.ownerUserId, channelId: thread.channelId,
+        agentId: input.agentId, threadId: input.threadId, rowId: input.messageId,
+        runId: input.messageId, text: input.text,
       });
-      const relayed = { via: "message_bot", answeredBy: input.agentId };
-      if (gate.status !== "allowed") {
-        await deps.store.append({
-          id,
-          ownerUserId: thread.ownerUserId,
-          channelId: thread.channelId,
-          agentId: thread.agentId,
-          threadId: input.threadId,
-          ...(gate.status === "pending"
-            ? {
-                text: "",
-                status: "waiting",
-                details: { ...relayed, ...gate.details },
-              }
-            : { text: gate.message, status: "failed", details: relayed }),
-        });
-        return true;
-      }
-      const added = await deps.store.append({
-        id,
-        ownerUserId: thread.ownerUserId,
-        channelId: thread.channelId,
-        agentId: thread.agentId,
-        threadId: input.threadId,
-        text: input.text,
-        details: relayed,
-      });
-      if (added)
-        await deps.activity?.(
-          {
-            ownerUserId: thread.ownerUserId,
-            channelId: thread.channelId,
-            messageId: id,
-            agentIds: [thread.agentId],
-            text: input.text,
-          },
-          thread.agentId,
-          input.text,
-          `group:${id}`,
-        );
-      return true;
+      const row = {
+        id: input.messageId, ownerUserId: thread.ownerUserId, channelId: thread.channelId,
+        agentId: input.agentId, threadId: input.threadId,
+      };
+      if (gate.status === "pending") return {
+        ...row, text: "", status: "waiting",
+        details: { via: "message_bot", ...gate.details },
+      };
+      if (gate.status === "denied") return {
+        ...row, text: gate.message, status: "failed", details: { via: "message_bot" },
+      };
+      return { ...row, text: input.text, details: { via: "message_bot" } };
+    },
+    /** The message is already committed; this only announces its activity. */
+    async announceHandoff(row: Parameters<GroupStore["append"]>[0]): Promise<void> {
+      if (row.status && row.status !== "completed") return;
+      await deps.activity?.({
+        ownerUserId: row.ownerUserId, channelId: row.channelId, messageId: row.id,
+        agentIds: [row.agentId], text: row.text,
+      }, row.agentId, row.text, row.id);
     },
     async list(owner: string, channel: string) {
       const bots = await roster(owner, channel);
@@ -1147,9 +1110,6 @@ export function createGroupConversations(deps: {
           message.status === "running" &&
           message.ownerUserId !== owner
             ? { text: "" }
-            : {}),
-          ...(typeof details.answeredBy === "string"
-            ? { answeredBy: details.answeredBy }
             : {}),
           ...(details.consent && typeof details.consent === "object"
             ? { consent: details.consent }

@@ -98,7 +98,9 @@ export function callMethods(context: StoreContext) {
        * reaching its owner's account (team-bots/team-bots.ts). Every gate is still the asker's.
        */
       credentialActorId?: string;
+      signal?: AbortSignal;
     }): Promise<{ text: string; isError: boolean }> {
+      input.signal?.throwIfAborted();
       const [serverId, ...rest] = input.ref.split("/");
       const toolName = rest.join("/");
       if (!serverId || !toolName) {
@@ -457,7 +459,7 @@ export function callMethods(context: StoreContext) {
         continuation: currentApprovalContext(),
         // Asked once: the share check just put this exact send in front of the person.
         ...(personAnswered ? { personAnswered } : {}),
-      });
+      }, { signal: input.signal });
       if (approval && "replay" in approval)
         return approval.replay as { text: string; isError: boolean };
 
@@ -487,6 +489,7 @@ export function callMethods(context: StoreContext) {
           injectedVendor ?? transportFor(access.transport).callTool;
         const result = await vendor(
           {
+            signal: input.signal,
             url: effectiveUrl(row, entry),
             token,
             tokenHeader: tokenHeaderFor(entry),
@@ -542,6 +545,7 @@ export function callMethods(context: StoreContext) {
          */
         if (!result.accountGone) return answer;
       } catch (error) {
+        input.signal?.throwIfAborted();
         /*
          * Recorded, then rethrown unchanged. The caller's behaviour is unaffected — what changes is
          * that the failure now exists in the trail, which is where somebody asking "is this connector

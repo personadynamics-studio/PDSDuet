@@ -1,12 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { primaryBot } from "@/lib/agents/primary-bot";
-import { agentListQueryOptions } from "@/lib/agents/queries";
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 import { type DuetChannel, duetChannelListQueryOptions } from "./queries";
 
 /** The person's channels, for the Bot the tabs are about. Disabled until that Bot is known. */
 export function useDuetChannels() {
-  const agents = useQuery(agentListQueryOptions());
-  const bot = primaryBot(agents.data);
+  const { bot, agents } = useSelectedBot();
   const list = useQuery({
     ...duetChannelListQueryOptions(bot?.id ?? ""),
     enabled: Boolean(bot),

@@ -18,11 +18,16 @@ export const serverTurnAdmission: TurnAdmission = async ({
   const admitted = await guardBotTurn({ ownerUserId, agentId, signal });
   // "Use Bots" and the model allowlist, which a browser run meets at the HTTP gate. No headless turn
   // crosses that gate, so every one of them meets the same check here instead.
-  const refused = await headlessTurnRefusal({ ownerUserId, agentId });
-  if (refused) {
-    const error = new Error(refused);
-    error.name = "CapabilityRefusedError";
+  try {
+    const refused = await headlessTurnRefusal({ ownerUserId, agentId });
+    if (refused) {
+      const error = new Error(refused);
+      error.name = "CapabilityRefusedError";
+      throw error;
+    }
+    return admitted;
+  } catch (error) {
+    admitted.dispose();
     throw error;
   }
-  return admitted;
 };

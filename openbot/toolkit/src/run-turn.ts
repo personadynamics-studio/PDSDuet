@@ -3,7 +3,7 @@ import { NOT_SHOWN } from "@openbot/shared/component-markers";
 import { frameFiring } from "@openbot/shared/routine-firing";
 import type { ApprovalContinuation } from "./continuation";
 import { HeadlessToolsMiddleware, HeadlessToolSuspension, OPENBOT_WAITING_METADATA, type HeadlessTool, type HeadlessWaiting } from "./headless-tools";
-import { sanitizeSeededHistory } from "./history-sanitize";
+import { mergeContinuationHistory, sanitizeSeededHistory } from "./history-sanitize";
 import type { AuditInitiator } from "./initiator";
 import { ThreadLockBusyError } from "./lease";
 import type { ComponentCatalog, TurnAdmission } from "./ports";
@@ -27,6 +27,7 @@ export type TurnRunner = (input: {
   systemMessages?: Extract<Message, { role: "system" }>[];
   /** Durable inbound delivery id; reused by lock, runner and emitted events. */
   runId?: string;
+  parentRunId?: string;
   /** How deep in a Bot-to-Bot chain this turn is. Absent is a person's own turn, depth zero. */
   depth?: number;
   /** The reply so far, each time more of it arrives, for a surface that shows a turn in progress. */
@@ -46,7 +47,7 @@ export type ThreadStoreLike = {
   getThreadMessages(input:{threadId:string;userId:string}):Promise<{messages:Message[]}>;
 };
 export type RunnerLike = {
-  run(input:{threadId:string;agent:AbstractAgent;input:RunAgentInput;persistedInputMessages?:Message[]}):{subscribe(observer:{next:(event:BaseEvent)=>void;error:(error:unknown)=>void;complete:()=>void}):unknown};
+  run(input:{threadId:string;agent:AbstractAgent;agentId?:string;input:RunAgentInput;persistedInputMessages?:Message[];parentRunId?:string;signal?:AbortSignal}):{subscribe(observer:{next:(event:BaseEvent)=>void;error:(error:unknown)=>void;complete:()=>void}):unknown};
   stop(input:{threadId:string;runId:string}):Promise<boolean|undefined>;
 };
 export function drawnComponents(
@@ -86,18 +87,19 @@ export function createTurnRunner(options:{
 }):TurnRunner {
   return async(request)=>{
     const {ownerUserId,agentId,threadId,continuation,systemMessages=[]}=request;
-    const signal=await options.admission({ownerUserId,agentId,signal:request.signal});
-    if(signal.aborted)throw new Error('The turn was cancelled.');
+    const admitted=await options.admission({ownerUserId,agentId,signal:request.signal});
+    const {signal}=admitted;
+    try {
+    signal.throwIfAborted();
     if(continuation&&continuation.snapshot.threadId!==threadId)throw new Error('The continuation belongs to another conversation.');
     const initiator=request.initiator??{kind:'routine' as const,id:request.routineId};
     const runId=request.runId??crypto.randomUUID();
     await options.threads.getOrCreateThread({threadId,userId:ownerUserId,agentId});
     const history=(await options.threads.getThreadMessages({threadId,userId:ownerUserId})).messages;
     const historicIds=new Set(history.map((message)=>message.id));
-    const messages:Message[]=continuation?sanitizeSeededHistory([
-      ...continuation.snapshot.messages,
+    const messages:Message[]=continuation?sanitizeSeededHistory(mergeContinuationHistory(history, continuation.snapshot.messages, [
       {id:continuation.messageId,role:'tool',toolCallId:continuation.snapshot.toolCallId,content:continuation.result.content},
-    ]):[
+    ])):[
       ...sanitizeSeededHistory(history),...systemMessages,
       request.userMessage??{id:crypto.randomUUID(),role:'user',content:frameFiring(request.instruction)},
     ];
@@ -118,11 +120,11 @@ export function createTurnRunner(options:{
     let terminal:Error|undefined;
     const text:string[]=[];
     const stop=()=>{stopped=true;void options.runner.stop({threadId,runId});};
-    signal.addEventListener('abort',stop,{once:true});
     const deadline=setTimeout(stop,options.turnTimeoutMs??180_000);deadline.unref?.();
     try{
+      signal.throwIfAborted();
       await new Promise<void>((resolve,reject)=>{
-        options.runner.run({threadId,agent,input,persistedInputMessages:messages.filter((message)=>!historicIds.has(message.id))}).subscribe({
+        options.runner.run({threadId,agent,agentId,input,signal,parentRunId:request.parentRunId??continuation?.snapshot.runId,persistedInputMessages:messages.filter((message)=>!historicIds.has(message.id))}).subscribe({
           next:(event)=>{
             if(event.type==='TEXT_MESSAGE_CONTENT'){text.push(String(event.delta??''));request.onText?.(text.join(''));}
             if(event.type==='CUSTOM'&&event.name==='openbot.headless.waiting'){const value=event.value as HeadlessWaiting&{message?:string};waiting=new HeadlessToolSuspension(value.message??'The turn is waiting for human input.',value);}
@@ -131,6 +133,11 @@ export function createTurnRunner(options:{
               if(interrupt){const value=interrupt.metadata?.[OPENBOT_WAITING_METADATA] as HeadlessWaiting&{message?:string};waiting=new HeadlessToolSuspension(value.message??'The turn is waiting for human input.',value);}
             }
             if(event.type==='RUN_ERROR')terminal=new Error(String(event.message??'The turn failed.'));
+            if(event.type==='RUN_FINISHED'&&(event as BaseEvent&{status?:string}).status==='stopped'){
+              terminal=new Error('The work was cancelled.');terminal.name='RunStoppedError';
+            }
+            if(event.type==='RUN_FINISHED'&&['failed','interrupted'].includes((event as BaseEvent&{status?:string}).status??''))
+              terminal=new Error((event as BaseEvent&{error?:string}).error??'The turn did not complete.');
           },error:reject,complete:resolve,
         });
       });
@@ -143,6 +150,7 @@ export function createTurnRunner(options:{
     }catch(error){
       if(error&&typeof error==='object'&&'status' in error&&error.status===409)throw new ThreadLockBusyError(error);
       throw error;
-    }finally{clearTimeout(deadline);signal.removeEventListener('abort',stop);}
+    }finally{clearTimeout(deadline);}
+    } finally { admitted.dispose(); }
   };
 }

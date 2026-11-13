@@ -213,6 +213,7 @@ export async function reviewAction(input: {
   request: string;
   rule?: { behaviour: RuleBehaviour; layer: string };
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<ReviewVerdict> {
   const closed = (reason: string): ReviewVerdict => ({
     verdict: "needs_approval",
@@ -258,7 +259,9 @@ export async function reviewAction(input: {
   try {
     const text = await input.model(
       prompt,
-      AbortSignal.timeout(input.timeoutMs ?? 15_000),
+      input.signal
+        ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 15_000)])
+        : AbortSignal.timeout(input.timeoutMs ?? 15_000),
     );
     const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
     const parsed = verdictSchema.safeParse(JSON.parse(json));
@@ -266,6 +269,7 @@ export async function reviewAction(input: {
       return closed("The reviewer's answer was not a valid verdict.");
     return parsed.data;
   } catch (error) {
+    input.signal?.throwIfAborted();
     return closed(
       `The reviewer could not be reached (${error instanceof Error ? error.message : String(error)}), so this needs approval.`,
     );
@@ -285,7 +289,9 @@ export async function decideAction(input: {
   autoReview: boolean;
   askBeforeChanges: boolean;
   model?: ReviewModel;
+  signal?: AbortSignal;
 }): Promise<ApprovalPolicyOutcome> {
+  input.signal?.throwIfAborted();
   const { candidate } = input;
   const safety = safetyRequirement(candidate);
   if (safety)
@@ -317,6 +323,7 @@ export async function decideAction(input: {
     matched?.rule.behaviour === "pre_approved"
       ? await reviewAction({
           model: input.model,
+          signal: input.signal,
           candidate,
           request: requestOf(input.messages),
           ...(matched

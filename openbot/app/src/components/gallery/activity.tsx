@@ -76,6 +76,7 @@ export function ActivityReportCard({
   useEffect(() => {
     // Nothing to read until the arguments have finished streaming in.
     if (!functionName) return;
+    if (!botId) { setState({ status: "refused", reason: "請先選擇機械人。" }); return; }
     let current = true;
 
     void callComponentFunction(

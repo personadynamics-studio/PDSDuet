@@ -227,6 +227,7 @@ type Connection = {
   token?: string;
   /** The header the token goes in, sent as stored, when the vendor does not read `Authorization`. */
   tokenHeader?: string;
+  signal?: AbortSignal;
 };
 
 /**
@@ -357,13 +358,14 @@ async function withClient<T>(
   use: (client: Client) => Promise<T>,
 ): Promise<T> {
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
-    requestInit: connection.token
-      ? {
+    requestInit: {
+      signal: connection.signal,
+      ...(connection.token ? {
           headers: connection.tokenHeader
             ? { [connection.tokenHeader]: connection.token.trim() }
             : { Authorization: authorizationHeader(connection.token) },
-        }
-      : undefined,
+        } : {}),
+    },
   });
   const client = new Client({ name: "openbot", version: "1.0.0" });
 
@@ -371,6 +373,7 @@ async function withClient<T>(
     await client.connect(transport);
     return await use(client);
   } catch (error) {
+    connection.signal?.throwIfAborted();
     // Rewrapped so a caller never has to care whether the failure came from the transport, the
     // handshake or the call, and so the message that reaches an audit row and an admin page is one
     // sentence rather than a stack.
@@ -471,7 +474,7 @@ export async function callTool(
     const result = await client.callTool(
       { name: toolName, arguments: args },
       undefined,
-      { timeout: CALL_TIMEOUT_MS },
+      { timeout: CALL_TIMEOUT_MS, signal: connection.signal },
     );
 
     const { text, truncated } = resultText(

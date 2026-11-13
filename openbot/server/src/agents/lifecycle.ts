@@ -15,6 +15,7 @@
  * there is nobody who could have paused anything.
  */
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import type { TurnAdmissionScope } from "@openbot/toolkit/ports";
 import type { Database } from "../db/client";
 import { botLifecycle, updateRoutingPreferences } from "../db/schema/lifecycle";
 
@@ -43,16 +44,7 @@ export const UPDATE_TRANSPORTS: readonly UpdateTransport[] = [
   "push",
 ];
 
-type RunningTurn = { controller: AbortController; startedAt: number };
-
-/**
- * How long a turn registered by {@link guardBotTurn} is kept after it started.
- *
- * The turn runner never reports that it finished (the guard is one line at its top), so entries are
- * dropped by age: twice the longest a headless turn may run. Aborting one that already finished is
- * harmless, so erring long costs nothing but a map entry.
- */
-const TURN_RETENTION_MS = 10 * 60_000;
+type RunningTurn = { controller: AbortController };
 /** How often running turns are checked against pauses made on other replicas. */
 const CROSS_REPLICA_CHECK_MS = 5_000;
 /**
@@ -142,21 +134,32 @@ export async function guardBotTurn(input: {
   ownerUserId: string;
   agentId: string;
   signal?: AbortSignal;
-}): Promise<AbortSignal> {
+}): Promise<TurnAdmissionScope> {
   if (await isBotPaused(input.ownerUserId, input.agentId))
     throw new BotPausedError();
   const controller = new AbortController();
   const key = keyOf(input.ownerUserId, input.agentId);
-  const now = Date.now();
   const turns = state.running.get(key) ?? new Set<RunningTurn>();
-  for (const turn of turns)
-    if (now - turn.startedAt > TURN_RETENTION_MS) turns.delete(turn);
-  turns.add({ controller, startedAt: now });
+  const turn = { controller };
+  turns.add(turn);
   state.running.set(key, turns);
   startWatcher();
-  return input.signal
-    ? AbortSignal.any([input.signal, controller.signal])
-    : controller.signal;
+  return {
+    signal: input.signal
+      ? AbortSignal.any([input.signal, controller.signal])
+      : controller.signal,
+    dispose() {
+      turns.delete(turn);
+      if (turns.size === 0 && state.running.get(key) === turns) {
+        state.running.delete(key);
+        state.unreadable.delete(key);
+      }
+      if (state.running.size === 0 && state.watcher) {
+        clearInterval(state.watcher);
+        state.watcher = undefined;
+      }
+    },
+  };
 }
 
 /** Stop every turn this replica is running for this person and Bot. Returns how many. */
@@ -165,7 +168,7 @@ function stopRunningTurns(key: string): number {
   if (!turns) return 0;
   let stopped = 0;
   for (const turn of turns) {
-    if (Date.now() - turn.startedAt <= TURN_RETENTION_MS) stopped += 1;
+    stopped += 1;
     turn.controller.abort(new BotPausedError());
   }
   state.running.delete(key);
@@ -188,15 +191,6 @@ function startWatcher() {
 }
 
 async function checkRunningTurns() {
-  const now = Date.now();
-  for (const [key, turns] of state.running) {
-    for (const turn of turns)
-      if (now - turn.startedAt > TURN_RETENTION_MS) turns.delete(turn);
-    if (turns.size === 0) {
-      state.running.delete(key);
-      state.unreadable.delete(key);
-    }
-  }
   if (state.running.size === 0) {
     if (state.watcher) clearInterval(state.watcher);
     state.watcher = undefined;

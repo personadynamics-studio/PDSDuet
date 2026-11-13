@@ -1,4 +1,5 @@
 import { buildResponsibilityTurn } from "@openbot/shared/responsibility-turn";
+import type { ToolExecutionContext } from "@openbot/toolkit/granted-tool";
 import type { ComponentCatalog } from "@openbot/toolkit/ports";
 import {
   createTurnRunner,
@@ -110,7 +111,7 @@ export function createServerResponsibilityEngine(deps: {
                   description: tool.description,
                   parameters: z.toJSONSchema(tool.parameters),
                 },
-                execute: (args: unknown) => tool.execute(args),
+                execute: (args: unknown, execution: ToolExecutionContext) => tool.execute(args, execution),
               })),
             ];
           },

@@ -4,7 +4,6 @@ import type { DeploymentConfig } from "../config";
 import type { CredentialStatusReader } from "../credentials";
 import type { ModelCheckOutcome } from "../model-availability-check";
 import type { BrokerProvider } from "../plugins/access";
-import type { AppAccessState, Unavailable } from "../plugins/app-access";
 import { GOOGLE_WORKSPACE } from "../plugins/catalogue";
 
 /**
@@ -32,7 +31,6 @@ export const RECHECK_INTERVAL_MS = 10_000;
 export type SetupRowId =
   | "model"
   | "google"
-  | "gmail"
   | "computer"
   | "apps"
   | "chat";
@@ -42,7 +40,6 @@ export type SetupRowId =
  *
  * - `env`: variables to set on the server, by name, and a guide. Only ever sent to an admin.
  * - `page`: a screen in the app that closes it. `path` is in-app, never another origin.
- * - `connect`: the reader connects their own account to this app, through the Connections flow.
  */
 export type SetupFix =
   | {
@@ -52,8 +49,7 @@ export type SetupFix =
       /** A screen that does the same job, where there is one. */
       page?: { label: string; path: string };
     }
-  | { kind: "page"; label: string; path: string; docsUrl?: string }
-  | { kind: "connect"; serverId: string };
+  | { kind: "page"; label: string; path: string; docsUrl?: string };
 
 /**
  * What a row says about its dependency.
@@ -128,13 +124,6 @@ export type SetupFacts = {
     /** An admin has registered the OAuth client it connects people with. */
     client: boolean;
   };
-  /**
-   * Whether the reader can use Gmail and Calendar through the primary Bot: the app-access state
-   * every gate reads, with why it is switched off when it is. Null when the app has no row to ask.
-   */
-  gmail: { state: AppAccessState; unavailable: Unavailable | null } | null;
-  /** The Bot the reader's first day runs on, whose page an admin grants Gmail on. */
-  primaryBot: string;
   /** A Bot computer is configured. Absent, its routes are not mounted at all. */
   computer: boolean;
   /** What the computer check last found, when one is configured. Absent, nobody has asked. */
@@ -227,7 +216,6 @@ export function setupRows(
             docsUrl: `${DOCS}/plugins/google-workspace.md`,
           },
     }),
-    gmailRow(facts, { product, admin, googleReady }),
     deployment({
       id: "computer",
       title: "Bot computer",
@@ -372,78 +360,6 @@ function modelRow(model: SetupFacts["model"], product: string) {
 }
 
 /**
- * The reader's own Gmail and Calendar, through the primary Bot. Theirs to connect, so it is the one
- * row a member can act on, and it only offers Connect once the deployment half underneath it is
- * there. Everything else that stops it working is somebody else's to fix, and the row says whose.
- */
-function gmailRow(
-  facts: SetupFacts,
-  options: { product: string; admin: boolean; googleReady: boolean },
-): SetupRow {
-  const { product, admin, googleReady } = options;
-  const row = {
-    id: "gmail" as const,
-    scope: "person" as const,
-    title: "Your Gmail and Calendar",
-    required: false,
-  };
-  const gap = (detail: string, fix: SetupFix | null = null): SetupRow => ({
-    ...row,
-    status: "needs_setup",
-    ready: false,
-    detail,
-    fix,
-  });
-  const without = `Without it, ${product} can't read your mail or calendar.`;
-  const googleFirst = admin
-    ? `${without} Set up Google apps first.`
-    : `${without} Your admin has to set up Google first.`;
-  const state = facts.gmail?.state ?? "disabled";
-
-  switch (state) {
-    case "ready":
-      return {
-        ...row,
-        status: "ready",
-        ready: true,
-        detail: `${product} can read your mail and calendar.`,
-        fix: null,
-      };
-    case "not_connected":
-    case "reconnect": {
-      if (!googleReady) return gap(googleFirst);
-      const connect: SetupFix = { kind: "connect", serverId: GOOGLE_WORKSPACE };
-      return state === "reconnect"
-        ? gap(
-            "Your connection needs reconnecting. Until then, it can't read your mail or calendar.",
-            connect,
-          )
-        : gap(without, connect);
-    }
-    case "not_granted":
-      return admin
-        ? gap(`${product} hasn't been given Gmail and Calendar yet.`, {
-            kind: "page",
-            label: `${product}'s Gmail and Calendar tools`,
-            path: `/admin/plugins/${GOOGLE_WORKSPACE}/bots/${encodeURIComponent(facts.primaryBot)}`,
-            docsUrl: `${DOCS}/plugins/google-workspace.md`,
-          })
-        : gap(
-            `${product} hasn't been given Gmail and Calendar yet. Your admin has to give it.`,
-          );
-    case "shared_not_connected":
-    case "shared_not_approved":
-      return gap(
-        admin
-          ? `${without} Its shared account needs an admin.`
-          : `${without} Your admin has to set this up.`,
-      );
-    case "disabled":
-      return gap(googleFirst);
-  }
-}
-
-/**
  * The provider's answer about the key in use now.
  *
  * A check about another key says nothing about this one: the stamp names the key the check was
@@ -507,16 +423,6 @@ export async function modelKeySource(
   return (await modelKeyOf(input)).source;
 }
 
-/**
- * The Bot a person's first day and Chat run on: the tenant's own Bot, as the app's `primaryBot`
- * picks it, then the harness picked at start-up, then the first Bot there is.
- */
-export function primaryBotIdOf(agentIds: string[], tenantId: string): string {
-  if (agentIds.includes(tenantId)) return tenantId;
-  if (agentIds.includes("picked-harness")) return "picked-harness";
-  return agentIds[0] ?? tenantId;
-}
-
 /** What the route needs: the product's name, the facts for one reader, and a way to ask again. */
 export type SetupSources = {
   productName: string;
@@ -553,18 +459,7 @@ export function createSetupSources(input: {
   >;
   plugins: {
     listServers: () => Promise<Array<{ id: string; hasCredential: boolean }>>;
-    inspectApp: (input: {
-      app: string;
-      agentId: string;
-      userId: string | null;
-      composioConfigured: boolean;
-    }) => Promise<{
-      access: { state: AppAccessState };
-      unavailable: Unavailable | null;
-    } | null>;
   };
-  /** The Bot the first day runs on. See {@link primaryBotIdOf}. */
-  primaryBot: string;
   computer: boolean;
   apps: { configured: boolean; provider: BrokerProvider };
   chat: boolean;
@@ -586,18 +481,12 @@ export function createSetupSources(input: {
   return {
     productName: input.productName,
     localEvaluation: input.config.singleUser,
-    facts: async (userId) => {
-      const [key, check, servers, gmail] =
+    facts: async () => {
+      const [key, check, servers] =
         await Promise.all([
           modelKeyOf(keyFacts),
           modelCheck,
           input.plugins.listServers(),
-          input.plugins.inspectApp({
-            app: GOOGLE_WORKSPACE,
-            agentId: input.primaryBot,
-            userId,
-            composioConfigured: input.apps.configured,
-          }),
         ]);
       const google = servers.find((server) => server.id === GOOGLE_WORKSPACE);
       return {
@@ -612,10 +501,6 @@ export function createSetupSources(input: {
           added: google !== undefined,
           client: google?.hasCredential === true,
         },
-        gmail: gmail
-          ? { state: gmail.access.state, unavailable: gmail.unavailable }
-          : null,
-        primaryBot: input.primaryBot,
         computer: input.computer,
         computerStatus: input.computer ? "not_checked" : "needs_setup",
         apps: input.apps,

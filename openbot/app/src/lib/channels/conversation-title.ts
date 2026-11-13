@@ -9,8 +9,6 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
 import { readThreadMessages } from "@/lib/chat/thread-messages";
-import { readFirstDay } from "./first-day";
-import { readMorningBrief } from "./morning-brief";
 import { readFiring } from "./routine-firing";
 import { readTaskBrief } from "./task-brief";
 
@@ -51,22 +49,7 @@ function titleText(text: string | null | undefined): string {
   if (hello !== null) return plainText(describeChannelHello(hello));
   const checkIn = readCheckIn(text);
   if (checkIn !== null) return plainText(describeCheckIn(checkIn));
-  // Asked for in the person's place on a later day, so it names nothing: the menu says no title.
-  if (readMorningBrief(text) !== null) return "";
-  return isFirstDayMessage(text)
-    ? "認識你"
-    : plainText(readFiring(text) ?? text);
-}
-
-/** Both title projection and first-person selection recognize the app's opening request. */
-function isFirstDayMessage(text: string): boolean {
-  // The bare form covers conversations created before the first-day frame was introduced.
-  return (
-    readFirstDay(text) !== null ||
-    /^Get to know me\. (?:Look through my recent mail|My Gmail and Google Calendar aren't connected yet)/.test(
-      text,
-    )
-  );
+  return plainText(readFiring(text) ?? text);
 }
 
 /**
@@ -86,10 +69,8 @@ export function firstPersonMessage(
       continue;
     }
     if (readFiring(text) !== null) continue;
-    if (isFirstDayMessage(text)) continue;
     if (readChannelHello(text) !== null) continue;
     if (readCheckIn(text) !== null) continue;
-    if (readMorningBrief(text) !== null) continue;
     if (text.trim()) return text;
   }
   return null;

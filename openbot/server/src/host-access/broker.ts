@@ -186,14 +186,16 @@ export function createHostAccessBroker(
       .map((state) => ({ ...state.operation }));
   }
 
-  function enqueue<T>(operation: HostAccessDesktopOperation): Promise<T> {
+  function enqueue<T>(operation: HostAccessDesktopOperation, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     const expiresAt =
       operation.kind === "cancel" || operation.kind === "stop"
         ? null
         : now() + operationTtlMs;
     const operationWithExpiry =
       expiresAt === null ? operation : { ...operation, expiresAt };
-    return new Promise<T>((resolve, reject) => {
+    let abort: (() => void) | undefined;
+    const pending = new Promise<T>((resolve, reject) => {
       const state: OperationState = {
         operation: operationWithExpiry,
         actorId: operation.actorId,
@@ -216,7 +218,13 @@ export function createHostAccessBroker(
         unrefTimer(state.expiryTimer);
       }
       operations.set(operation.operationId, state);
+      if (signal) {
+        abort = () => failOperation(state, "The work was cancelled.");
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      }
     });
+    return pending.finally(() => { if (abort) signal?.removeEventListener("abort", abort); });
   }
 
   function requireGrant(input: {
@@ -270,7 +278,7 @@ export function createHostAccessBroker(
       content?: string;
       command?: string;
       writable?: boolean;
-    }): Promise<unknown> {
+    }, signal?: AbortSignal): Promise<unknown> {
       expireDesktopLeaseIfNeeded();
       try {
         requireGrant({
@@ -313,7 +321,7 @@ export function createHostAccessBroker(
             relativePath: input.relativePath ?? "",
           },
           continuation: currentApprovalContext(),
-        }));
+        }, { signal }));
       if (approval && "replay" in approval) return approval.replay;
       // The owner may revoke the grant while approval storage was being consulted.
       requireGrant(input);
@@ -328,7 +336,7 @@ export function createHostAccessBroker(
         ...(input.command ? { command: input.command } : {}),
         ...(input.writable === true ? { writable: true } : {}),
         ...(commandPolicy ? { commandPolicy } : {}),
-      });
+      }, signal);
       await approval?.complete(result);
       return result;
     },

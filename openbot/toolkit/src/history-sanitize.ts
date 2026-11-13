@@ -9,6 +9,35 @@
  */
 import type { Message, ToolCall } from "@ag-ui/client";
 
+/** Merge actual calls and decisions into stored history, keeping stored prose authoritative. */
+export function mergeContinuationHistory(
+  history: readonly Message[],
+  snapshot: readonly Message[],
+  answers: readonly Message[] = [],
+): Message[] {
+  const rows = new Map(history.map((message) => [message.id, message]));
+  for (const message of [...snapshot, ...answers]) {
+    const stored = rows.get(message.id);
+    if (stored?.role === "assistant" && message.role === "assistant") {
+      rows.set(message.id, {
+        ...message,
+        ...stored,
+        toolCalls: [...new Map([...(stored.toolCalls ?? []), ...(message.toolCalls ?? [])]
+          .map((call) => [call.id, call])).values()],
+      });
+    } else if (!stored && (message.role === "assistant" || message.role === "tool")) {
+      rows.set(message.id, message);
+    }
+  }
+  const results = new Map([...rows.values()].flatMap((message) =>
+    message.role === "tool" ? [[message.toolCallId, message] as const] : []));
+  return [...rows.values()].flatMap((message) => {
+    if (message.role === "tool") return [];
+    return [message, ...(message.role === "assistant" ? (message.toolCalls ?? [])
+      .flatMap((call) => { const result = results.get(call.id); return result ? [result] : []; }) : [])];
+  });
+}
+
 /** Whether a message said nothing at all — no text, no parts, nothing to show a person. */
 function isSilent(message: Message): boolean {
   const content = (message as { content?: unknown }).content;

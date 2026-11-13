@@ -16,7 +16,7 @@ import type { AuditInitiator } from "../audit";
  * person could have typed. So it is a read in every sense the approval gate cares about, and it
  * never meets the gate at all: it runs in this process and calls nothing, and the gate is only
  * asked about connector calls, the computer, host folders and hand-offs. A background run is not
- * offered it, as it is not offered the brief, because `restrictToolsForRun` keeps that run to the
+ * offered it, because `restrictToolsForRun` keeps that run to the
  * catalogue's reads. Nobody is there to tap.
  */
 
@@ -45,13 +45,6 @@ export const REPLIES_HELD = `${REPLIES_DRAWN_PREFIX} held: they appear under the
 /** Called while the turn waits on the person's approval: the next choice comes after that answer. */
 export const REPLIES_AFTER_APPROVAL =
   "Refused. Ask after the person answers the approval, in your reply once the action is done.";
-/** The first day's own replies are drawn by the app (`FirstDayReplies`), under its answer. */
-export const REPLIES_FIRST_DAY = `Refused. Not on the first day: the app draws this turn's own replies under your answer. Don't call ${REPLIES_TOOL} in this turn.`;
-/**
- * The morning brief nobody typed: its card puts Start on each thing that needs the person, so chips
- * under it would be a second set of answers to a question nobody asked (shared/morning-brief.ts).
- */
-export const REPLIES_MORNING_BRIEF = `Refused. Not in the morning brief: its card already puts Start on each thing that needs the person. Don't call ${REPLIES_TOOL} in this turn.`;
 /**
  * A second set while the first is held for an answer still to come: this one is not drawn, and the
  * answer is still owed. Told "end your turn" here instead, beside the held answer, the model wrote
@@ -67,7 +60,7 @@ export const REPLIES_SHOWN = `${REPLIES_DRAWN_PREFIX} on screen, under your ques
 /** Drawn under words that asked nothing yet. */
 export const REPLIES_SHOWN_ASK = `${REPLIES_DRAWN_PREFIX} on screen. Ask your question now in one short sentence, without listing the replies, then end your turn.`;
 
-/** Held by every Bot, like the brief. It reads nothing and writes nothing. */
+/** Held by every Bot. It reads nothing and writes nothing. */
 export function replyTools(options: {
   initiator: AuditInitiator;
 }): GrantedTool[] {

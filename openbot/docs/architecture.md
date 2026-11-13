@@ -205,63 +205,37 @@ The shipped component data functions read the audit trail: `botActivity` and `re
 
 ## One Bot handing work to another
 
-A Bot can address another Bot, and the addressed one answers for itself rather than the first
-relaying text on its behalf.
+`message_bot` is offered only when a run has a granted, visible Bot to ask. Its schema lists formal
+Bot IDs with names and responsibilities. The desk resolves that ID once and applies the grant,
+sharing permission and configured depth/fan-out ceilings. A model never supplies the actor or source
+conversation.
 
-`message_bot` is offered beside a Bot's granted tools, so which Bots may reach which is an ordinary
-grant: `plugin_grants` with a `bot` kind. A Bot granted nobody is offered nothing.
+Each hop is durable queue work identified by its source run and actual SDK tool-call ID. The local
+runtime owns its execution, cancellation and thread resource; the queue owns only its work claim.
+An already completed execution is read back rather than run again.
 
-What it takes is typed. The asking model names the task, anything that bounds it and what a good
-answer looks like, rather than writing a paragraph. Free text is the commonest way a handoff goes
-quietly wrong: the receiving Bot infers the intent, guesses the constraints, and when it guesses
-wrong it does not fail, it answers something else confidently.
+The answer is written directly into the source conversation as a message with `senderBotId`.
+The answer, any shared group transcript row and the completed queue item commit in one database
+transaction. The original Bot does not run another model turn to paraphrase it. A failure produces
+a truthful delivery result; a cancellation terminates the work rather than entering retry.
 
-Four things are decided by the deployment and never by the model:
+Model context and public conversation messages are separate inputs to persistence. The provider
+history adapter keeps tool calls beside their results and quotes other Bots' words under their
+actual author identity. Internal task envelopes are not inserted into the person's transcript.
 
-- **Who is being addressed**, resolved against the roster the asking person may see. A Bot must not
-  reach a Bot its person cannot, or this is a way around agent visibility. A Bot that does not exist
-  and one that is not theirs to see are refused in the same words, so this cannot enumerate the
-  roster.
-- **Where the answer lands**, from the signed run assertion. Otherwise a Bot could drop a turn into a
-  conversation it was never part of.
-- **Who is asking**, stamped from the row this deployment wrote. A Bot able to write its own
-  attribution could claim to be another one.
-- **How deep the chain is**, also from the assertion, which is what stops A asking B asking C asking
-  A for ever.
+Stopping a run follows its existing parent-run links to delegated executions, pending questions,
+approvals and waiting continuations. The execution owner receives the committed stop notification
+and cancels the same model/tool scope. Viewing the conversation can disconnect independently of
+that execution.
 
-The second Bot runs as the same person, with its own role and its own grants, so it sees what that
-person may see and no more.
+The browser first reads a consistent message snapshot, event cursor and last run outcome, then
+follows persisted events over SSE. Native database notifications wake live viewers; there is no
+250ms database polling loop or three-second full-history refresh. Reconnection resumes from
+`Last-Event-ID`; a stopped or failed outcome remains visible after reopening the conversation.
 
-**The answer lands in that Bot's own conversation with the person.** Not the conversation that asked,
-with the run and its actor recorded in the local database. So the conversation that asked says where the work went, and the one that answers
-moves to the top of the roster with an unread mark. The person gets both halves.
-
-What the answering conversation keeps is one line saying who asked and what for, not the envelope.
-Those are two texts with two readers: the model needs the task, the constraints and the shape of a
-good answer, while a person scrolling needs to know why that Bot suddenly spoke. The asking
-conversation's history is read by the addressed Bot as context and is not repeated into the
-transcript.
-
-**A hop that fails for good is said out loud.** When one runs out of attempts, the asking Bot is sent
-back into the conversation the person is watching to say plainly that nothing came back. Otherwise a
-question handed on and never answered is indistinguishable from a slow one, and the conversation just
-stops.
-
-**A hop is claimed work, not a callback.** It is a row on the same queue the idle-computer culler
-uses: the Bot being addressed is very unlikely to be on the pod that addressed it, and a hop held in
-memory is lost the moment either is rescheduled. Every replica sweeps for hops and the queue decides
-which gets which. The lease is renewed for as long as the run takes, because a run is minutes and a
-lapsed lease hands the same hop to a second replica.
-
-`BOT_HANDOFF_MAX_DEPTH` and `BOT_HANDOFF_MAX_PER_RUN` are the ceilings, and both refuse rather than
-truncate. They are not polish: a hop is a whole agent turn at the other end, several Bots asked in one
-turn cost several full runs, and where each Bot has its own computer a fan-out wakes a machine per
-Bot. `BOT_HANDOFF_MAX_DEPTH=0` switches the capability off, and then no Bot is offered the tool and
-the delivery loop does not run.
-
-Every outcome is in the audit trail: offered, refused with which cap or missing grant stopped it,
-delivered, failed, and retried. The refused row is the one that matters most, because a hop that
-happened is visible in the transcript and one that was refused is invisible everywhere else.
+`BOT_HANDOFF_MAX_DEPTH` and `BOT_HANDOFF_MAX_PER_RUN` remain deployment controls. A zero ceiling
+disables offering the tool. Grants and actor/channel isolation remain enforced at their owning
+boundaries.
 
 ### Asking a person
 
@@ -309,15 +283,11 @@ Every MCP call checks the grant first, then evaluates the same action policy eng
 
 Whether a person can use an app through a Bot is answered once, on the server, from those same facts — the app's row, the Bot's grants, the person's own connection, a Shared app's team account — as one of six states: `ready`, `not_connected`, `reconnect`, `shared_not_connected`, `disabled` or `not_granted` (`server/src/plugins/app-access.ts`). The last three are an administrator's to fix, so a person can file a request (`app_access_requests`) for exactly what the state is missing, and approving one performs it — switching the app on, granting it to the Bot — through the same code paths the admin screens use. See [Composio](plugins/composio.md#what-an-app-is-for-one-person-on-one-bot).
 
-### Writing a skill in a conversation
+### Creating and editing skills
 
-A skill can be written from the composer as well as from `/capabilities/skills`. The deployment ships a skill called `skill-creator` whose instruction is how to interview somebody about the skill they want; a Bot holding it is also offered four tools the app registers — `list_skills`, `read_skill`, `list_skill_tools`, and `save_skill`, which suspends the run on a card showing the command, the title and the whole instruction. Nothing is written until the person presses the button.
-
-The grant is the gate. Those four tools are offered only while the Bot holds `skill-creator`, because four extra tools on every run costs the narrowing above what it exists to buy, and a Bot for looking up transactions has no business drafting skills.
-
-They run in the browser as the signed-in person, through the same `POST /api/plugins/skills` the Skills page uses, so the ownership rules and the audit row are the endpoint's rather than a second copy of them: a person's own slug, an administrator's for the deployment, and a refusal naming the slug otherwise. Written server-side, the tool would have to carry an actor into runs that do not have one — a routine, a Slack thread, a schedule — and the first way that goes wrong is a skill written under the wrong name. Nothing is lost by the restriction, because authoring is an interview and there is nobody to interview where there is no browser.
-
-A saved skill is on no Bot yet. Granting it is the remaining step, and it stays on the Skills page, where a skill somebody wrote can go only on Bots they own.
+Create and edit skills on `/capabilities/skills` through the existing signed-in forms and API.
+A saved skill is granted explicitly to the appropriate Bot. Ownership and tool grants are decided
+by that API; a skill's instructions do not register or grant extra authoring tools.
 
 ### Which tools a run is offered
 
@@ -335,7 +305,7 @@ PostgreSQL holds conversations, messages, tool calls and results, run state, ord
 Runs belong to the backend, so closing a browser view does not cancel them. Clients read the saved transcript and attach to the current run.
 A database lease admits one run per thread; stopping a run addresses its exact run identifier.
 
-Automatic learning, learned-skill delivery and semantic recall have been removed. This version creates fresh local records and contains no import, backfill, dual-write or legacy-data compatibility path.
+Automatic learning, learned-skill delivery and semantic recall have been removed. Removed stock Bots, automatic-opening records and obsolete author metadata are retired explicitly during initialization. Runtime readers use the current message contract without legacy parsers or dual writes.
 
 ## Tenant package and knowledge
 
@@ -373,3 +343,5 @@ Connector credentials are stored through the credential vault and referenced by 
 - `POST /api/model-provider/v1/chat/completions` exists only when `OPENBOT_MODEL_OAUTH_FILE` names a model credential file, which the desktop app sets and nothing else does. It answers a Chat Completions request using a stored Google or xAI OAuth grant. It does not use the session guard: the caller presents a separate local bearer taken from that file and compared in constant time, and the provider's own refresh token never leaves the server. The credential file is refused unless it is a regular file under 64KB with no group or other permission bits, and the upstream host, path and headers are fixed so a caller cannot redirect the request.
 - `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS=true` is for local development only, and a deployment running with `NODE_ENV=production` refuses to start while it is set.
 - Computer tokens and supervisor tokens must be long random values outside local development.
+
+

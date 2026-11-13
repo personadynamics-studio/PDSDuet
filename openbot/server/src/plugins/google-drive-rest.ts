@@ -132,7 +132,7 @@ const TOOLS: readonly McpTool[] = Object.freeze([
   },
 ]);
 
-type Connection = { url: string; token?: string };
+type Connection = { url: string; token?: string; signal?: AbortSignal };
 
 /**
  * No credential is needed to know what this adapter can do, because the answer is in this file.
@@ -175,9 +175,12 @@ async function request(
   try {
     response = await fetch(url, {
       headers: { authorization: `Bearer ${connection.token}` },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: connection.signal
+        ? AbortSignal.any([connection.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    connection.signal?.throwIfAborted();
     return {
       ok: false,
       message:

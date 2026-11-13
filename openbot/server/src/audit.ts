@@ -492,13 +492,15 @@ export const auditEventTypes = [
   /*
    * And what became of one, which is a different question from whether it was accepted.
    *
-   * `delivered` is the other Bot's turn being on record. `failed` is a hop that will be tried again.
+   * `delivered` is the answer committed to its source conversation. `failed` records a final failure;
+   * `cancelled` records work deliberately stopped before delivery.
    * `retried` is the one worth its own name: a hop on its second attempt may already have run that
    * Bot, spent a model call and posted an answer before its owner died, so a person looking at two
    * similar answers can tell a duplicate from a mystery.
    */
   "agent.handoff_delivered",
   "agent.handoff_failed",
+  "agent.handoff_cancelled",
   "agent.handoff_retried",
   /*
    * A Bot asking a person instead.

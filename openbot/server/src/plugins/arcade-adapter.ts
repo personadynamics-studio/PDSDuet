@@ -1517,13 +1517,13 @@ export function createArcadeClient(apiKey: string): {
       );
       return total === undefined ? { items } : { items, total_count: total };
     },
-    execute: async (r) =>
+    execute: async (r, options) =>
       vendorCall(`running ${r.tool_name}`, () =>
         client.tools.execute({
           tool_name: r.tool_name,
           input: r.input,
           user_id: r.user_id,
-        }),
+        }, options),
       ),
   };
   const broker: ConnectedAppBroker = {

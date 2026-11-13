@@ -33,8 +33,6 @@ import { ThreadLockBusyError } from "@openbot/toolkit/lease";
 import type { TurnRunner } from "@openbot/toolkit/run-turn";
 import { z } from "zod";
 import type { AuditInitiator } from "../audit";
-import { FIRST_DAY_KIND } from "../channels/first-day";
-import { MORNING_BRIEF_KIND } from "../channels/morning-brief";
 import { REPLIES_TOOL } from "../openduet/replies";
 import { REFUSAL_MARKER } from "../plugins/tools";
 import type { WorkQueue } from "../work/queue";
@@ -804,92 +802,6 @@ export function createProactiveEngine(deps: ProactiveEngineDeps) {
   }
 
   /*
-   * THE TURNS CHAT ASKS THE BOT TO OPEN WITH, because the person opened it: the first day's
-   * greeting, and each later day's morning brief. One drain for both, because they differ only in
-   * their kind and their run id. Each was claimed and queued in one transaction with the claim
-   * (`firstDay` and `morningBrief` in channels/routes.ts), so it is delivered even if the browser
-   * that asked has gone, and runs as the person's turn in their own conversation through the same
-   * `startTask` every task uses, retried once like a task's.
-   *
-   * THE RUN ID NAMES THE TURN, so a retry, a second replica or a restart lands on the same one: one
-   * greeting per conversation, and one brief per conversation per local date.
-   */
-  const openingSchema = z.object({
-    ownerUserId: z.string(),
-    agentId: z.string(),
-    channelId: z.string(),
-    text: z.string(),
-    /** The person's local date, on a morning brief. */
-    date: z.string().optional(),
-    /** The claim that queued a morning brief, so the same date claimed again runs under new ids. */
-    claim: z.string().optional(),
-  });
-  type Opening = z.infer<typeof openingSchema>;
-  const openings = {
-    [FIRST_DAY_KIND]: {
-      runId: (work: Opening) => `first-day-${work.channelId}`,
-      // The type a log search for a failed greeting already looks for.
-      error: "first-day-greeting-error",
-    },
-    [MORNING_BRIEF_KIND]: {
-      // An item queued before claims carried a token has none, and keeps the run id it had.
-      runId: (work: Opening) =>
-        `morning-brief-${work.channelId}-${work.date}${work.claim ? `-${work.claim}` : ""}`,
-      error: "morning-brief-error",
-    },
-  } as const;
-  type OpeningKind = keyof typeof openings;
-
-  function drainOpening(kind: OpeningKind) {
-    return drain(
-      kind,
-      async (payload, signal, attempt) => {
-        const work = openingSchema.parse(payload);
-        const scope = await deps.resolveScope(
-          work.ownerUserId,
-          work.channelId,
-          work.agentId,
-        );
-        if (!scope)
-          throw new ProactiveRefusedError(
-            "This conversation is no longer available.",
-          );
-        await deps.startTask(scope, {
-          runId: openings[kind].runId(work),
-          text: work.text,
-          signal,
-          final: attempt >= TASK_RUNS,
-        });
-      },
-      {
-        leaseMs: TASK_LEASE_MS,
-        maxAttempts: TASK_RUNS,
-        retryMs: TASK_RETRY_MS,
-        deferBusy: true,
-        onRetry: () =>
-          track(Bun.sleep(TASK_RETRY_MS).then(() => startOpening(kind))),
-      },
-    );
-  }
-
-  function startOpening(kind: OpeningKind) {
-    track(
-      drainOpening(kind)
-        .then((ran) => {
-          if (ran) startOpening(kind);
-        })
-        .catch((error: unknown) => {
-          console.error(
-            JSON.stringify({
-              type: openings[kind].error,
-              error: error instanceof Error ? error.name : "UnknownError",
-            }),
-          );
-        }),
-    );
-  }
-
-  /*
    * A task starts now, not at the next sweep a minute away: the person was just told "On it". Each
    * start claims one queued turn, so tasks started together run side by side, one per start, and
    * the sweep stays the backstop for any a crash left behind.
@@ -918,10 +830,6 @@ export function createProactiveEngine(deps: ProactiveEngineDeps) {
   }
 
   return {
-    /** Runs a first-day greeting queued just now, rather than at the next sweep. */
-    startFirstDay: () => startOpening(FIRST_DAY_KIND),
-    /** Runs a morning brief queued just now, rather than at the next sweep. */
-    startMorningBrief: () => startOpening(MORNING_BRIEF_KIND),
     researchInstruction,
     /** The headless tools for one proactive turn; empty for any other initiator. */
     async toolsForTurn(input: {
@@ -1178,8 +1086,7 @@ export function createProactiveEngine(deps: ProactiveEngineDeps) {
       while (kicked.size > 0) await Promise.allSettled([...kicked]);
     },
     /**
-     * One scheduling pass: offer what is due, then run at most one research turn, one task, one
-     * first-day greeting and one morning brief.
+     * One scheduling pass: offer what is due, then run one research turn and one task.
      */
     async sweep() {
       for (const setting of await deps.store.claimDue()) {
@@ -1192,8 +1099,7 @@ export function createProactiveEngine(deps: ProactiveEngineDeps) {
       }
       /*
        * Side by side, so a research run that throws or takes its ten minutes never holds back a
-       * task's turn or an opening, for which this is the only path a turn cut off by a restart is
-       * retried by.
+       * task's turn. This also retries a task interrupted by a restart.
        */
       const outcomes = await Promise.allSettled([
         drain(PROACTIVE_RUN_KIND, async (payload, signal) => {
@@ -1201,8 +1107,6 @@ export function createProactiveEngine(deps: ProactiveEngineDeps) {
           await run(settingId, runId, signal);
         }),
         drainTask(),
-        drainOpening(FIRST_DAY_KIND),
-        drainOpening(MORNING_BRIEF_KIND),
       ]);
       for (const outcome of outcomes)
         if (outcome.status === "rejected") throw outcome.reason;

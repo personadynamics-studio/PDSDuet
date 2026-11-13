@@ -85,7 +85,7 @@ type HandoffPayload = {
   task?: string;
   toName?: string;
   fromName?: string;
-  answerIn?: string;
+  runId?: string;
 };
 
 type QuestionPayload = {
@@ -99,7 +99,10 @@ type QuestionPayload = {
 
 export type ActivityStore = ReturnType<typeof createActivityStore>;
 
-export function createActivityStore(database: Database) {
+export function createActivityStore(
+  database: Database,
+  stopRun: (input: { threadId: string; runId: string }) => Promise<unknown>,
+) {
   /** The channel a thread is shown in, for the items that know only their thread. */
   async function channelsForThreads(
     threadIds: string[],
@@ -121,8 +124,6 @@ export function createActivityStore(database: Database) {
       eq(workItems.kind, HANDOFF_KIND),
       sql`${workItems.payload}->>'actorId' = ${ownerUserId}`,
       sql`(${workItems.payload}->>'fromBotId' = ${agentId} or ${workItems.payload}->>'toBotId' = ${agentId})`,
-      // Forward hops only: a relay or a failure notice is the tail of a hop, not a task of its own.
-      sql`${workItems.payload}->>'answerIn' is null`,
     );
 
   return {
@@ -284,7 +285,7 @@ export function createActivityStore(database: Database) {
           status: hop.finishedAt
             ? hop.lastError === "Stopped by the person"
               ? "stopped"
-              : "delivered"
+              : hop.lastError ? "failed" : "delivered"
             : gaveUp
               ? "failed"
               : running
@@ -420,8 +421,7 @@ export function createActivityStore(database: Database) {
     /**
      * Stop a delegated task that has not finished, on this person's behalf.
      *
-     * Marked finished with a reason, which the hop runner reads as "no longer mine": a queued hop is
-     * never claimed, and one being delivered has its relay dropped because `finish` answers false.
+     * End queued work and stop its actual execution through the runtime's cancellation entry.
      * Returns what was stopped, or null when there was nothing of theirs to stop.
      */
     async stopHandoff(
@@ -447,6 +447,7 @@ export function createActivityStore(database: Database) {
         )
         .returning({ key: workItems.key, payload: workItems.payload });
       if (!row) return null;
+      await stopRun({ threadId: key, runId: key });
       return {
         key: row.key,
         toBotId: (row.payload as HandoffPayload).toBotId ?? null,
@@ -513,7 +514,6 @@ export function createActivityStore(database: Database) {
             isNull(workItems.finishedAt),
             gte(workItems.attempts, DEFAULT_MAX_ATTEMPTS),
             sql`${workItems.payload}->>'actorId' = ${ownerUserId}`,
-            sql`${workItems.payload}->>'answerIn' is null`,
           ),
         )
         .groupBy(sql`${workItems.payload}->>'fromBotId'`);
