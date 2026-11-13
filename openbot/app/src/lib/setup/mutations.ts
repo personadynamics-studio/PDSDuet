@@ -3,7 +3,7 @@ import { client } from "@/lib/client";
 import { type SetupChecklist, setupKeys } from "./queries";
 
 /**
- * "Check again": the server asks Intelligence and the model provider again, then answers the
+ * "Check again": the server asks the model provider again, then answers the
  * checklist, which replaces the one on screen. Asking them is the server's job, and it holds the
  * keys; the browser only says when.
  */

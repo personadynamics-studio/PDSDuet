@@ -21,7 +21,6 @@ import {
 } from "@/lib/setup/queries";
 
 const ICONS: Record<SetupRowId, DuetIconName> = {
-  intelligence: "bulb",
   model: "waveform",
   google: "lock",
   gmail: "mail",
@@ -68,7 +67,7 @@ export function SetupChecklist({
   });
 
   /*
-   * Check again asks the server to ask Intelligence and the model provider again, which a plain
+   * Check again asks the server to ask the model provider again, which a plain
    * refetch would not: those two answers are kept from the last time they were asked. A checklist
    * that could not be read at all is read again first.
    */

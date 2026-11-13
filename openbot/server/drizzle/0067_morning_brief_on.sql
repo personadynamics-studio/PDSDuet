@@ -1,1 +1,0 @@
-ALTER TABLE "channels" ADD COLUMN "morning_brief_on" text;

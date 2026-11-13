@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 import { AttentionNotifier } from "@/components/bot-profile/attention";
-import { SelfHostBanner } from "@/components/layout/self-host-banner";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
 import { useDuetChannels } from "@/lib/duet-channels/use-channel";
 import { cn } from "@/lib/utils";
@@ -77,7 +76,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="duet-touch flex h-svh flex-col overflow-hidden bg-duet-surface">
         <AttentionNotifier />
         <FinishedForYou />
-        <SelfHostBanner />
         {tab === "chat" && mainChat ? (
           <ChatWorkspace bot={bot}>
             {(computerAction) => renderTab(tab, computerAction)}

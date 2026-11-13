@@ -1,19 +1,14 @@
 # Deployment
 
-OpenBot ships as one container. It carries the app, the API that serves it, and the browser the Bots
+PDSDuet is deployed from this source tree or an explicitly supplied local bundle. It carries the app, the API that serves it, and the browser the Bots
 drive, and it can carry its own PostgreSQL as well. It does what it does on a laptop.
 
+Build the application image from this checkout and use the image you built or published yourself.
+No upstream OpenBot image or downloadable PDSDuet release is assumed.
+
 ```sh
-# Every release publishes this image, so a deployment needs no clone and no build.
-# `latest` is the most recent; a version tag such as `:v0.0.9` pins one.
-image=ghcr.io/copilotkit/openbot:latest
-
-# A database you already run.
-docker run -p 3001:3001 --env-file .env "$image"
-
-# Or one inside the container. Nothing else to provision.
-docker run -p 3001:3001 --env-file .env \
-  -e EMBEDDED_POSTGRES=on -v openbot-data:/var/lib/postgresql "$image"
+docker build -t pdsduet .
+docker run -p 127.0.0.1:3001:3001 --env-file .env pdsduet
 ```
 
 **With `OPENBOT_SINGLE_USER=true`, publish on loopback: `-p 127.0.0.1:3001:3001`.** The image
@@ -21,9 +16,7 @@ listens on every interface inside the container (`OPENBOT_HOST=0.0.0.0`), so wha
 reach it is the address `-p` publishes on, and `-p 3001:3001` publishes on every address this
 machine has. With no sign-in, everybody who reaches that port is the administrator.
 
-`docker build -t openbot .` from a clone produces the same thing, for anyone deploying a tree of
-their own. What a release publishes is digest-pinned in its `container-images.json`, and deploying
-those digests rather than a moving tag is what [releasing.md](releasing.md) recommends.
+A desktop bundle must already contain the application source and a `container-images.json` naming its own images. The desktop shell does not download or replace the bundle with an upstream release.
 
 ## What is in the image, and what is not
 
@@ -32,7 +25,7 @@ the container and is deliberately not published: it holds real logins and its on
 process beside it.
 
 **PostgreSQL, if you ask for it.** `EMBEDDED_POSTGRES=on` starts one inside the container, creates
-the database and the `vector` extension the first time, and runs the migrations on every start. It
+the local database on first setup. It
 listens on loopback only and is never published, so there is no password to manage.
 
 Give it a volume at `/var/lib/postgresql` — the parent, not the data directory itself. Without one,
@@ -41,13 +34,11 @@ a redeploy takes the audit trail with it, and the audit trail is the product.
 **Mount the parent, not `/var/lib/postgresql/data`.** On any platform whose volume is an ext4 mount,
 and that is most of them, the mount arrives holding a `lost+found` directory. `initdb` will not
 initialise into a directory that has anything in it, so mounting it directly on the data directory
-leaves the cluster uncreated — and because `api` waits on `postgres` and `migrate`, the container
+leaves the cluster uncreated — and because `api` waits on `postgres` and `initialize`, the container
 starts, the platform reports the deploy a success, and the URL serves a 502. Mounting the parent
 leaves `data` as an ordinary subdirectory, which is what PostgreSQL asks for. A Docker named volume
 works either way; a platform volume does not. Platforms that offer no persistent volume are the ones to
-point at a managed database instead: set `DATABASE_URL` and leave `EMBEDDED_POSTGRES` off. The
-`vector` extension must be enabled there; RDS, Cloud SQL and Azure Database all support it, none
-enable it for you.
+point at a managed database instead: set `DATABASE_URL` and leave `EMBEDDED_POSTGRES` off. 
 
 **Not in it:**
 
@@ -64,10 +55,10 @@ the Helm chart's CronJob runs from this same image. So a one-container deploymen
 outside the container to run it on a schedule — an external cron, a platform scheduled job, or a
 second container of this image started with `--entrypoint sh` (without it the command arrives as a
 `CMD`, and this image's entrypoint boots a whole second server before it runs one; see
-[Migrations](#migrations)) — with `SERVER_INTERNAL_URL` and
+[Database initialization](#database-initialization)) — with `SERVER_INTERNAL_URL` and
 `WORKER_SHARED_SECRET` set **on top of this server's whole environment**, not instead of it. That
 sweep builds the same configuration the API server does before it looks for a due routine, so it
-refuses to start without the encryption key, the Intelligence values and an identity provider,
+refuses to start without the encryption key and an identity provider,
 exactly as the server does: give it the same env file and add those two. Until something does, a
 routine is stored, its next run time is computed, the Routines page shows it, and it never fires.
 See [routines.md](routines.md).
@@ -81,7 +72,7 @@ attachments older than 24 hours — the window is the script's one positional ar
 of an hour. It needs only `DATABASE_URL` — no encryption key, no identity provider, nothing else
 this image is configured with — so unlike the routines sweep above, an external cron can run it
 with one variable set. A second container of this image still needs `--entrypoint sh`, for the
-reason under [Migrations](#migrations).
+reason under [Database initialization](#database-initialization).
 
 Until something does, abandoned uploads accumulate in `attachments` up to a ceiling that is one
 person's: **32 unsent files each**, counted across every channel and every composer session at once
@@ -120,12 +111,10 @@ and the fix would not be available.
 
 | Variable | |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL with the `vector` extension. Not needed with `EMBEDDED_POSTGRES=on` |
+| `DATABASE_URL` | PostgreSQL. Not needed with `EMBEDDED_POSTGRES=on` |
 | an identity provider | `GOOGLE_OAUTH_*`, `MICROSOFT_OAUTH_*` or `OKTA_OAUTH_*`, with `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET` and `INITIAL_ADMIN_EMAILS`. See the README |
 | `EMBEDDED_POSTGRES` | `on` to run the database inside the container. Off by default |
 | `KEY_ENCRYPTION_KEY` | base64 32 bytes. `openssl rand -base64 32`. The example key is refused in production |
-| `INTELLIGENCE_API_URL`, `INTELLIGENCE_GATEWAY_WS_URL`, `INTELLIGENCE_API_KEY` | CopilotKit Intelligence. A free plan is available and it can be self-hosted |
-| `COPILOTKIT_LICENSE_TOKEN` | optional. Managed Intelligence issues none; set it for a self-hosted Intelligence, which needs the same licence on its own deployment too |
 | a model key | `OPENAI_API_KEY`, or the provider you configured |
 
 `COMPUTER_TOKEN` is generated at start if you do not set one. Both processes that need it are inside
@@ -155,56 +144,13 @@ secure context, which removes a set of browser APIs that are present on `http://
 never missing on a laptop. The app does not depend on any of them, but sign-in cookies still want
 `Secure`, and every platform below terminates TLS for you.
 
-## Migrations
+## Database initialization
 
-With `EMBEDDED_POSTGRES=on` they run at start and there is nothing to do. There is exactly one
-process and no deploy pipeline, so the alternative would be a runbook.
+The server image includes `server/schema.sql` and `server/scripts/initialize.ts`. Run the initializer once against the empty database for this version. The local Compose service is named `initialize`; the Helm job is controlled by `initialization.enabled`; the embedded-database image uses the s6 `initialize` step.
 
-With an external database, they are a release step, not a start step. Two replicas starting together
-would race, and a failed migration should stop a deploy rather than leave a half-migrated database
-serving traffic.
+This initializer creates the fresh application schema. It contains no old-data import, backfill, incremental migration chain or compatibility conversion. Existing application records are outside this deployment path.
 
-```sh
-docker run --rm --env-file .env --entrypoint sh openbot \
-  -c "cd /app/server && bun scripts/migrate.ts"
-```
-
-**`--entrypoint sh`, and it is the load-bearing part of that command.** This image's entrypoint is
-`/init`, which is s6's, and anything after the image name is a `CMD` — which s6 runs *after* it has
-started everything in the image. Without the override, `docker run … openbot sh -c "… migrate.ts"`
-brings up the API and Chromium against the database you have not migrated yet, and only then
-migrates it: a second server on an unmigrated schema, which is the race this whole section exists to
-avoid, in the one command meant to avoid it. Replacing the entrypoint runs the migration and nothing
-else. The Helm chart's migration Job is the same thing said in Kubernetes' terms — it sets
-`command:`, which overrides an image's entrypoint rather than appending to it — which is why that
-path was never wrong and this one was.
-
-`scripts/migrate.ts`, not `drizzle-kit migrate`. The CLI is a development dependency and this image
-is built with `bun install --production`, so it is not in there; it also needs esbuild to read its
-TypeScript config. Asked to migrate here it exits 1 without saying why, and the deployment comes up
-against an empty database. The script uses the migrator inside `drizzle-orm`, which is a runtime
-dependency, and keeps the same journal, so a database migrated by either is migrated. It is what
-this image's own start-up path and the Helm chart's migration Job both run.
-
-**If a migration run refuses with "the migrator only runs migrations stamped after the row it
-reads"**, this database has recorded a migration stamped later than one it is now being asked to
-apply, and nothing has been applied. The migrator decides what to run by comparing journal
-timestamps against the newest timestamp in `drizzle.__drizzle_migrations` and nothing else, so a
-migration stamped below that mark would be walked past and the run reported as a success over the
-tables it should have created. The refusal names every migration in that position.
-
-It happens when a database ran a branch's migrations before that branch was merged: merging renumbers
-and restamps the branch's migrations to sit after the ones it merged in, and those merged-in
-migrations are older than the stamp the database already holds. Development, preview and reused CI
-databases are where it is met.
-
-Recreate the database from empty if it is disposable. If it is not, apply each named migration's SQL
-by hand and record it, which leaves the high-water mark where it is and lets the next run proceed:
-
-```sql
-insert into drizzle.__drizzle_migrations (hash, created_at)
-values ('<sha256 of server/drizzle/<tag>.sql>', <that entry's "when" in meta/_journal.json>);
-```
+The PostgreSQL application role needs permission to create the schema's tables, indexes and enums. No vector extension is installed or required.
 
 ## Replicas
 

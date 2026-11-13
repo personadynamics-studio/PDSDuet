@@ -1,4 +1,4 @@
-import type { AttachmentsConfig } from "@copilotkit/react-core/v2";
+import type { AttachmentsConfig } from "@/lib/chat/attachments";
 import {
   ACCEPTED_DOCUMENT_MIME,
   ACCEPTED_IMAGE_MIME,
@@ -7,16 +7,7 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/channels/attachments";
 
-/**
- * Uploads a picked file to this deployment and hands the composer a link to it, never the bytes.
- *
- * Neither `AttachmentUploadResult` nor `AttachmentUploadError` is exported by anything installed
- * here: `@copilotkit/shared` declares both, but it is not a dependency of `app/` — the only
- * installed CopilotKit package in this workspace is `react-core`, and its `v2` entry point does
- * not re-export these two. They are derived instead from `AttachmentsConfig["onUpload"]` /
- * `["onUploadFailed"]`, the one signature that IS public, so they can never drift from what the
- * SDK actually calls.
- */
+
 type AttachmentUploadResult = Awaited<
   ReturnType<NonNullable<AttachmentsConfig["onUpload"]>>
 >;
@@ -175,40 +166,7 @@ export const FILE_PICKER_ACCEPT = [
   ".pdf",
 ].join(",");
 
-/**
- * `AttachmentsConfig` for one channel's composer.
- *
- * `accept` IS THE WILDCARD, AND THAT IS THE WHOLE OF THE TYPE POLICY MOVING TO ONE PLACE RATHER
- * THAN BEING ABANDONED.
- *
- * It used to be `[...ACCEPTED_IMAGE_MIME, ...ACCEPTED_TEXT_MIME].join(",")`, and that was a second
- * gate standing behind `screenPickedFiles` — a stricter one, applying a different rule, phrased for
- * a machine. `useAttachments.processFiles` runs it with `matchesAcceptFilter`, whose non-wildcard,
- * non-extension branch is a bare `file.type === filter`. `screenPickedFiles` deliberately passes a
- * claim that names no format (`application/octet-stream`, `""` — see the long note at
- * `picked-files.ts`) so the server can sniff the bytes; none of those strings equals any of the
- * eight, so the SDK refused every one of them before a request was ever made, with
- * `File "notes.txt" is not accepted. Supported types: image/png,…`. That branch was dead in the
- * running app, the drift it exists to close was still open, and the sentence somebody read was the
- * one `stageFiles` promises a screened file can never produce.
- *
- * Widening the list instead was the other option and is not enough: `""` cannot be written as an
- * accept entry at all, and `namesNoFormat` also passes anything not shaped like a MIME type, which
- * is an open set. There is no string that means what the screen means.
- *
- * WHAT THIS COSTS, STATED PLAINLY: nothing, because the SDK's filter was never reachable except
- * through us. `stageFiles` is the only caller of `processFiles` — the composer supplies its own
- * drop handler and its own `onChange`, so the hook's `handleDrop` and `handleFileUpload` are never
- * used — and the hook's own `document` paste listener is inert here, because it is scoped by a
- * `containerRef` this composer deliberately never hands it (see `containerRef` in `composer.tsx`).
- * So every file that reaches `processFiles` has already been through `screenPickedFiles`, which
- * enforces kind, BOTH size ceilings and the per-message cap — all of which the SDK's filter does
- * not — and phrases its refusals for a person. The narrow list is kept where it is honest about
- * being a hint: `FILE_PICKER_ACCEPT`, above, on the file dialog.
- *
- * The SDK has one `maxSize` for every format, so it uses the largest supported file ceiling.
- * `screenPickedFiles` and the server enforce the individual image, PDF and text limits.
- */
+
 export function attachmentsConfigFor(
   channelId: string,
   uploadGroup: string,

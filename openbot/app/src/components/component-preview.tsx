@@ -1,7 +1,7 @@
-import { OpenGenerativeUIActivityRenderer } from "@copilotkit/react-core/v2";
+import { LocalComponentFrame } from "./local-component-frame";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { galleryComponent } from "@/lib/copilot/gallery-registry";
+import { galleryComponent } from "@/lib/chat/gallery-registry";
 import {
   type SandboxedRecord,
   sandboxedListQueryOptions,
@@ -69,28 +69,13 @@ export function ComponentPreview({
         </PreviewNotice>
       );
     }
-    const content = {
-      css: sandboxed.publishedCss ?? "",
-      cssComplete: true,
-      html: [sandboxed.publishedHtml],
-      htmlComplete: true,
-      jsFunctions: `window.__args = ${JSON.stringify(sandboxed.sampleArguments)};\n${sandboxed.publishedJsFunctions ?? ""}`,
-      jsFunctionsComplete: true,
-      generating: false,
-    };
     return (
       <FittedPreview fill={fill}>
         <div
           className="w-full"
           title="Published component with saved sample arguments"
         >
-          <OpenGenerativeUIActivityRenderer
-            activityType="open-generative-ui"
-            agent={null}
-            content={content}
-            key={JSON.stringify(content)}
-            message={null}
-          />
+          <LocalComponentFrame html={sandboxed.publishedHtml} css={sandboxed.publishedCss ?? ""} js={sandboxed.publishedJsFunctions ?? ""} args={sandboxed.sampleArguments} />
         </div>
       </FittedPreview>
     );

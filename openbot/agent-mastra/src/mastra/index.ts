@@ -85,7 +85,6 @@ export const openbotBaseInstructions =
 const OPENBOT_CONTEXT_DESCRIPTIONS = [
   "OpenBot standing role",
   "OpenBot granted tools guidance",
-  "OpenBot learned skills",
 ] as const;
 
 type OpenBotInstructionArgs = {

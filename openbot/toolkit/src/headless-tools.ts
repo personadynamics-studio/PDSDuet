@@ -49,10 +49,7 @@ export class HeadlessToolSuspension extends Error {
 
 const MAX_TOOL_SEGMENTS = 30;
 
-/**
- * Executes AG-UI client tools inside the Intelligence run. Backend results are
- * forwarded unchanged; only newly emitted unanswered calls can be executed.
- */
+
 export class HeadlessToolsMiddleware extends Middleware {
   constructor(
     private readonly tools: HeadlessTool[],

@@ -2,12 +2,10 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../auth/guards";
 import type { DeploymentConfig } from "../config";
 import type { CredentialStatusReader } from "../credentials";
-import { entitlementWarning } from "../intelligence-entitlement-check";
 import type { ModelCheckOutcome } from "../model-availability-check";
 import type { BrokerProvider } from "../plugins/access";
 import type { AppAccessState, Unavailable } from "../plugins/app-access";
 import { GOOGLE_WORKSPACE } from "../plugins/catalogue";
-import type { RuntimeEntitlementResponse } from "../self-host-banner";
 
 /**
  * The setup checklist: one row for each thing this deployment depends on, and what it says about it.
@@ -16,19 +14,7 @@ import type { RuntimeEntitlementResponse } from "../self-host-banner";
  * a first run, "what is set up, and what still needs doing", from the server's own configuration and
  * state rather than from a list the app keeps.
  *
- * READY MEANS IT WORKS, NOT THAT SOMETHING IS SET. Three rows used to read Ready for a fact nobody
- * checked: Intelligence because the server cannot boot without its address, the model because a key
- * was present, and Gmail because a connection row existed. Each is now read from the answer that
- * decides whether it works: Intelligence's own entitlement answer, the model provider's answer for
- * the key in use now, and the app-access state for this person on the primary Bot, which knows a
- * refused key and a Bot that was never given the tools. A key nobody has asked the provider about
- * says so ("not checked yet") rather than Ready.
- *
- * PRESENCE AND VERDICTS, NEVER A VALUE. Every fact below is a yes, a no or a state word. A key is
- * "set" because the environment or the vault has one, and nothing here reads, masks, measures or
- * echoes what it is. The two outbound reads, Intelligence's entitlement and one `GET /v1/models/<id>`
- * at the provider, are the ones the server already makes at boot; "Check again" repeats them, at
- * most once every {@link RECHECK_INTERVAL_MS}.
+ * Reads model availability and connected-app access without exposing credentials.
  *
  * WHO READS IT DECIDES WHAT IT SAYS. An admin, and somebody trying OpenDuet alone on their own
  * machine, is told how to fix each gap: the page to open, or the variable to set. Everybody else is
@@ -37,17 +23,13 @@ import type { RuntimeEntitlementResponse } from "../self-host-banner";
  */
 
 /** The guides a fix links to. The repository is where the docs ship from. */
-const DOCS = "https://github.com/CopilotKit/OpenDuet/blob/main/openbot/docs";
-const QUICK_START = "https://github.com/CopilotKit/OpenDuet#quick-start";
+const DOCS = "https://github.com/personadynamics-studio/PDSDuet/blob/main/openbot/docs";
+const QUICK_START = "https://github.com/personadynamics-studio/PDSDuet";
 
 /** How long a "Check again" is answered from the last one, so a held button is not a flood. */
 export const RECHECK_INTERVAL_MS = 10_000;
 
-/** How long Intelligence has to answer before the row says it could not be reached. */
-const INTELLIGENCE_TIMEOUT_MS = 5_000;
-
 export type SetupRowId =
-  | "intelligence"
   | "model"
   | "google"
   | "gmail"
@@ -111,14 +93,6 @@ export type SetupChecklist = {
   rows: SetupRow[];
 };
 
-/** What Intelligence said about this deployment. See {@link intelligenceFact}. */
-export type IntelligenceFact =
-  | { state: "ready" }
-  /** It answered, and did not confirm the entitlement. `advice` is the admin's next step. */
-  | { state: "refused"; advice: string }
-  /** It did not answer in time, or the read failed. */
-  | { state: "unreachable" };
-
 /**
  * What the model provider said about the key in use now.
  *
@@ -138,7 +112,6 @@ export type ModelVerdict =
  * module comment.
  */
 export type SetupFacts = {
-  intelligence: IntelligenceFact;
   model: {
     provider: "openai" | "anthropic";
     /** Where the key the Bots answer with comes from, or null when there is none. */
@@ -228,12 +201,6 @@ export function setupRows(
   const broker = BROKER[facts.apps.provider];
 
   return [
-    deployment({
-      id: "intelligence",
-      title: "CopilotKit Intelligence",
-      required: true,
-      ...intelligenceRow(facts.intelligence, product),
-    }),
     deployment({
       id: "model",
       title: "AI model",
@@ -348,44 +315,6 @@ function computerRow(facts: SetupFacts): {
         fix: variables,
       };
   }
-}
-
-const INTELLIGENCE_VARIABLES = [
-  "INTELLIGENCE_API_URL",
-  "INTELLIGENCE_GATEWAY_WS_URL",
-  "INTELLIGENCE_API_KEY",
-];
-
-/**
- * Intelligence as its own entitlement answer says. Its advice is the admin's sentence the boot log
- * already prints (`entitlementWarning`), which names the licence and where it goes.
- */
-function intelligenceRow(fact: IntelligenceFact, product: string) {
-  const readyDetail = `Keeps your conversations and what ${product} remembers.`;
-  if (fact.state === "ready")
-    return {
-      status: "ready" as const,
-      readyDetail,
-      gapDetail: "",
-      fix: null,
-    };
-  if (fact.state === "refused")
-    return {
-      status: "needs_setup" as const,
-      readyDetail,
-      gapDetail: fact.advice,
-      fix: null,
-    };
-  return {
-    status: "needs_setup" as const,
-    readyDetail,
-    gapDetail: `${product} couldn't reach Intelligence, so conversations and memory may fail. Check again in a moment, or check its address and key.`,
-    fix: {
-      kind: "env" as const,
-      names: INTELLIGENCE_VARIABLES,
-      docsUrl: QUICK_START,
-    },
-  };
 }
 
 /** The model row, from where its key comes from and what the provider last said about that key. */
@@ -515,20 +444,6 @@ function gmailRow(
 }
 
 /**
- * What an entitlement answer, or a failed read, means for the Intelligence row. Ready only when
- * Intelligence answered ready and active, which is what `entitlementWarning` returns null for.
- */
-export function intelligenceFact(
-  answer: RuntimeEntitlementResponse | Error,
-): IntelligenceFact {
-  if (answer instanceof Error) return { state: "unreachable" };
-  const warning = entitlementWarning(answer);
-  return warning
-    ? { state: "refused", advice: warning.fix }
-    : { state: "ready" };
-}
-
-/**
  * The provider's answer about the key in use now.
  *
  * A check about another key says nothing about this one: the stamp names the key the check was
@@ -608,33 +523,16 @@ export type SetupSources = {
   /** A local install for one person, whose only reader is the person running it. */
   localEvaluation: boolean;
   facts: (userId: string) => Promise<SetupFacts>;
-  /** Ask Intelligence and the model provider again. Resolves when both have answered. */
+  /** Refresh the configured model provider status. */
   recheck: () => Promise<void>;
 };
-
-/** A promise that gives up after `ms`, as an Error, so a slow service reads as unreachable. */
-function withinTime<T>(promise: Promise<T>, ms: number): Promise<T | Error> {
-  return Promise.race([
-    promise.catch((error: unknown) =>
-      error instanceof Error ? error : new Error(String(error)),
-    ),
-    new Promise<Error>((resolve) => {
-      const timer = setTimeout(
-        () => resolve(new Error("Intelligence did not answer.")),
-        ms,
-      );
-      timer.unref?.();
-    }),
-  ]);
-}
 
 /**
  * The facts read from this server's configuration and stores.
  *
  * Built once at boot and asked on every request, so a connection made or a credential added a
- * moment ago shows up on the next read. The two verdicts that need another service, Intelligence's
- * entitlement and the model provider's answer, are kept from the last time they were asked (at boot)
- * and asked again on `recheck`.
+ * moment ago shows up on the next read. Model availability is retained from boot and refreshed on
+ * `recheck`.
  */
 export function createSetupSources(input: {
   productName: string;
@@ -653,8 +551,6 @@ export function createSetupSources(input: {
   modelCheckAtBoot?: Promise<
     { outcome: ModelCheckOutcome; stamp: string | null } | undefined
   >;
-  /** Intelligence's entitlement answer for this deployment. Asked at creation and on recheck. */
-  entitlements: () => Promise<RuntimeEntitlementResponse>;
   plugins: {
     listServers: () => Promise<Array<{ id: string; hasCredential: boolean }>>;
     inspectApp: (input: {
@@ -680,12 +576,6 @@ export function createSetupSources(input: {
     credentials: input.credentials,
     environment: input.environment,
   };
-  const askIntelligence = () =>
-    withinTime(input.entitlements(), INTELLIGENCE_TIMEOUT_MS).then(
-      intelligenceFact,
-    );
-
-  let intelligence = askIntelligence();
   let modelCheck: Promise<
     { outcome: ModelCheckOutcome; stamp: string | null } | undefined
   > = (input.modelCheckAtBoot ?? Promise.resolve(undefined)).catch(
@@ -697,11 +587,10 @@ export function createSetupSources(input: {
     productName: input.productName,
     localEvaluation: input.config.singleUser,
     facts: async (userId) => {
-      const [key, check, intelligenceNow, servers, gmail] =
+      const [key, check, servers, gmail] =
         await Promise.all([
           modelKeyOf(keyFacts),
           modelCheck,
-          intelligence,
           input.plugins.listServers(),
           input.plugins.inspectApp({
             app: GOOGLE_WORKSPACE,
@@ -712,7 +601,6 @@ export function createSetupSources(input: {
         ]);
       const google = servers.find((server) => server.id === GOOGLE_WORKSPACE);
       return {
-        intelligence: intelligenceNow,
         model: {
           provider: input.model.provider,
           source: key.source,
@@ -738,7 +626,6 @@ export function createSetupSources(input: {
       const now = Date.now();
       if (lastRecheck && now - lastRecheck.at < RECHECK_INTERVAL_MS)
         return lastRecheck.done;
-      intelligence = askIntelligence();
       const check = input.model.check;
       if (check) {
         modelCheck = (async () => {
@@ -746,7 +633,7 @@ export function createSetupSources(input: {
           return stamp === null ? undefined : { outcome: await check(), stamp };
         })().catch(() => undefined);
       }
-      const done = Promise.all([intelligence, modelCheck]).then(
+      const done = modelCheck.then(
         () => {},
       );
       lastRecheck = { at: now, done };
@@ -756,8 +643,7 @@ export function createSetupSources(input: {
 }
 
 /**
- * `GET /` answers the checklist for whoever is signed in. `POST /check` asks Intelligence and the
- * model provider again first, then answers the same way.
+ * `GET /` answers the signed-in person's checklist. `POST /check` refreshes model status first.
  */
 export function createSetupRoutes(
   sources: SetupSources,

@@ -32,7 +32,7 @@ if [ ! -s "$DATA/PG_VERSION" ]; then
   #
   # Said here, naming this image's answer, rather than left to that hint. The failure is otherwise a
   # generic message about mount points in a container log, while `api` never starts because it depends
-  # on `postgres` and `migrate`, the platform reports the deploy a success, and the public URL serves
+  # on `postgres` and `initialize`, the platform reports the deploy a success, and the public URL serves
   # a 502 with nothing on it to explain why.
   if [ -n "$(ls -A "$DATA" 2>/dev/null)" ]; then
     echo "postgres-init: $DATA holds no cluster and is not empty, so initdb cannot use it." >&2
@@ -58,12 +58,11 @@ if [ ! -s "$DATA/PG_VERSION" ]; then
   s6-setuidgid postgres "$BIN/pg_ctl" -D "$DATA" -o "-c listen_addresses=127.0.0.1" -w start >/dev/null
   # Over TCP with the password now, since the cluster no longer trusts an unauthenticated connection.
   PGPASSWORD="$PW" s6-setuidgid postgres "$BIN/createdb" -h 127.0.0.1 -U openbot openbot
-  PGPASSWORD="$PW" s6-setuidgid postgres "$BIN/psql" -h 127.0.0.1 -U openbot -d openbot -c 'CREATE EXTENSION IF NOT EXISTS vector' >/dev/null
   s6-setuidgid postgres "$BIN/pg_ctl" -D "$DATA" -w stop >/dev/null
 fi
 
 # Every boot, not only the first: hand the password-bearing URL to the services that connect over TCP
-# (`api` and `migrate`, both `with-contenv`). The password persists with the cluster; the container
+# (`api` and `initialize`, both `with-contenv`). The password persists with the cluster; the container
 # environment is fresh each boot, so this has to run outside the first-init guard above. The file is
 # root-written here into s6's own environment directory, which pwuser cannot write and the Bot's shell
 # does not read.

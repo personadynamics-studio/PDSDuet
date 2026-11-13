@@ -11,10 +11,13 @@
   },
   "dependencies": {
     "@ag-ui/client": "1.0.1",
-    "@copilotkit/runtime": "1.77.0",
     "@openbot/shared": "workspace:*",
     "rxjs": "7.8.1",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "ai": "6.0.264",
+    "@ai-sdk/provider": "3.0.15",
+    "@ai-sdk/openai": "3.0.99",
+    "@ai-sdk/anthropic": "3.0.111"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

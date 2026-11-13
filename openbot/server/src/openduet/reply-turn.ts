@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { BaseEvent } from "@ag-ui/client";
-import { resolveModel } from "@copilotkit/runtime/v2";
+import { resolveLocalModel } from "@openbot/toolkit/native-agent";
 import { readFirstDay } from "@openbot/shared/first-day";
 import { readMorningBrief } from "@openbot/shared/morning-brief";
 import { nativeRunWaiting } from "@openbot/toolkit/native-approval";
@@ -466,7 +466,7 @@ type StreamResult = Awaited<ReturnType<Model["doStream"]>>;
 export function endingTurns(model: string | Model, apiKey?: string): Model {
   let inner: Model | undefined;
   const resolved = () => {
-    inner ??= resolveModel(model, apiKey) as Model;
+    inner ??= resolveLocalModel(model, apiKey) as Model;
     return inner;
   };
   return {

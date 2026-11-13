@@ -4,7 +4,7 @@ import {
   parseApprovalContinuation,
 } from "../approvals/types";
 import type { Database } from "../db/client";
-import { intelligenceChannelMappings, routineRuns } from "../db/schema";
+import { threadChannelMappings, routineRuns } from "../db/schema";
 import { responsibilityRuns } from "../db/schema/responsibilities";
 import type { DeliveryScope } from "../delivery/types";
 import { signInToolResult } from "./service";
@@ -109,12 +109,12 @@ async function channelFor(
   threadId: string,
 ) {
   const [source] = await database
-    .select({ channelId: intelligenceChannelMappings.channelId })
-    .from(intelligenceChannelMappings)
+    .select({ channelId: threadChannelMappings.channelId })
+    .from(threadChannelMappings)
     .where(
       and(
-        eq(intelligenceChannelMappings.userId, ownerUserId),
-        eq(intelligenceChannelMappings.threadId, threadId),
+        eq(threadChannelMappings.userId, ownerUserId),
+        eq(threadChannelMappings.threadId, threadId),
       ),
     )
     .limit(1);

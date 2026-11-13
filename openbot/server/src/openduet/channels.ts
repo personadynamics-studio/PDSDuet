@@ -31,7 +31,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  threadChannelMappings,
 } from "../db/schema";
 import { openduetChannels, openduetTasks } from "../db/schema/openduet";
 
@@ -162,7 +162,7 @@ export function createDuetChannelStore(deps: {
         createdAt: channels.createdAt,
         summary: channels.summary,
         lastMessage: channels.lastMessage,
-        threadId: intelligenceChannelMappings.threadId,
+        threadId: threadChannelMappings.threadId,
         icon: openduetChannels.icon,
         colour: openduetChannels.colour,
         archivedAt: openduetChannels.archivedAt,
@@ -178,10 +178,10 @@ export function createDuetChannelStore(deps: {
         ),
       )
       .innerJoin(
-        intelligenceChannelMappings,
+        threadChannelMappings,
         and(
-          eq(intelligenceChannelMappings.channelId, channels.id),
-          eq(intelligenceChannelMappings.userId, ownerUserId),
+          eq(threadChannelMappings.channelId, channels.id),
+          eq(threadChannelMappings.userId, ownerUserId),
         ),
       )
       .leftJoin(openduetChannels, eq(openduetChannels.channelId, channels.id))
@@ -430,11 +430,11 @@ export function createDuetChannelStore(deps: {
           name: channels.name,
           description: channels.description,
         })
-        .from(intelligenceChannelMappings)
+        .from(threadChannelMappings)
         .innerJoin(
           channels,
           and(
-            eq(channels.id, intelligenceChannelMappings.channelId),
+            eq(channels.id, threadChannelMappings.channelId),
             isNull(channels.deletedAt),
           ),
         )
@@ -444,8 +444,8 @@ export function createDuetChannelStore(deps: {
         )
         .where(
           and(
-            eq(intelligenceChannelMappings.threadId, threadId),
-            eq(intelligenceChannelMappings.userId, ownerUserId),
+            eq(threadChannelMappings.threadId, threadId),
+            eq(threadChannelMappings.userId, ownerUserId),
             NOT_A_TASK,
           ),
         )

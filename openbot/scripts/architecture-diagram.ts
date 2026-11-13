@@ -321,7 +321,7 @@ function render(t: Theme): string {
     weight: 700,
     fill: t.ink,
   });
-  text(svX + 22, svY + 58, "CopilotKit runtime, auth, roles, coworkers", {
+  text(svX + 22, svY + 58, "Local runtime, auth, roles, coworkers", {
     size: 13,
     fill: t.muted,
   });
@@ -429,7 +429,7 @@ function render(t: Theme): string {
 
   const intX = 622;
   box(intX, dbY, 226, 118, t, { stroke: t.ink });
-  text(intX + 18, dbY + 32, "CopilotKit Intelligence", {
+  text(intX + 18, dbY + 32, "Local conversation store", {
     size: 14.5,
     weight: 650,
     fill: t.ink,
@@ -437,7 +437,7 @@ function render(t: Theme): string {
   lines(
     intX + 18,
     dbY + 58,
-    ["durable threads", "memory", "external service"],
+    ["messages and tool results", "runs and reconnect events", "PostgreSQL"],
     t,
     12.5,
     19,
@@ -532,7 +532,7 @@ function render(t: Theme): string {
       `configured policy, records an audit row, and only then acts, or refuses and names the rule. ` +
       `Allowed actions reach that Bot's own computer, one container each holding its own Chromium, ` +
       `logins and workspace, created by the supervisor. Every decision lands in PostgreSQL; threads ` +
-      `and memory live in CopilotKit Intelligence.</desc>`,
+      `and run state live in local PostgreSQL.</desc>`,
     ...out,
     `</svg>`,
   ].join("\n");

@@ -1,9 +1,6 @@
 import type { ActivityMessage, Message } from "@ag-ui/core";
-import type { Attachment } from "@copilotkit/react-core/v2";
-import {
-  useRenderActivityMessage,
-  useRenderToolCall,
-} from "@copilotkit/react-core/v2";
+import type { Attachment } from "@/lib/chat/attachments";
+import { drawsTool, ToolCard } from "@/lib/chat/tool-cards";
 import {
   readConnectPrompt,
   SHOW_APP_ACCESS_TOOL,
@@ -16,7 +13,6 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -60,7 +56,7 @@ import { readMorningBrief } from "@/lib/channels/morning-brief";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
 import { readTaskBrief } from "@/lib/channels/task-brief";
-import { ReplyChips } from "@/lib/copilot/reply-chips-tool";
+import { ReplyChips } from "@/lib/chat/reply-chips-tool";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { personToolLabel, readToolName } from "@/lib/plugins/tool-name";
@@ -1526,11 +1522,7 @@ function AttachmentLightbox({
  * a person can read instead. An unknown type falls back to its own name rather than to something
  * vague: whoever registered it will recognise it, and nobody else can act on either wording.
  */
-function activityName(activityType: string): string {
-  return activityType === "open-generative-ui"
-    ? "這個機械人產生的介面"
-    : activityType;
-}
+function activityName(activityType: string): string { return activityType; }
 
 /**
  * One activity, drawn by whichever renderer claims its type.
@@ -1552,12 +1544,11 @@ const TranscriptActivity = memo(function TranscriptActivity({
   delay: number;
   message: ActivityMessage;
 }) {
-  const { renderActivityMessage } = useRenderActivityMessage();
   const drawn =
     message.activityType === VOICE_CHAT_ACTIVITY ? (
       <VoiceChatCard call={message.content.call as VoiceChatEntry} />
     ) : (
-      renderActivityMessage(message)
+      null
     );
   if (!drawn) return null;
 
@@ -1570,16 +1561,7 @@ const TranscriptActivity = memo(function TranscriptActivity({
   );
 });
 
-/**
- * One drawn tool call, memoised on the same terms.
- *
- * The `toolCall` object is rebuilt here from its parts rather than passed down, because the one on
- * the message is a new object on every chunk and would defeat the memo exactly as the text items
- * did. A finished chart re-rendering on every token of the sentence after it is not free.
- *
- * `useRenderToolCall` is called HERE rather than passed in as a prop: a function whose identity the
- * parent cannot guarantee is the classic way to make a memo boundary useless.
- */
+
 const TranscriptToolCall = memo(function TranscriptToolCall({
   delay,
   toolCallId,
@@ -1593,35 +1575,13 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
   args: string;
   result?: string;
 }) {
-  const renderToolCall = useRenderToolCall();
   // Held on its approval card: the same inbox the card under it reads.
   const inbox = useQuery(approvalInboxOptions());
   const waitingOnPerson = (inbox.data?.requests ?? []).some(
     (request) =>
       request.status === "pending" && request.action.toolCallId === toolCallId,
   );
-  const toolCall = useMemo(
-    () => ({
-      id: toolCallId,
-      type: "function" as const,
-      function: { name, arguments: args },
-    }),
-    [toolCallId, name, args],
-  );
-
-  const drawn = renderToolCall({
-    toolCall,
-    ...(result === undefined
-      ? {}
-      : {
-          toolMessage: {
-            id: `${toolCallId}-result`,
-            role: "tool",
-            toolCallId,
-            content: result,
-          },
-        }),
-  });
+  const drawn = drawsTool(name) ? <ToolCard id={toolCallId} name={name} args={args} result={result} /> : null;
 
   return (
     <Arriving delay={delay}>
@@ -1647,22 +1607,15 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
               result={result}
               waiting={waitingOnPerson}
             />
-            <PendingApprovals toolCallIds={[toolCallId]} />
           </>
         )}
+        <PendingApprovals toolCallIds={[toolCallId]} />
       </ToolRenderBoundary>
     </Arriving>
   );
 });
 
-/**
- * A tool the runtime executed, drawn for the person watching.
- *
- * Named from the reader's side: what was done, against which server, with the server's own words
- * behind a disclosure. The identifier the model was offered never reaches the screen.
- *
- * Exported for its tests, which draw it without the CopilotKit provider `TranscriptToolCall` needs.
- */
+
 export function ServerToolLine({
   name,
   result,

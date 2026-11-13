@@ -1,5 +1,4 @@
-import { CopilotKitContext } from "@copilotkit/react-core/v2/context";
-import { useCallback, useContext, useMemo, useSyncExternalStore } from "react";
+import { drawsTool } from "@/lib/chat/tool-cards";
 import { Streamdown } from "streamdown";
 import { PendingApprovals } from "@/components/approvals/inline-approval";
 import { DuetIcon, type DuetIconName } from "@/components/duet/icons";
@@ -90,36 +89,7 @@ function foldable(item: ToolItem, isDrawn: (name: string) => boolean): boolean {
   return !asksThePerson(item.result);
 }
 
-const NOTHING_DRAWN: readonly { name: string }[] = [];
-
-/**
- * Whether the app draws a tool itself, read from CopilotKit's own renderer registry.
- *
- * Read from the registry rather than kept as a list here, because every `useRenderTool` and
- * `useFrontendTool` already registers its name there, and a list would fall behind the first tool
- * added without it. Taken from the context directly, not through `useCopilotKit`, because that
- * throws outside a provider and the transcript is drawn without one in places. With no provider
- * nothing is drawn. A `*` renderer draws every tool it is asked about, so nothing outside MCP folds.
- */
-export function useDrawnTool(): (name: string) => boolean {
-  const copilotkit = useContext(CopilotKitContext)?.copilotkit;
-  const subscribe = useCallback(
-    (onChange: () => void) =>
-      copilotkit
-        ? copilotkit.subscribe({ onRenderToolCallsChanged: onChange })
-            .unsubscribe
-        : () => {},
-    [copilotkit],
-  );
-  const renderers = useSyncExternalStore(
-    subscribe,
-    () => copilotkit?.renderToolCalls ?? NOTHING_DRAWN,
-  );
-  return useMemo(() => {
-    const names = new Set(renderers.map((renderer) => renderer.name));
-    return names.has("*") ? () => true : (name) => names.has(name);
-  }, [renderers]);
-}
+export function useDrawnTool(): (name: string) => boolean { return drawsTool; }
 
 /**
  * Whether this refusal is a question for the person rather than a line about what a Bot did.

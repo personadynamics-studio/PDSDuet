@@ -11,7 +11,6 @@ export * from "./delivery";
 export * from "./demonstrations";
 export * from "./group";
 export * from "./identity";
-export * from "./learning";
 export * from "./lifecycle";
 export * from "./memory";
 export * from "./openduet";

@@ -6,25 +6,9 @@ import type { AuthProviderId } from "@/lib/auth/queries";
  * What this deployment can do, as the server is willing to say it.
  *
  * A projection, not the runtime. `/api/capabilities` is reachable before anybody has signed in, so
- * only fields somebody may know unauthenticated appear on it; the Intelligence contract and every
- * deployment secret stay on the server. See server/src/app.ts.
+ * only fields somebody may know unauthenticated appear on it; deployment secrets stay on the server. See server/src/app.ts.
  */
 export type DeploymentCapabilities = {
-  /**
-   * Whether a Bot may answer with an interface it wrote itself.
-   *
-   * Read by the browser because the browser owns half of this capability: the SDK's provider is what
-   * offers the model the tool that generates one. A deployment that turned the server half off while
-   * the browser kept offering the tool would have Bots writing whole interfaces that nothing draws,
-   * so both halves read this one answer.
-   */
-  generativeUi: boolean;
-  /**
-   * Whether to show the banner offering help self-hosting OpenBot. A fork that runs OpenBot for its
-   * own organization turns it off with OPENBOT_SELF_HOST_BANNER=false, and the server answers false
-   * for a deployment on a paid Intelligence plan.
-   */
-  selfHostBanner: boolean;
   localEvaluation: boolean;
   authProviders: AuthProviderId[];
   ssoConfigured: boolean;
@@ -64,8 +48,6 @@ export function deploymentCapabilitiesQueryOptions() {
           fallback: "This deployment's capabilities could not be loaded.",
         })
       ).json()) as {
-        generativeUi?: boolean;
-        selfHostBanner?: boolean;
         localEvaluation?: boolean;
         authProviders?: AuthProviderId[];
         ssoConfigured?: boolean;
@@ -74,8 +56,6 @@ export function deploymentCapabilitiesQueryOptions() {
       };
 
       return {
-        generativeUi: body.generativeUi === true,
-        selfHostBanner: body.selfHostBanner === true,
         localEvaluation: body.localEvaluation === true,
         authProviders: body.authProviders ?? [],
         ssoConfigured: body.ssoConfigured === true,

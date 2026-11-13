@@ -10,9 +10,8 @@ export type SuggestionStatus = "open" | "dismissed" | "started";
  */
 export const MIN_INTERVAL_MINUTES = 15;
 export const MAX_INTERVAL_MINUTES = 1440;
-/** Per run, so one confused run cannot flood the inbox or the memory list. */
+/** Per run, so one confused run cannot flood the inbox. */
 export const MAX_SUGGESTIONS_PER_RUN = 5;
-export const MAX_MEMORIES_PER_RUN = 10;
 
 export const proactiveSettingInputSchema = z
   .object({
@@ -49,22 +48,6 @@ export const suggestionInputSchema = z
       .optional(),
   })
   .strict();
-export const proactiveMemoryInputSchema = z
-  .object({
-    content: z.string().trim().min(1).max(2000),
-    sourceTool: z.string().trim().min(1).max(256),
-    sourceLink: z
-      .string()
-      .trim()
-      .max(1000)
-      .refine(
-        (value) => /^https?:\/\//i.test(value) && URL.canParse(value),
-        "Links must be http or https URLs.",
-      )
-      .optional(),
-  })
-  .strict();
-
 export type ProactiveSettingInput = z.infer<typeof proactiveSettingInputSchema>;
 export type ProactiveSetting = {
   id: string;

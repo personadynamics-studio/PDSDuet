@@ -15,7 +15,7 @@ services=(postgres agent-computer agent-langgraph)
 if [ "$(setting OPENBOT_ONE_COMPUTER_EACH true)" = true ]; then services+=(supervisor); fi
 if [ "$(setting BOT_PROVIDER openai)" != anthropic ]; then services+=(agent-bot); fi
 docker compose --env-file .env up -d --build "${services[@]}"
-docker compose --env-file .env run --rm --build migrate
+docker compose --env-file .env run --rm --build initialize
 bun run --cwd app build
 
 for name in api app worker; do

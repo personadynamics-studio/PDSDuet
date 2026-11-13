@@ -1,46 +1,4 @@
-/**
- * The watch on a Bot's own stream, and what happens when it stops saying anything.
- *
- * A Bot is any AG-UI endpoint, which makes it infrastructure this deployment does not run: it will
- * be redeployed mid-run, its upstream will time out, it will accept a connection and then write
- * nothing. None of that is exceptional. What was missing was anybody noticing: an open stream that
- * never produces another byte leaves the channel busy, the composer locked and a person watching a
- * Bot that appears to be thinking and is not.
- *
- * The seam is the Bot's own HTTP response, wrapped on the way in. In Intelligence mode this server's
- * reply to the browser is a JSON envelope, not a stream, and the AG-UI events reach the browser over
- * a WebSocket to the gateway (see the module comment on turn-watchdog.ts for what was measured).
- * The Bot's response, however, is an ordinary streaming HTTP body that this process reads to the
- * end, so it is both the thing that stalls and the only place a stall can be seen.
- *
- * A PASS-THROUGH RELAY IS THE ONLY ACCEPTABLE SHAPE HERE, and the relay below is an identity
- * transform with nothing in it at all. It must not buffer, because a Bot's answer is streamed a
- * token at a time and holding chunks back to inspect them would turn a live answer into a paragraph
- * that lands all at once. It must not await anything, because a chunk delayed here is a chunk
- * delayed on somebody's screen. And it must not decide anything about the bytes, because the moment
- * it parses them it can be wrong about them, and a watchdog that can misread a working run into a
- * broken one is worse than the failure it was added for.
- *
- * THE CLOCK IS KEPT BY THE PUMP AND NOT BY THE RELAY, which is the difference between watching the
- * Bot and watching whoever is reading it. A `TransformStream` runs its transform only once the
- * readable side is being pulled, so timestamping in there would record when the CONSUMER took a
- * chunk rather than when the Bot produced one; a consumer that paused for longer than the timeout
- * would then be reported as a Bot that had gone silent, on a run that was streaming the whole time.
- * The pump times the resolution of each read from the Bot instead, and stops the clock entirely
- * while it waits for the consumer to take delivery, so the only quiet ever counted is quiet on the
- * wire. In this deployment that consumer is the Intelligence runner publishing every event on to
- * the gateway over the network, which is exactly the sort of thing that pauses.
- *
- * On a stall it writes one RUN_ERROR event into the same stream and closes it. RUN_ERROR is the
- * event both surfaces already subscribe to, so nothing downstream had to learn a new one. What
- * neither of them had was anywhere to put it, and both now draw the sentence themselves: see
- * app/src/components/channels/chat-transcript.tsx for the channel and
- * app/src/routes/_authed/_app/bot.tsx for the direct Bot chat. The packaged chat draws nothing of
- * its own for a failed run — the banner that would have done it belongs to the v1 provider this app
- * does not mount, and is suppressed even there unless the dev console is switched on. AG-UI permits
- * RUN_ERROR at any point in a stream, including as the very first event, which is what a Bot that
- * never spoke produces.
- */
+
 import {
   type AuditInitiator,
   type AuditStore,

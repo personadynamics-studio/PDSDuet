@@ -11,7 +11,7 @@ import { ExternalLink } from "./ExternalLink";
 export type Problem = {
   said: string;
   detail?: string | null;
-  connection?: "model" | "intelligence" | null;
+  connection?: "model" | null;
 };
 
 /** Anything thrown, as a problem. A bare string keeps working and reads as it always did. */
@@ -26,7 +26,7 @@ function SetupHelp() {
   // Whitelabel builds can choose their own support page. Never prefill it with error data.
   const url =
     import.meta.env.VITE_OPENBOT_SUPPORT_URL?.trim() ||
-    "https://github.com/CopilotKit/OpenBot/issues/new/choose";
+    "https://github.com/personadynamics-studio/PDSDuet/issues/new";
   return (
     <ExternalLink className="setup-help" href={url}>
       Get setup help

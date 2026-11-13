@@ -17,7 +17,7 @@ import {
   attachments,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  threadChannelMappings,
 } from "../db/schema";
 import {
   classifyAttachment,
@@ -49,59 +49,13 @@ function isUuidShaped(value: string): boolean {
   return UUID_SHAPE.test(value);
 }
 
-/**
- * What a turn running in one conversation may touch: files that belong to THAT conversation's
- * channel.
- *
- * A CONDITION, NOT A LOOKUP THE CALLER DOES. The obvious shape is to resolve the thread to a
- * channel id first and pass that id in beside the actor. That was rejected twice over. It is two
- * statements where one will do, so under READ COMMITTED the mapping can change between them; and,
- * far more importantly, it makes the scope a thing a caller REMEMBERS — a second `string` argument
- * beside `actorId`, which the next person to add a call site can pass the wrong value for, or the
- * right value from the wrong run, and get no complaint from anything. As a correlated subquery the
- * scope is part of the statement that reads the row: there is no way to ask for an attachment
- * without asking this at the same time, because it is the same query.
- *
- * The two callers take `threadId` in a NAMED FIELD for the same reason. `actorId` and `threadId`
- * are both `string`, adjacent, and positionally swappable with no type error and no test failure —
- * the swap would simply widen the scope back to what it was. An object parameter cannot be
- * transposed.
- *
- * AND IT DEGRADES WHEN THE THREAD MAPS TO NO CHANNEL, which is the half that took evidence to get
- * right rather than reasoning. The tempting shape is an INNER JOIN on
- * `intelligence_channel_mappings`: no mapping, no attachment. That is wrong, because three real
- * surfaces run turns on threads this deployment deliberately keeps no channel for:
- *
- *  - A FORWARD AGENT HOP. `handoff-delivery.ts` mints a scratch thread of the addressed Bot's own
- *    (an Intelligence thread has exactly one agent, so a second Bot cannot answer inside the
- *    first's conversation) and then seeds it with the ASKING channel's history, attachment parts
- *    and all. Under an inner join every one of those files would resolve to null on a thread that
- *    maps to nothing, and because history is resolved with `onMissing: "note"` the addressed Bot
- *    would be told `[attachment "x" is no longer available]` about files that exist and that the
- *    same person may read. It would not even fail loudly: a hop's last user message is the
- *    synthetic instruction `handoff-delivery.ts` appends, so the `"fail"` branch that exists to
- *    catch exactly this never covers a hop's history.
- *  - THE DIRECT `/bot` CHAT, whose thread comes from `POST /api/threads/mint` — "a conversation
- *    this deployment keeps no channel for", in that route's own words. Its runs go through the
- *    ordinary runtime endpoint and so reach this loader.
- *  - A BACKWARDS HOP relaying into either of those.
- *
- * So the rule is: if this thread belongs to a channel, the file must belong to that same channel;
- * if it belongs to no channel, this adds nothing and the membership join above remains the whole of
- * the check. That is strictly narrower than what was here before and never narrower than a working
- * surface needs, which is the only combination that closes the gap without breaking a hop.
- *
- * NOTE WHAT IT STILL STOPS, because the degrade reads more permissive than it is. The case the
- * reviewers reproduced is a person in channels A and B naming an A-file on a turn in B. B's thread
- * IS mapped, so the degrade branch does not apply, the subquery yields B, and A ≠ B refuses. The
- * branch only opens for a thread nobody is shown.
- */
+
 function inTheTurnsChannel(database: Database, threadId: string) {
   const channelOfThisThread = () =>
     database
-      .select({ channelId: intelligenceChannelMappings.channelId })
-      .from(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.threadId, threadId));
+      .select({ channelId: threadChannelMappings.channelId })
+      .from(threadChannelMappings)
+      .where(eq(threadChannelMappings.threadId, threadId));
   return or(
     inArray(attachments.channelId, channelOfThisThread()),
     notExists(channelOfThisThread()),

@@ -165,12 +165,11 @@ spec:
                 AND THEN, FOR A WHILE, IT CARRIED FIVE OTHERS. What replaced the helper was not the
                 sweep's needs but `loadConfig`'s boot contract: the script built the whole
                 `DeploymentConfig` before deleting anything, and that refuses to return without the
-                encryption key, the three Intelligence addressing values and a complete identity
-                provider — so this block held `KEY_ENCRYPTION_KEY`, the Intelligence API key, an
-                OAuth client secret and the session-signing secret purely to keep a `DELETE` from
+                encryption key and a complete identity provider — so this block held
+                `KEY_ENCRYPTION_KEY`, an OAuth client secret and the session-signing secret to keep a `DELETE` from
                 dying at start-up. The narrow fix was named here and has now landed one directory
                 away: `server/scripts/cull-staged-attachments.ts` reads `DATABASE_URL` itself, the
-                way `scripts/migrate.ts` always has. What is below is what the sweep uses.
+                way `scripts/initialize.ts` always has. What is below is what the sweep uses.
 
                 A variable added to `loadConfig`'s required set therefore no longer has to be added
                 here. If this CronJob ever starts crash-looping while the API server is healthy, the

@@ -7,7 +7,6 @@ import type { MemoryStore } from "./store";
 import {
   MemoryNotFoundError,
   MemoryRefusedError,
-  MemoryUnavailableError,
 } from "./types";
 
 export function createMemoryRoutes(
@@ -27,8 +26,6 @@ export function createMemoryRoutes(
       error instanceof PluginRefusedError
     )
       return context.json({ error: error.message }, 400);
-    if (error instanceof MemoryUnavailableError)
-      return context.json({ error: error.message }, 503);
     console.error(
       JSON.stringify({
         type: "memory-route-error",

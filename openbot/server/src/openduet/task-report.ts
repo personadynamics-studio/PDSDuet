@@ -7,25 +7,9 @@ import { PROACTIVE_TASK_KIND, taskExecutionId } from "../proactive/engine";
 import { UNTRUSTED_TAG } from "../untrusted-content";
 import type { TaskRecord } from "./task-store";
 
-/*
- * A task's report: what it decided and said, and what it read, worked out from what its
- * conversation already holds. Nothing here is stored.
- *
- * WHERE EACH PART COMES FROM.
- * - The conversation is read from Intelligence, as the runtime holds it. Its messages carry no
- *   times, so a time comes from whichever ledger saw that moment, or there is none.
- * - Decisions are the approval inbox's: Allowed once, Always allowed or Refused, by the person, at
- *   `decidedAt`. Each sits where the conversation carried it on (the `approval:<id>` message the
- *   resume writes), or after the call it was asked about.
- * - Updates are each finished turn's last words from the Bot, cut to their first sentence. A turn
- *   ends when the Bot's work item finishes (the task's first turn, a turn carried on after an
- *   approval), when it pauses to ask for approval, or, for the latest turn, at the conversation's
- *   last message.
- * - The person's replies are their own messages after the ask that opened the task.
- * - Resources are the emails and events the task's tool calls read, from the calls' own results.
- */
 
-/** A message as Intelligence keeps it. Only the fields the report reads. */
+
+
 export type ReportMessage = {
   id: string;
   role: string;
@@ -512,7 +496,7 @@ export function buildTaskReport(input: ReportInput): TaskReport {
   };
 }
 
-/** Reads a thread's messages for its owner. Index.ts gives it Intelligence's client. */
+
 export type ReportHistory = (input: {
   threadId: string;
   ownerUserId: string;
@@ -523,8 +507,8 @@ export type TaskReportReader = (
   task: TaskRecord,
 ) => Promise<TaskReport>;
 
-/** The history reader over an Intelligence client: a thread it has never heard of has no messages. */
-export function intelligenceHistory(client: {
+
+export function threadHistory(client: {
   getThreadMessages(params: {
     threadId: string;
     userId: string;

@@ -18,68 +18,7 @@ function isSilent(message: Message): boolean {
   return false;
 }
 
-/**
- * Refuse to re-present a conversation the model API will reject.
- *
- * FOUND IN PRODUCTION, TWICE, ON BOTH PATHS. First on routines: two firings of one routine, fifteen
- * minutes apart, both failed with `Tool result is missing for tool call
- * call_TTbiXzJVNifQt8ioU1JJmj4S.` — the SAME call id both times, so it did not come from the live
- * turn: the channel's Intelligence thread held an assistant message carrying a tool call whose
- * result message never landed, because an earlier CHAT turn was interrupted mid-call. Then on chat
- * itself: `AI_MissingToolResultsError: Tool result is missing for tool call
- * chatcmpl-tool-8dd56dc7497c5ea9`, thrown three times in a row on one person's next three attempts
- * to say anything. There the damaged message was not even durable: a frontend tool handler was torn
- * down mid-run, so the live agent's messages in the browser held the call, the store did not, and
- * every retry sent the same unanswerable call back up as `input.messages`.
- *
- * A model provider validates call/result pairing, so one historical dangle poisons EVERY later turn
- * that replays it: on routines until the fatigue rule disables the routine, and on chat until the
- * person works out for themselves that the conversation is dead and starts another one. A permanent
- * failure grown out of transient damage, and nothing the person did wrong.
- *
- * WHY DROPPING IS THE RIGHT ANSWER, and not repair. History here is CONTEXT for a turn, not a
- * transaction to resume. A dangling call is already permanently unanswerable — the tool run that
- * would have answered it ended when that turn did, and there is no result to invent. The only two
- * options are to seed a conversation the API refuses, or to seed the same conversation minus a call
- * that never completed. The second one loses a fragment of an interrupted exchange; the first one
- * takes the conversation away.
- *
- * WHAT THIS DOES NOT DO. It does not DELETE anything from the platform. The thread still holds every
- * row and the person still sees the interrupted exchange in their channel. This is a read-side
- * filter on one turn's input and nothing more.
- *
- * IDS ARE NEVER CHANGED, which is what keeps `persistedInputMessages`' id-subtraction in
- * `run-turn.ts` correct: a message this pass stripped a tool call from keeps its id and is still
- * subtracted out as historic, and a message it dropped was never a candidate to persist. So
- * sanitizing cannot turn a firing into one that re-persists the transcript.
- *
- * The rules, in order:
- *  1. A tool call is ANSWERED if a later message carries it as `toolCallId` before the next user
- *     or assistant message, or if the caller says it is answered elsewhere. Later, not merely
- *     present: a result ahead of its call is not a pairing any provider accepts either. And before
- *     the next user or assistant message, because that is where the model API stops looking: see
- *     `boundaryAfter` below.
- *  2. An assistant message keeps only its answered calls. If that leaves it with no calls and
- *     nothing said, the message is dropped — an empty assistant husk is itself invalid for some
- *     providers, so stripping the call is not enough.
- *  3. A tool result survives only as THE answer to a surviving call: the first one after the call
- *     and before the boundary. Everything else carrying a `toolCallId` is dropped — a result whose
- *     call is gone (the mirror-image dangle an interruption leaves in the other order), a result that
- *     sits ahead of its own call even when a real answer follows later, and a second answer to a
- *     call already answered. The browser's `repair-history.ts` calls those shapes misplaced and
- *     relocates them; here they are dropped, because the real answer is already in place.
- *
- * Order is preserved, the input array is not mutated, and a message the pass does not change is
- * returned as the same object — a healthy thread, which is nearly all of them, goes through
- * untouched rather than through a re-normalization that could quietly differ.
- *
- * @param answeredElsewhere Call ids that are about to be answered by something this history cannot
- * see, and so must survive. That is the interrupt resume: `BuiltInAgent.run` appends a tool result
- * per `input.resume` entry, keyed by `interruptId`, AFTER converting the messages
- * (`@copilotkit/runtime/dist/agent/index.mjs`, the `resumeEntries` block in `run`). Dropping the
- * call that the resume answers would turn a resumable interrupt into an orphaned result, which is
- * the same error seen from the other side.
- */
+
 export function sanitizeSeededHistory(
   history: Message[],
   answeredElsewhere: ReadonlySet<string> = new Set(),

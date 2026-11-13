@@ -213,13 +213,7 @@ export function createDeliveryRouter(deps: {
     // interrupted event insertion without re-running the conversational turn.
     return result;
   }
-  /**
-   * One paired Slack/Teams message, run now and answered in the same AG-UI stream.
-   *
-   * The same canonical turn as every other delivery (`runTurn`: the owner's selected Bot, in the
-   * bound Intelligence thread, with learning, governance, approvals and audit), recorded in the
-   * inbox for dedupe and visibility but not queued, since the caller is waiting for the answer.
-   */
+  
   async function converse(input: {
     transport: ChatTransport;
     realm: string;

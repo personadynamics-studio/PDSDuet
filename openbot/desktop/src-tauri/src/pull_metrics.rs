@@ -10,7 +10,11 @@ use serde::Deserialize;
 
 use crate::engine::Address;
 use crate::problem::Problem;
-use crate::telemetry::Outcome;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Success,
+    Failure,
+}
 
 /// No image names, layer IDs, engine output, or credentials cross this boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -129,7 +129,6 @@ fn parse_port(key: &str, value: &str) -> std::io::Result<u16> {
 }
 
 pub fn compose(
-    intelligence: &Intelligence,
     model: &Model,
     engine: &EngineStatus,
     ports: &Ports,
@@ -306,24 +305,6 @@ pub fn compose(
         }
     }
 
-    // Trimmed, the way the model key beside it already is. All four values come from the same
-    // setup screen, which enables its button on `value.trim() !== ""` and then sends the untrimmed
-    // string, so a key copied from a provider's dashboard with the trailing space the selection
-    // picked up arrives here intact. Compose keeps it, the provider rejects the key, and the Bot
-    // reports that it cannot answer without ever naming the space.
-    env.insert(
-        "INTELLIGENCE_API_URL".into(),
-        intelligence.api_url.trim().to_string(),
-    );
-    env.insert(
-        "INTELLIGENCE_GATEWAY_WS_URL".into(),
-        intelligence.gateway_ws_url.trim().to_string(),
-    );
-    env.insert(
-        "INTELLIGENCE_API_KEY".into(),
-        intelligence.api_key.trim().to_string(),
-    );
-
     /*
      * MINTED ONCE PER DEPLOYMENT, NOT ONCE PER START.
      *
@@ -495,13 +476,6 @@ pub fn compose(
     }
 
     env
-}
-
-#[derive(Clone, Debug)]
-pub struct Intelligence {
-    pub api_url: String,
-    pub gateway_ws_url: String,
-    pub api_key: String,
 }
 
 /**

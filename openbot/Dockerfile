@@ -168,7 +168,7 @@ COPY docker/s6 /etc/s6-overlay
 # a container lives and dies with that container unless /var/lib/postgresql is a mounted volume, and
 # the audit trail is the thing you would be losing.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      postgresql-16 postgresql-16-pgvector \
+      postgresql-16 \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /var/lib/postgresql/data /var/run/postgresql \
   && chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql

@@ -1,12 +1,3 @@
-/**
- * What the runtime can do. There is exactly one answer because CopilotKit Intelligence is required
- * for durable threads and memory. Configuration the product cannot function without belongs at the
- * boot boundary.
- */
-import {
-  isLearningContainerId,
-  type LearningTarget,
-} from "@openbot/shared/learning";
 import {
   LISTEN_HOST_VARIABLE,
   type ListenHost,
@@ -22,23 +13,8 @@ import { type VoiceConfig, voiceConfig } from "./voice/config";
 import { type WebBotAuth, webBotAuthFromEnv } from "./web-bot-auth";
 
 export type RuntimeCapabilities = {
-  mode: "intelligence";
+  mode: "local";
   durableHistory: true;
-  intelligence: IntelligenceSettings;
-};
-
-/**
- * The Intelligence contract. Three values are required; see runtimeCapabilities.
- *
- * `licenseToken` is optional. Managed Intelligence derives entitlement from the project key, and
- * `@copilotkit/runtime` declares `licenseToken` optional with a `COPILOTKIT_LICENSE_TOKEN` fallback
- * of its own. A deployment that still holds one keeps passing it; nothing here requires it.
- */
-export type IntelligenceSettings = {
-  apiUrl: string;
-  gatewayWsUrl: string;
-  apiKey: string;
-  licenseToken?: string;
 };
 
 export type DockerComputerConfig = {
@@ -151,26 +127,6 @@ export type HandoffCaps = {
 };
 
 export type DeploymentConfig = {
-  /** Optional environment default. A saved Admin setting takes precedence. */
-  learning?: LearningTarget;
-  /**
-   * Whether OpenBot assigns the Intelligence project's `openbot` Learning container as the default
-   * when nobody has chosen one (learning/auto-assign.ts). On unless OPENBOT_LEARNING_AUTO_ASSIGN is
-   * "false" or "0", and off whenever CPK_INTELLIGENCE_LEARNING_CONTAINER_ID names a container. It
-   * never overrides a saved Admin setting. It creates the container only with a credential that can
-   * (see `learningSetup`), never with the runtime key.
-   */
-  learningAutoAssign: boolean;
-  /**
-   * A credential that can create Learning containers, for a deployment whose operator supplied one.
-   *
-   * The runtime key cannot: Intelligence creates containers for a person's session, a CopilotKit CLI
-   * login, or, on a CopilotKit local evaluation install only, a service token. The server holds
-   * neither of the first two, so this is the service token, sent as `x-copilotkit-ei-service-token`
-   * to `/api/learning/projects/:projectId/containers` with the project it belongs to. Both or
-   * neither: a token without its project is refused at startup.
-   */
-  learningSetup?: { serviceToken: string; projectId: string };
   /**
    * Memory sources and background research OpenBot switches on for each person (memory/defaults.ts).
    * Both on unless OPENBOT_MEMORY_SOURCE_DEFAULTS or OPENBOT_PROACTIVE_DEFAULTS is "false" or "0".
@@ -197,7 +153,7 @@ export type DeploymentConfig = {
    */
   managedAgent?: ManagedAgentConfig;
   /**
-   * What this deployment calls itself, when more than one shares an Intelligence project.
+   * The name used to scope locally minted conversation identifiers.
    *
    * Absent, the tenant package's id stands in, which separates deployments running different
    * packages but not a copy of one running alongside the original. See channels/thread-identity.ts.
@@ -292,41 +248,6 @@ export type DeploymentConfig = {
    * reaching somewhere other people can get to.
    */
   singleUser: boolean;
-  /** Names OpenDuet on the analytics the runtime already sends. Off with OPENBOT_ACCESSIBILITY_DISABLED. */
-  accessibility: boolean;
-  /**
-   * Whether a Bot may answer with an interface it wrote itself.
-   *
-   * This is not the component catalogue. A component is something this deployment holds: it was
-   * either compiled into the build or authored in the playground, an administrator granted it to a
-   * Bot, and all a Bot decides is which of them to draw. Here there is nothing to grant, because
-   * there is nothing yet — the Bot writes the markup, the styles and the script for this one answer,
-   * and they are gone when the conversation moves on.
-   *
-   * A deployment switch rather than a per-Bot grant because the SDK offers no seam for one. The
-   * interface is painted from activity events that only the runtime middleware emits, and the tool
-   * the model calls is registered by the browser for every Bot the moment that middleware is on.
-   * Narrowing the middleware to some Bots would leave the rest able to call the tool and draw
-   * nothing at all, which is a worse answer than never offering it.
-   *
-   * On by default. A deployment that cannot allow generated interfaces can explicitly opt out with
-   * OPENBOT_GENERATIVE_UI=false or OPENBOT_GENERATIVE_UI=0.
-   *
-   * What it runs is sandboxed by the SDK, in an iframe with no same-origin access to this app, so a
-   * generated interface reaches this deployment's data only through what the host hands it. This
-   * deployment hands it nothing. It can load libraries from a CDN, which is the part a deployment
-   * that must not reach the public internet from a browser tab needs to weigh.
-   */
-  generativeUi: boolean;
-  /**
-   * Whether the signed-in app shows the banner offering help self-hosting OpenBot.
-   *
-   * On by default, because a fresh clone is somebody evaluating the template. A fork that runs
-   * OpenBot for its own organization turns it off with OPENBOT_SELF_HOST_BANNER=false or
-   * OPENBOT_SELF_HOST_BANNER=0, since its people have nothing to self-host. This is the operator's
-   * switch only; a deployment on a paid Intelligence plan hides the bar too (self-host-banner.ts).
-   */
-  selfHostBanner: boolean;
   /**
    * Where the built app is, when this process serves it.
    *
@@ -646,34 +567,6 @@ function oktaAuth(
 }
 
 /**
- * Resolve the Intelligence contract, or refuse to start.
- *
- * The three addressing values are required together. A partial set is the more dangerous shape than
- * none at all: it means somebody intended to configure Intelligence and got it wrong, so failing on
- * the partial set alone (as this did) let a completely unconfigured deployment through as if that
- * were a choice.
- *
- * COPILOTKIT_LICENSE_TOKEN IS NO LONGER ONE OF THEM. Managed Intelligence issues a single project
- * key and derives entitlement from it, and requiring a second credential here sent people hunting
- * for a token the platform had stopped handing out. It is still read and still forwarded when a
- * deployment sets one, which is what a self-hosted Intelligence with its own licence needs.
- */
-function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
-  const settings = {
-    apiUrl: url(environment, "INTELLIGENCE_API_URL"),
-    gatewayWsUrl: url(environment, "INTELLIGENCE_GATEWAY_WS_URL"),
-    apiKey: optional(environment, "INTELLIGENCE_API_KEY"),
-    licenseToken: optional(environment, "COPILOTKIT_LICENSE_TOKEN"),
-  };
-
-  return {
-    mode: "intelligence",
-    durableHistory: true,
-    intelligence: settings as IntelligenceSettings,
-  };
-}
-
-/**
  * A duration a person would write, as milliseconds.
  *
  * `30m` rather than `1800000`, because this one is read and edited by whoever is deciding how long a
@@ -746,36 +639,9 @@ function computerConfig(environment: Environment): ComputerConfig | undefined {
   };
 }
 
-function accessibilityEnabled(environment: Environment): boolean {
-  const off = optional(environment, "OPENBOT_ACCESSIBILITY_DISABLED");
-  return off !== "true" && off !== "1";
-}
 
-/**
- * Whether a Bot may draw an interface it wrote itself.
- *
- * Default-on, matching the product capability the browser can already render. Operators who cannot
- * allow generated interfaces can explicitly opt out. `false` is the documented spelling and `0` is
- * accepted alongside it as the conventional off value used by environment-driven switches.
- *
- * Anything else leaves the capability on. A typo should not silently become an opt-out, and the
- * capability must stay consistent between runtime and browser projection.
- *
- * The answer has to reach the browser as well as the runtime, which is why it ends up on
- * /api/capabilities rather than staying server-side. Enabling only the runtime half would leave the
- * browser never offering the tool; enabling only the browser half would have a Bot generate a whole
- * interface that nothing renders. See DeploymentConfig.generativeUi.
- */
-function generativeUiEnabled(environment: Environment): boolean {
-  const value = optional(environment, "OPENBOT_GENERATIVE_UI");
-  return value !== "false" && value !== "0";
-}
 
-/** Same rule as generated interfaces: on unless explicitly "false" or "0". */
-function selfHostBannerEnabled(environment: Environment): boolean {
-  const value = optional(environment, "OPENBOT_SELF_HOST_BANNER");
-  return value !== "false" && value !== "0";
-}
+
 
 /**
  * How long the audit trail is kept.
@@ -879,10 +745,7 @@ export function loadConfig(
     )?.replace(/\/+$/, ""),
     tenantPackageDirectory:
       optional(environment, "TENANT_PACKAGE_DIR") ?? "../examples/openduet",
-    runtime: runtimeCapabilities(environment),
-    learning: learningDefault(environment),
-    learningAutoAssign: learningAutoAssignEnabled(environment),
-    ...learningSetupCredential(environment),
+    runtime: { mode: "local" as const, durableHistory: true as const },
     memoryDefaults: {
       sources: switchedOn(environment, "OPENBOT_MEMORY_SOURCE_DEFAULTS"),
       research: switchedOn(environment, "OPENBOT_PROACTIVE_DEFAULTS"),
@@ -892,9 +755,6 @@ export function loadConfig(
     oauth: { google },
     auth,
     singleUser: !auth,
-    accessibility: accessibilityEnabled(environment),
-    generativeUi: generativeUiEnabled(environment),
-    selfHostBanner: selfHostBannerEnabled(environment),
     ...(optional(environment, "APP_DIST_DIR")
       ? { appDistDir: optional(environment, "APP_DIST_DIR") as string }
       : {}),
@@ -912,52 +772,9 @@ export function loadConfig(
   };
 }
 
-/**
- * Same rule as generated interfaces: on unless explicitly "false" or "0". A container named in the
- * environment is a choice, so there is nothing to assign.
- */
-function learningAutoAssignEnabled(environment: Environment): boolean {
-  if (optional(environment, "CPK_INTELLIGENCE_LEARNING_CONTAINER_ID"))
-    return false;
-  const value = optional(environment, "OPENBOT_LEARNING_AUTO_ASSIGN");
-  return value !== "false" && value !== "0";
-}
-
 /** On unless the variable is "false" or "0", the rule every default-on switch here follows. */
 function switchedOn(environment: Environment, name: string): boolean {
   const value = optional(environment, name);
   return value !== "false" && value !== "0";
 }
 
-/** The service token and its project, both or neither. See `DeploymentConfig.learningSetup`. */
-function learningSetupCredential(environment: Environment): {
-  learningSetup?: { serviceToken: string; projectId: string };
-} {
-  const serviceToken = optional(environment, "INTELLIGENCE_SERVICE_TOKEN");
-  const projectId = optional(environment, "INTELLIGENCE_PROJECT_ID");
-  if (!serviceToken && !projectId) return {};
-  if (!serviceToken || !projectId)
-    throw new Error(
-      "INTELLIGENCE_SERVICE_TOKEN and INTELLIGENCE_PROJECT_ID go together: the token creates the openbot Learning container in that project. Set both, or neither.",
-    );
-  if (!/^[1-9][0-9]{0,15}$/.test(projectId))
-    throw new Error(
-      "INTELLIGENCE_PROJECT_ID must be the Intelligence project's numeric ID.",
-    );
-  return { learningSetup: { serviceToken, projectId } };
-}
-
-/** Optional container default; the enabled preference alone does not collect or deliver. */
-function learningDefault(environment: Environment): LearningTarget | undefined {
-  const containerId = optional(
-    environment,
-    "CPK_INTELLIGENCE_LEARNING_CONTAINER_ID",
-  );
-  if (!containerId) return undefined;
-  if (!isLearningContainerId(containerId))
-    throw new TypeError(
-      "CPK_INTELLIGENCE_LEARNING_CONTAINER_ID must use 1–64 lowercase letters, numbers, and single hyphens.",
-    );
-  const revision = optional(environment, "CPK_INTELLIGENCE_SKILLS_REVISION");
-  return { containerId, ...(revision ? { revision } : {}) };
-}

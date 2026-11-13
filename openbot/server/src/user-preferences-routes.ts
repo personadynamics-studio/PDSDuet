@@ -11,7 +11,6 @@ import type { UserPreferencesStore } from "./user-preferences";
 const preferencesPatch = z
   .strictObject({
     messageListEmphasis: z.enum(["agent", "thread"]).optional(),
-    selfHostBannerDismissed: z.boolean().optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0);
 
@@ -44,7 +43,7 @@ export function userPreferencesRoutes(
       return context.json(
         {
           error:
-            "Choose agent or thread for message list emphasis, or true or false for the self-host banner.",
+            "Choose agent or thread for message list emphasis.",
         },
         400,
       );

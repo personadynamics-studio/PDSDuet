@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { IntelligenceAgentRunner } from "@copilotkit/runtime/v2";
 import { workOwner } from "@openbot/shared/work-owner";
 import { eq } from "drizzle-orm";
 import { type AuditStore, handoffInitiator } from "../audit";
@@ -7,9 +6,9 @@ import type { GroupConversations } from "../channels/group";
 import type { ChannelStore } from "../channels/routes";
 import type { ThreadIdentity } from "../channels/thread-identity";
 import type { DeploymentConfig } from "../config";
-import type { mountCopilotRuntime } from "../copilot";
+import type { LocalRuntime } from "../runtime/local-runtime";
 import type { Database } from "../db/client";
-import { intelligenceChannelMappings } from "../db/schema";
+import { threadChannelMappings } from "../db/schema";
 import { repeatAfterEach } from "../work/loop";
 import {
   createWorkQueue,
@@ -35,7 +34,7 @@ export async function startHandoffDelivery(deps: {
   database: Database;
   bootAuditStore: AuditStore;
   actorFor: (ownerUserId: string) => Promise<AgentActor>;
-  copilotRuntime: ReturnType<typeof mountCopilotRuntime>;
+  localRuntime: LocalRuntime;
   threadIdentity: ThreadIdentity;
   groupConversations: GroupConversations;
   channelStore: ChannelStore;
@@ -45,7 +44,7 @@ export async function startHandoffDelivery(deps: {
     database,
     bootAuditStore,
     actorFor,
-    copilotRuntime,
+    localRuntime,
     threadIdentity,
     groupConversations,
     channelStore,
@@ -74,23 +73,15 @@ export async function startHandoffDelivery(deps: {
             "who this is for could not be confirmed, so the Bot was not run",
           );
         }
-        return copilotRuntime.agentFor({
+        return localRuntime.agentFor({
           actor,
           botId,
           initiator: handoffInitiator(fromBotId, initiator),
         });
       },
-      history: copilotRuntime.history,
-      lock: copilotRuntime.threadLock,
-      /*
-       * A scratch thread of the addressed Bot's own, one per hop.
-       *
-       * An Intelligence thread has exactly one agent, so a second Bot cannot answer inside the first
-       * Bot's conversation however it asks. Its turn runs here instead, unmapped to any channel, and
-       * what it said comes back to the conversation that asked through the relay — in the asking
-       * Bot's voice, which is the only voice that thread admits. Minted with the deployment's own
-       * identity, like every thread this deployment starts.
-       */
+      history: localRuntime.history,
+      lock: localRuntime.threadLock,
+      
       mintThreadId: () => threadIdentity.mint(),
       /*
        * The roster, told that a relayed answer landed. The delivery knows only the thread it ran
@@ -99,9 +90,9 @@ export async function startHandoffDelivery(deps: {
        */
       announce: async (input) => {
         const [mapped] = await database
-          .select({ channelId: intelligenceChannelMappings.channelId })
-          .from(intelligenceChannelMappings)
-          .where(eq(intelligenceChannelMappings.threadId, input.threadId))
+          .select({ channelId: threadChannelMappings.channelId })
+          .from(threadChannelMappings)
+          .where(eq(threadChannelMappings.threadId, input.threadId))
           .limit(1);
         // A Bot's group thread maps to no channel; its answer goes to the shared transcript.
         if (!mapped) {
@@ -124,9 +115,7 @@ export async function startHandoffDelivery(deps: {
       // The same address and the same token the runtime uses. Assembling either from configuration
       // produced a runner every join was refused for, because the thread's active run is a lock the
       // platform issues rather than something an API key can claim.
-      runner: new IntelligenceAgentRunner(
-        copilotRuntime.runnerConnection(),
-      ) as never,
+      runner: localRuntime.runner,
     }),
   });
 

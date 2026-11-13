@@ -45,7 +45,7 @@ The output is prepared **for the broker to use with customers**. The phone provi
 ## Technical approach
 
 - **Web interface:** React, TypeScript and TanStack.
-- **Application and agent runtime:** Bun, the OpenBot/CopilotKit platform and LangGraph integration.
+- **Application and agent runtime:** Bun, a local PostgreSQL conversation/run service and the existing OpenAI/LangGraph integration.
 - **Document understanding:** Original PDF input to an OpenAI model, including document pages rather than a text-only extraction.
 - **Remote access:** Tailscale connects a phone browser to the self-hosted application.
 

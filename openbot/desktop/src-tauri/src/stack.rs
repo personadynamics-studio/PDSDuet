@@ -3,7 +3,7 @@
 //! `docker-compose.yml` has no `app`, `server` or `worker` service, and the root `Dockerfile` leaves
 //! out the supervisor because it needs a socket no serverless platform grants. So the shape is not a
 //! choice: containers for postgres, the supervisor, `agent-computer`, the Bots and a one-shot
-//! `migrate`, and three host processes for the rest. `scripts/start.sh` does exactly this for a
+//! `initialize`, and three host processes for the rest. `scripts/start.sh` does exactly this for a
 //! developer. This does it for somebody who double-clicked.
 //!
 
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::engine::Address;
 use crate::problem::Problem;
 
-/// The services Compose owns. `migrate` is deliberately absent: it is run once, to completion,
+/// The services Compose owns. `initialize` is deliberately absent: it is run once, to completion,
 /// rather than raised, and treating it as a long-lived service makes it look like a crash loop.
 const SERVICES: [&str; 3] = ["postgres", "supervisor", "agent-computer"];
 
@@ -103,10 +103,7 @@ pub const HOST_PROCESSES: [HostProcess; 3] = [
         cwd: "server",
         script: "src/production-entry.ts",
     },
-    // `serve`, not `dev`. The dev server sets NODE_ENV to development, and the SDK reads that to
-    // decide whether to draw its developer inspector, so a desktop install opened its first window
-    // on CopilotKit's "What's New" panel covering OpenBot entirely. An installed application should
-    // not be running a development server at all: this builds once and serves the build.
+    // Serve the built frontend in the installed app.
     HostProcess {
         name: "app",
         cwd: "app",
@@ -178,7 +175,7 @@ pub fn installation_images(
     settings: &Secrets,
 ) -> Result<Vec<String>, Problem> {
     let mut requested = selected_services(harness, BundledBots::openai_compatible());
-    requested.push("migrate");
+    requested.push("initialize");
     let mut command = compose_command(engine, root, settings);
     if harness {
         command.args(["--profile", "harness"]);
@@ -253,20 +250,20 @@ pub fn up(
     ))
 }
 
-/// Apply migrations, once, to completion.
+/// Initialize the fresh local database schema.
 ///
 /// A release step rather than a start step, for the reason `server/Dockerfile` gives: two replicas
 /// starting together would race, and a failed migration should stop the start rather than leave a
 /// half-migrated database serving.
-pub fn migrate(
+pub fn initialize(
     engine: &Address,
     root: &Path,
     secrets: &Secrets,
 ) -> Result<(), crate::problem::Problem> {
     let output = compose_command(engine, root, secrets)
-        .args(["run", "--rm", "migrate"])
+        .args(["run", "--rm", "initialize"])
         .output()
-        .map_err(|error| format!("could not run migrations: {error}"))?;
+        .map_err(|error| format!("could not initialize the schema: {error}"))?;
 
     if output.status.success() {
         return Ok(());

@@ -45,8 +45,6 @@ import type { ChannelEventHub } from "./channels/events";
 import { createGroupRoutes, type GroupConversations } from "./channels/group";
 import { type ChannelStore, createChannelRoutes } from "./channels/routes";
 import type { ThreadIdentity } from "./channels/thread-identity";
-import { createThreadRoutes } from "./channels/thread-routes";
-import { createThreadReader } from "./channels/thread-status";
 import { createComponentRoutes } from "./components/routes";
 import type { SandboxedStore } from "./components/sandboxed";
 import { createSandboxedRoutes } from "./components/sandboxed-routes";
@@ -76,11 +74,6 @@ import type { HostAccessBroker } from "./host-access/broker";
 import { createHostAccessRoutes } from "./host-access/routes";
 import { identityRoutes } from "./identity/routes";
 import type { IdentityStore } from "./identity/store";
-import { createIntelligenceClient } from "./intelligence-client";
-import {
-  createLearningRoutes,
-  type LearningAdminDependencies,
-} from "./learning/routes";
 import type { MemoryIngestion } from "./memory/ingestion";
 import { createMemoryRoutes } from "./memory/routes";
 import type { MemoryStore } from "./memory/store";
@@ -130,7 +123,6 @@ import type { RoutineRunner } from "./routines/runner";
 import type { IntentRouter } from "./routing/classify";
 import { createRoutingRoutes } from "./routing/routes";
 import { createCoworkerRoutingService } from "./routing/service";
-import type { SelfHostBanner } from "./self-host-banner";
 import { createTeamBotRoutes } from "./team-bots/routes";
 import type { TeamBots } from "./team-bots/team-bots";
 import type { PackageStatusReader } from "./tenant-package";
@@ -224,14 +216,8 @@ export function createApp(
   auditReader?: AuditReader,
   credentialService?: CredentialAdminService,
   packageStatusReader?: PackageStatusReader,
-  /**
-   * The CopilotKit endpoint, already built by the caller.
-   *
-   * Passed in rather than constructed here so this module never imports the runtime. The runtime
-   * pulls in `eventsource`, which Bun cannot `require()` from a test, so importing it at module
-   * scope broke every server test that touches createApp even though none of them use CopilotKit.
-   */
-  copilotHandler?: HonoApp,
+  /** Authenticated local conversation and run endpoints, built by the caller. */
+  runtimeHandler?: HonoApp,
   /** Computer transport and provider lifecycle. */
   computerGateway?: ComputerGateway,
   /** Bots as durable objects: profile, roster, visibility. */
@@ -296,7 +282,7 @@ export function createApp(
   /**
    * Chooses which coworker an untagged message is for, before a channel is pinned to one.
    *
-   * Passed in already built, like the copilot handler, so this module never imports the model
+   * Passed in already built, like the local runtime handler, so this module never imports the model
    * client. Absent leaves the composer's existing behaviour untouched: an untagged message goes to
    * the default coworker, which is exactly the failsafe the router itself falls back to.
    */
@@ -368,7 +354,7 @@ export function createApp(
    * Appended last, like everything above it: these are positional, so inserting one anywhere else
    * silently shifts every existing call site's arguments by one.
    *
-   * Passed in already built, like the copilot handler and the intent router, so this module never
+   * Passed in already built, like the local runtime handler and the intent router, so this module never
    * imports the vendor's package. Absent leaves the plugin surface reporting that no broker is
    * configured, which is the correct degraded behaviour: a deployment with no Composio API key has
    * no app directory to offer, rather than one that lists apps nobody can connect.
@@ -378,7 +364,6 @@ export function createApp(
   modelProviderProxy?: ModelProviderProxy,
   userPreferences?: UserPreferencesStore,
   voiceSessions?: VoiceSessionServices,
-  learning?: LearningAdminDependencies,
   coworker?: {
     demonstrations?: {
       store: DemonstrationStore;
@@ -440,12 +425,6 @@ export function createApp(
       channels?: DuetChannelStore;
     };
   },
-  /**
-   * Whether to offer help self-hosting, which also hides it from a deployment that pays for
-   * Intelligence. Absent falls back to the operator's switch alone, so a test or a build without the
-   * resolver still answers from `config.selfHostBanner` rather than asking the network.
-   */
-  selfHostBanner?: SelfHostBanner,
   /** A person's own linked accounts. Absent answers 503 on /api/identity. */
   identity?: IdentityStore,
   /** The GitHub sign-in callback, built by the caller; mounted behind requireUser ahead of /api/identity. */
@@ -464,29 +443,12 @@ export function createApp(
       webBotAuthDirectory(context.req.raw, webBotAuth),
     );
   }
-  // Projected, never the raw runtime. config.runtime carries the Intelligence contract, including
-  // INTELLIGENCE_API_KEY and the licence token, and this endpoint is reachable by anyone. Returning
-  // the object wholesale would serve deployment secrets to the browser. Add fields here explicitly.
+  // Expose only the local runtime capabilities and configured application features.
   app.get("/api/capabilities", async (context) =>
     context.json({
       mode: config.runtime.mode,
       durableHistory: config.runtime.durableHistory,
-      /*
-       * Whether a Bot may answer with an interface it wrote itself.
-       *
-       * Projected because the browser holds half of this capability. The runtime middleware turns a
-       * generated interface into the events that paint it, and the SDK's provider registers the tool
-       * that produces one; a deployment that switched the runtime half off while the browser went on
-       * offering the tool would have Bots writing interfaces nothing ever draws. One flag, read by
-       * both halves, so off means off.
-       */
-      generativeUi: config.generativeUi,
       localEvaluation: config.singleUser,
-      // Whether to offer help self-hosting OpenBot. A fork running it for its own people turns it off,
-      // and a deployment that pays for Intelligence never sees it. See self-host-banner.ts.
-      selfHostBanner: selfHostBanner
-        ? await selfHostBanner.shown()
-        : config.selfHostBanner,
       transcription: Boolean(config.transcription),
       voice: Boolean(config.voice),
       /*
@@ -550,10 +512,6 @@ export function createApp(
       channelStore,
       agentProfileStore,
       voiceSessions,
-      learning?.status
-        ? async (agentId) =>
-            (await learning.status?.(agentId))?.configured ?? false
-        : undefined,
     ),
   );
 
@@ -683,17 +641,6 @@ export function createApp(
 
     return context.json({ instructions: saved });
   });
-  if (learning) {
-    app.route(
-      "/api/admin/learning",
-      createLearningRoutes(
-        learning,
-        requireUser,
-        config.appUrl ? [config.appUrl] : [],
-        auditStore,
-      ),
-    );
-  }
   app.get("/api/admin/status", requireUser, (context) => {
     return context.json({ status: "ok" });
   });
@@ -1162,16 +1109,7 @@ export function createApp(
       return context.json({ accepted: true }, 202);
     });
   }
-  // The CopilotKit runtime, behind the same session guard as every other API route. Mounted last so
-  // its own routing under /api/copilotkit cannot shadow an OpenBot route declared above.
-  if (copilotHandler) {
-    // Mounted at the ROOT with the handler carrying its own basePath. Mounting it at
-    // "/api/copilotkit" as well double-prefixes it: Hono strips the prefix before the handler sees
-    // the path, so every route lands at /api/copilotkit/api/copilotkit/* and /info 404s. The browser
-    // reports that as "Runtime info request failed with status 404" and every run fails before it
-    // starts, with nothing at all in the server log.
-    app.route("/", copilotHandler);
-  }
+  if (runtimeHandler) app.route("/", runtimeHandler);
 
   if (computerGateway) {
     app.route("/api/computers", createComputerRoutes(computerGateway, requireUser, pageFrames));
@@ -1670,20 +1608,8 @@ export function createApp(
   }
 
   if (threadIdentity) {
-    app.route(
-      "/api/threads",
-      createThreadRoutes(
-        threadIdentity,
-        requireUser,
-        // config.ts refuses to boot without the full Intelligence contract (see copilot.ts's
-        // header comment), so `config.runtime.intelligence` is never missing here. Built from it
-        // rather than assumed, though: this is the one place besides the runtime mount itself that
-        // needs to reach Intelligence, and it should keep working unmodified if that guarantee ever
-        // loosens and a deployment can legitimately have no reader to build.
-        createThreadReader(
-          createIntelligenceClient(config.runtime.intelligence),
-        ),
-      ),
+    app.post("/api/threads/mint", requireUser, (context) =>
+      context.json({ threadId: threadIdentity.mint() }),
     );
   }
 

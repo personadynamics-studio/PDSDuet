@@ -1,19 +1,4 @@
-/**
- * Whether a Bot may take one particular action on one particular page.
- *
- * Mirrors the policy engine in CopilotKit's enterprise agent gateway rather than being re-derived, so
- * a rule written here means the same thing there. Kept from it: CEL expressions, `dry-run` vs
- * `enforce`, default-deny, and fail-closed evaluation. Added here: a `deny` list, because an
- * allow-only policy can only forbid one thing by withdrawing permission from everything.
- *
- * CEL instead of a rule table. The boundary a company wants is a sentence: "never click anything
- * that says Submit on a page outside our own domain". A table of columns can express the shapes we
- * thought of; an expression language can express the one they thought of. This is also the language
- * the enterprise gateway already speaks, so a rule written here means the same thing there.
- *
- * Precedence: deny beats allow. A rule that removes permission must never be
- * defeated by a broader rule that grants it, or a company cannot reason about what it has forbidden.
- */
+
 import { evaluate } from "cel-js";
 import type { AuditInitiator, AuditInitiatorKind } from "../audit";
 
@@ -177,11 +162,8 @@ export type PolicyContext = {
 /**
  * The initiator as the policy sees it, defaulting to a person.
  *
- * A person is the honest default rather than a convenient one: every path that does not carry an
- * initiator today is one a person drove. The computer gateway is the case worth naming — a Bot's
- * computer is driven by frontend tools in the browser (`app/src/lib/copilot/computer-tools.tsx`), so
- * every action reaching that gateway came from somebody's session. When that stops being true, the
- * call site has to say so rather than inherit this.
+ * A person is the default for actions requested in their session. Server-owned background turns
+ * pass their own initiator explicitly so policy and audit retain who started the work.
  */
 export function policyInitiator(
   initiator?: AuditInitiator,

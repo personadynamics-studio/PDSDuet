@@ -188,12 +188,7 @@ function MemoryRow({
     enabled?: boolean;
     reviewState?: "confirmed";
   }) => save.mutate({ id: memory.id, input });
-  // Intelligence keeps only the words of a memory it holds for this person, so it can be edited or
-  // forgotten here but not paused or reviewed.
-  const heldByIntelligence = memory.formedBy === "intelligence";
-  const status = heldByIntelligence
-    ? "儲存於 Intelligence"
-    : !memory.enabled
+  const status = !memory.enabled
       ? "已關閉"
       : memory.formedBy === "bot"
         ? `由 ${botName} 建立${memory.reviewState === "unreviewed" ? " · 尚待審閱" : ""}`
@@ -266,7 +261,6 @@ function MemoryRow({
           </p>
         )}
       </ItemContent>
-      {heldByIntelligence ? null : (
         <ItemActions>
           {/* Binary and immediate: Bots stop or start using it when switched. */}
           <Switch
@@ -276,7 +270,6 @@ function MemoryRow({
             onCheckedChange={(enabled) => update({ enabled })}
           />
         </ItemActions>
-      )}
       {editing ? (
         <EditMemoryDialog
           memory={memory}

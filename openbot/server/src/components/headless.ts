@@ -5,25 +5,7 @@ import type { HeadlessTool } from "@openbot/toolkit/headless-tools";
 import type { ComponentCatalog } from "@openbot/toolkit/ports";
 import type { ComponentStore } from "./store";
 
-/**
- * Gallery components a headless turn can answer with, when no browser is attached to draw them.
- *
- * In a person's own turn a component is a frontend tool: the browser registers it, asks the server
- * whether this Bot may use it, and draws it. A routine or responsibility turn has no browser, so the
- * same call would go unanswered. Here the server answers it instead, under the SAME governance: the
- * published description, the per-Bot withholding and the data-function grants in `store.ts`, decided
- * again at call time. The call and its result reach the Intelligence thread as ordinary AG-UI tool
- * events, so opening the conversation later draws the real component with the renderer the app
- * registers under the same name. Nothing here draws anything.
- *
- * THE PARAMETER SCHEMAS ARE A MIRROR of the ones beside each React chart and card in
- * `app/src/components/gallery/`. The server image does not ship the app's sources, and a shared
- * module cannot import zod under the isolated install, so the schema is declared twice and
- * `server/tests/headless-components.test.ts` fails the moment the two stop producing the same JSON
- * Schema. Decisions (`askApproval`, `askChoice`, `askForm`) are deliberately absent: they suspend
- * the run for a person's answer, which a headless turn reaches through `ask_person`, not by drawing a
- * card nobody is looking at.
- */
+
 
 const point = z.object({
   label: z

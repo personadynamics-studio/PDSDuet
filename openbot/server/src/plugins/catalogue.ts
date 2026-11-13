@@ -499,7 +499,7 @@ const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
       "resume_trigger",
       "delete_trigger",
     ]),
-    docsUrl: "https://github.com/CopilotKit/OpenBot/blob/main/docs/routines.md",
+    docsUrl: "https://github.com/local runtime/OpenBot/blob/main/docs/routines.md",
   },
 ]);
 

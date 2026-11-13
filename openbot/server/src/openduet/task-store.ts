@@ -17,7 +17,7 @@ import type { Database } from "../db/client";
 import {
   approvalRequests,
   channels,
-  intelligenceChannelMappings,
+  threadChannelMappings,
   workItems,
 } from "../db/schema";
 import { type OpenDuetTaskOrigin, openduetTasks } from "../db/schema/openduet";
@@ -300,14 +300,14 @@ export function createTaskStore(
     }
     const threads = await database
       .select({
-        channelId: intelligenceChannelMappings.channelId,
-        threadId: intelligenceChannelMappings.threadId,
+        channelId: threadChannelMappings.channelId,
+        threadId: threadChannelMappings.threadId,
       })
-      .from(intelligenceChannelMappings)
+      .from(threadChannelMappings)
       .where(
         and(
-          eq(intelligenceChannelMappings.userId, owner),
-          inArray(intelligenceChannelMappings.channelId, channelIds),
+          eq(threadChannelMappings.userId, owner),
+          inArray(threadChannelMappings.channelId, channelIds),
         ),
       );
     const channelOfThread = new Map(
@@ -459,17 +459,17 @@ export function createTaskStore(
         })
         .from(workItems)
         .innerJoin(
-          intelligenceChannelMappings,
+          threadChannelMappings,
           and(
-            eq(intelligenceChannelMappings.userId, owner),
-            eq(intelligenceChannelMappings.threadId, responseThread),
+            eq(threadChannelMappings.userId, owner),
+            eq(threadChannelMappings.threadId, responseThread),
           ),
         )
         .innerJoin(
           openduetTasks,
           and(
             eq(openduetTasks.ownerUserId, owner),
-            eq(openduetTasks.channelId, intelligenceChannelMappings.channelId),
+            eq(openduetTasks.channelId, threadChannelMappings.channelId),
           ),
         )
         .where(

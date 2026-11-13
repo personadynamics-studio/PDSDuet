@@ -13,7 +13,6 @@ pub const FILE: &str = ".openbot-saved.json";
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {
-    Intelligence,
     OpenAiApiKey,
     AnthropicApiKey,
     ClaudePlan,
@@ -65,7 +64,6 @@ impl SavedIntent {
 
     fn record(&mut self, secrets: &BTreeMap<String, String>, credential: &ModelCredential) {
         for (key, category) in [
-            ("INTELLIGENCE_API_KEY", Category::Intelligence),
             ("OPENAI_API_KEY", Category::OpenAiApiKey),
             ("ANTHROPIC_API_KEY", Category::AnthropicApiKey),
             ("CLAUDE_CODE_OAUTH_TOKEN", Category::ClaudePlan),

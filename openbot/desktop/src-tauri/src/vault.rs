@@ -22,7 +22,7 @@ use crate::problem::Problem;
 Whether a setting is a credential.
 
 By name, and the list is the point. A classifier that guessed from the value would be wrong in both
-directions: `INTELLIGENCE_API_URL` looks like nothing and `POSTGRES_PORT` looks like nothing, while
+directions: `OPENAI_BASE_URL` looks like nothing and `POSTGRES_PORT` looks like nothing, while
 a generated token looks exactly like a random string of settings. Anything not named here is a
 setting and goes in the file where somebody can read it.
 */
@@ -30,8 +30,7 @@ pub fn is_secret(key: &str) -> bool {
     matches!(
         key,
         // Somebody's own credentials, pasted or signed in for.
-        "INTELLIGENCE_API_KEY"
-            | "OPENAI_API_KEY"
+        "OPENAI_API_KEY"
             | "ANTHROPIC_API_KEY"
             | "CLAUDE_CODE_OAUTH_TOKEN"
             // Retired, and still swept up: a machine that ran an older version has one of these.

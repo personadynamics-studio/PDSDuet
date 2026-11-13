@@ -3,9 +3,10 @@ import type { BaseEvent } from "@ag-ui/client";
 import type { Env, Hono } from "hono";
 import { type Observable, tap } from "rxjs";
 
-export type DesktopConnectionFailure =
-  | { connection: "model"; code: "provider_authentication_failed" }
-  | { connection: "intelligence"; code: "intelligence_authentication_failed" };
+export type DesktopConnectionFailure = {
+  connection: "model";
+  code: "provider_authentication_failed";
+};
 
 const failures = new Map<
   DesktopConnectionFailure["connection"],

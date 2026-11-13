@@ -1,22 +1,4 @@
-/**
- * The OpenTag pairing: OpenBot's Slack and Microsoft Teams reachability.
- *
- * OpenTag (CopilotKit's open-source Slack/Teams front on the Channels SDK) calls one AG-UI agent at
- * `AGENT_URL` with `Authorization: AGENT_AUTH_HEADER`. OpenBot is that agent: the shared secret is
- * checked in constant time, OpenTag's structured sender context names the Slack/Teams person, and the
- * person's authenticated delivery binding decides which owner, Bot and canonical thread the turn runs
- * in. Nothing in the message text or the RunAgentInput can choose an owner.
- *
- * Human-in-the-loop follows OpenTag's `confirm_write` contract (`app/interrupt.ts`,
- * `app/human-in-the-loop/confirm-write.tsx`): a CUSTOM `on_interrupt` event whose value carries
- * `__opentag_interrupt_id__` (32 lowercase hex) and `__copilotkit_interrupt_value__`
- * `{ action: "confirm_write", args }`. A card click re-runs the agent with
- * `forwardedProps.command.resume = { [interruptId]: { confirmed, always?, by } }`. The interrupt id is
- * the OpenBot approval id without dashes, and the decision still goes through the approvals service.
- *
- * Proactive messages (no Slack turn open) go the other way: OpenBot POSTs to OpenTag's
- * `/openbot/deliver`, because a managed Channel can only post inside a live delivery.
- */
+
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { DELIVERY_REQUEST_TIMEOUT_MS } from "../timeouts";

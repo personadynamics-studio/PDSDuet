@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import type { GalleryComponent } from "@/lib/copilot/gallery-registry";
+import type { GalleryComponent } from "@/lib/chat/gallery-registry";
 import { Badge, GalleryFrame } from "./frame";
 
 /**
@@ -240,11 +240,7 @@ function readChoice(result: string | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * `kind: "decision"` is what makes these suspend the run: they are registered with
- * `useHumanInTheLoop` rather than as ordinary tools, and the person's answer IS the tool result, so
- * there is no confirmation line to give the model.
- */
+
 export const GALLERY: GalleryComponent[] = [
   {
     name: "askApproval",

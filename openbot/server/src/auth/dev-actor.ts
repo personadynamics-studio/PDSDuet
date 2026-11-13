@@ -3,23 +3,7 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import type { AppVariables, AuthenticatedActor } from "./guards";
 
-/**
- * A signed-in person, without signing in.
- *
- * A deployment with no identity provider is one administrator and no sign-in, so `bun run dev`
- * reaches the product without registering an OAuth client first. Nobody should have to set up Entra
- * to look at a Bot. `.env.example` ships that line switched on, so a clone still runs with no
- * configuration at all.
- *
- * The lock is the flag and nothing else. It used to be `NODE_ENV`, which is exactly backwards:
- * `NODE_ENV` is unset by default, so the one case it had to catch was the one it let through. A
- * container run on a VM with a hand-written env file and no provider served every visitor on the
- * internet as an administrator, and said nothing, because it looked like it was working. Now the
- * deployment refuses to start unless somebody wrote down that they meant it.
- *
- * The actor is an administrator so admin surfaces can be reached too, and its id is fixed so
- * Intelligence threads and memory stay attached to the same person across restarts.
- */
+
 
 export const DEV_ACTOR: AuthenticatedActor = {
   id: "dev-local-user",

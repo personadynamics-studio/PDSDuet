@@ -19,7 +19,7 @@ import { and, eq, gt, gte, isNull, like, lt, or, sql } from "drizzle-orm";
 import postgres from "postgres";
 import type { Database } from "../db/client";
 import {
-  intelligenceChannelMappings,
+  threadChannelMappings,
   openduetTasks,
   workItems,
 } from "../db/schema";
@@ -295,7 +295,7 @@ export function createWorkQueue(database: Database): WorkQueue {
         return taskOrder
           ? sql`case when ${sql.identifier(alias)}.kind = 'person.response' then (
               select task.id from ${openduetTasks} as task
-              inner join ${intelligenceChannelMappings} as mapping
+              inner join ${threadChannelMappings} as mapping
                 on mapping.channel_id = task.channel_id
               where task.owner_user_id = ${payload}->>'ownerUserId'
                 and mapping.user_id = task.owner_user_id

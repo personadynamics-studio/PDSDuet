@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: postgres:17
     # Off the network the Bots are on, because a Bot's computer is on it and a Bot has a shell.
     #
     # With no `networks:` anywhere, Compose puts every service on one network with DNS by service
@@ -10,7 +10,7 @@ services:
     # says it plainly: isolation is the container's job, a shell can reach whatever the container
     # can reach.
     #
-    # `migrate` is the only service that reaches this by name, so the two of them are all that
+    # `initialize` is the only service that reaches this by name, so the two of them are all that
     # belongs here. Everything else that needs the database is outside this file: the API server
     # runs on the host in local development and connects through the published port below.
     environment:
@@ -29,7 +29,7 @@ services:
     networks:
       - data
 
-  migrate:
+  initialize:
     build:
       context: .
       dockerfile: server/Dockerfile
@@ -45,12 +45,8 @@ services:
     # than relying on this variable.
     image: ${SERVER_IMAGE:-openbot-server:latest}
     pull_policy: ${IMAGE_PULL_POLICY:-build}
-    # The server's own migrator, which is what this image actually ships: `drizzle-kit` is a
-    # development dependency that `bun x` had to fetch at run time, and it is the one migrator that
-    # will skip a migration stamped below what the database has already recorded and still report
-    # success (see server/src/db/migration-reach.ts). The local stack is a developer's database and
-    # therefore one of the places that happens.
-    command: ["bun", "scripts/migrate.ts"]
+    # Initialize this version's fresh database schema. Existing data is not migrated.
+    command: ["bun", "scripts/initialize.ts"]
     environment:
       DATABASE_URL: postgres://openbot:openbot@postgres:5432/openbot
     depends_on:
@@ -164,7 +160,7 @@ services:
     build:
       context: .
       dockerfile: supervisor/Dockerfile
-    # Published by a release; see migrate above for what pull_policy decides.
+    # Published by a release; see initialize above for what pull_policy decides.
     image: ${SUPERVISOR_IMAGE:-openbot-supervisor:latest}
     pull_policy: ${IMAGE_PULL_POLICY:-build}
     # The same file, because this process does not read these itself: it forwards every EGRESS_PROXY
@@ -223,7 +219,7 @@ services:
     build:
       context: .
       dockerfile: agent-bot/Dockerfile
-    # Published by a release; see migrate above for what pull_policy decides.
+    # Published by a release; see initialize above for what pull_policy decides.
     image: ${BOT_IMAGE:-openbot-agent-bot:latest}
     pull_policy: ${IMAGE_PULL_POLICY:-build}
     ports:
@@ -298,7 +294,7 @@ services:
     build:
       context: .
       dockerfile: agent-langgraph/Dockerfile
-    # Published by a release; see migrate above for what pull_policy decides.
+    # Published by a release; see initialize above for what pull_policy decides.
     image: ${LANGGRAPH_IMAGE:-openbot-agent-langgraph:latest}
     pull_policy: ${IMAGE_PULL_POLICY:-build}
     ports:

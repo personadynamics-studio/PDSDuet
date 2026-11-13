@@ -2,24 +2,9 @@
  * Keeping a thread's lock while a run works, shared by every turn that takes one.
  */
 
-/**
- * Whether a failed renewal means the lock now belongs to somebody else.
- *
- * The platform answers a renewal for a lock this run no longer owns — expired, or taken by another
- * run — with 409 `THREAD_LOCK_RENEWAL_FAILED`, which it marks as not retryable. That is the fast way
- * to find out. It is not the only one: `keepLease` also stops once renewals have failed for longer
- * than the lock lives, whatever the failures were, so a runtime upgrade that renames this error
- * delays the stop to the lifetime rather than removing it.
- *
- * Matched on the shape, as `isMissingThread` is, because `PlatformRequestError` is not exported by
- * `@copilotkit/runtime`.
- */
+/** A local SQL lease conflict means this run no longer owns the conversation. */
 export function isLockConflict(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.name === "PlatformRequestError" &&
-    (error as { status?: unknown }).status === 409
-  );
+  return error instanceof Error && 'status' in error && error.status === 409;
 }
 
 /** The initial acquisition was refused: this turn has not run and may be deferred safely. */

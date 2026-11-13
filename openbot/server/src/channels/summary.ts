@@ -21,7 +21,7 @@ import type { Database } from "../db/client";
 import {
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  threadChannelMappings,
   workItems,
 } from "../db/schema";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
@@ -43,7 +43,7 @@ const MAX_EXCERPT_GRAPHEMES = 600;
 /** A seam, so a test drives every path with no key and no network. Null means nothing worth writing. */
 export type ChannelTitler = (excerpt: string) => Promise<string | null>;
 
-/** The one method of the Intelligence client this file uses. Narrowed for the same reason. */
+
 export type ThreadTranscript = {
   getThreadMessages(params: { threadId: string; userId: string }): Promise<{
     messages: { role: string; content?: unknown }[];
@@ -210,10 +210,7 @@ export async function summariseClaimedChannels(
   return report;
 }
 
-/**
- * Three words, not a boolean, so `"not yet"` is told apart from the rest: a conversation offered the
- * instant somebody speaks may have no message in Intelligence yet, and finishing it never names it.
- */
+
 type Attempt = "written" | "not yet" | "nothing to name it with";
 
 async function summariseOne(
@@ -232,14 +229,14 @@ async function summariseOne(
   const [owner] = await options.database
     .select({
       userId: channelMemberships.userId,
-      threadId: intelligenceChannelMappings.threadId,
+      threadId: threadChannelMappings.threadId,
     })
     .from(channelMemberships)
     .innerJoin(
-      intelligenceChannelMappings,
+      threadChannelMappings,
       and(
-        eq(intelligenceChannelMappings.channelId, channelMemberships.channelId),
-        eq(intelligenceChannelMappings.userId, channelMemberships.userId),
+        eq(threadChannelMappings.channelId, channelMemberships.channelId),
+        eq(threadChannelMappings.userId, channelMemberships.userId),
       ),
     )
     .where(eq(channelMemberships.channelId, channelId))

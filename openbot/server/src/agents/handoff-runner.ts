@@ -535,15 +535,7 @@ function clip(answer: string): string {
   return `${cutAtCodeUnits(answer, RELAY_ANSWER_LIMIT)}\n\n[…the answer was cut here for length]`;
 }
 
-/**
- * The same failure, in words that can be said out loud.
- *
- * The reason on a failed hop is whatever threw, and one of the things that throws is the platform
- * client, whose message is `Intelligence platform error 409: {"error":{...}}` — a response body,
- * verbatim. That reason is interpolated into the notice a Bot then paraphrases to a person, so an
- * internal error envelope ends up in somebody's chat. The trail keeps the whole thing; the sentence
- * gets the shape of the problem.
- */
+
 function forThePerson(reason: string): string {
   const platform = reason.match(/^Intelligence platform error (\d{3})\b/);
   if (platform) {

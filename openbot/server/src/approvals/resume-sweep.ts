@@ -9,7 +9,7 @@ import type { GroupConversations } from "../channels/group";
 import type { ChannelStore } from "../channels/routes";
 import type { Database } from "../db/client";
 import {
-  intelligenceChannelMappings,
+  threadChannelMappings,
   responsibilityRuns,
   routineRuns,
 } from "../db/schema";
@@ -123,12 +123,12 @@ export function createApprovalResumeTick(deps: {
               approvalId,
             );
             const [source] = await database
-              .select({ channelId: intelligenceChannelMappings.channelId })
-              .from(intelligenceChannelMappings)
+              .select({ channelId: threadChannelMappings.channelId })
+              .from(threadChannelMappings)
               .where(
                 and(
-                  eq(intelligenceChannelMappings.userId, input.ownerUserId),
-                  eq(intelligenceChannelMappings.threadId, snapshot.threadId),
+                  eq(threadChannelMappings.userId, input.ownerUserId),
+                  eq(threadChannelMappings.threadId, snapshot.threadId),
                 ),
               )
               .limit(1);

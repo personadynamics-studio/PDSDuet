@@ -77,6 +77,5 @@ EXPOSE 3001
 
 WORKDIR /app/server
 
-# Migrations are a release step, not a start step: two replicas starting together would race, and a
-# failed migration should stop a deploy rather than leave a half-migrated database serving.
+# Fresh database initialization is an explicit deployment step using server/schema.sql.
 CMD ["bun", "src/production-entry.ts"]

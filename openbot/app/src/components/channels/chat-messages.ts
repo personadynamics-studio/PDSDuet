@@ -60,13 +60,7 @@ export type SentAttachment = {
   modality: "image" | "document";
 };
 
-/**
- * The SDK's own tool for drawing an interface, whose output is an activity rather than a result.
- *
- * Named here rather than imported because the SDK exports the renderer and the argument schema but
- * not the tool name; it is the string the runtime middleware matches on to emit the activity.
- */
-const GENERATE_SANDBOXED_UI = "generateSandboxedUi";
+
 
 /**
  * A content part this projection is willing to read, checked rather than trusted.
@@ -220,52 +214,7 @@ function readUrlSource(part: { type: string }): {
   };
 }
 
-/**
- * WHAT A FILE IS DRAWN AS, DECIDED FROM THE BYTES WHEN THE BYTES HAVE BEEN READ, AND FROM THE
- * BROWSER'S GUESS ONLY WHEN THEY HAVE NOT.
- *
- * A staged attachment's `type` is a guess made before the file was uploaded and never revisited.
- * Verified against the installed SDK rather than assumed: `useAttachments.processFiles` sets
- * `type: getModalityFromMimeType(file.type)` on the placeholder, and that function maps everything
- * that is not `image/`, `audio/` or `video/` to `"document"`; when `onUpload` answers, the merge is
- * `{ ...att, source, status: "ready", thumbnail, metadata }`, which replaces the SOURCE and never
- * the `type`. So the stale guess and the server's answer sit side by side on the same object.
- *
- * THE DISAGREEMENT IS ENGINEERED, NOT EXOTIC. `composer/picked-files.ts` deliberately passes a
- * claim that names no format — `application/octet-stream`, or `""` — so that the server is the one
- * that decides, from `sniffMimeType` over the actual bytes. A PNG dragged out of an editor is
- * therefore an attachment whose `type` says `document` and whose source says `image/png`.
- *
- * IT IS NOT ONLY THE WRONG PICTURE, AND THE LOUD HALF IS THE ONE THAT MATTERS. A text file claimed
- * as an image draws an `<img>` the browser cannot decode, `onError` fires, and the tile asserts in
- * the file's own name that it is unavailable — telling somebody a file was deleted while it sits
- * there intact. That is the reason this function exists.
- *
- * The other direction used to be argued here as a cost and no longer is. `SentAttachmentTile` does
- * send a HEAD probe for a document and none for an image, and this paragraph claimed the probe
- * "costs the server the whole file out of Postgres", so that a mislabelled screenshot bought "a
- * megabyte read on every render of the transcript". The attachment route has since grown a HEAD
- * branch that selects `sizeBytes` and never the bytes, so what a mislabelled screenshot buys is one
- * cheap metadata round trip nobody needed. Still waste, not worth a sentence in this size — kept
- * only to say that the sentence it replaces is wrong, since two review rounds read it as current.
- *
- * `classifyAttachment` RATHER THAN `mimeType.startsWith("image/")`, and this is the load-bearing
- * choice. It is the same function `server/src/channels/attachment-parts.ts` gates on, so a picture
- * is drawn to the person exactly when a picture was put in front of the Bot; the two sides cannot
- * drift because they ask one question. It also settles HEIC correctly — an image by media type that
- * no `<img>` here can render, whose honest tile is the card naming the file.
- *
- * THE FALLBACK IS THE DECLARED TYPE, NOT `"document"`. `mimeType` is optional on both schemas, so a
- * part without one is well-formed rather than malformed, and today that is EVERY sent message: see
- * the note at the `modality` field in `toVisibleChatItems`. Collapsing them to file cards would
- * break every stored transcript that renders correctly now, which is a far larger population than
- * the mislabelled files this exists to fix.
- *
- * Exported because the QUEUE asks the same question of a parked message (`parkedTiles` in
- * `chat-transcript.tsx`) and a second copy of this rule is a second thing to get wrong. Those tiles
- * are meant to be the ones the turn will draw once it runs, so two rules that disagreed would show
- * as a tile changing shape at the moment of sending.
- */
+
 export function attachmentModality(
   declaredType: string,
   mimeType?: string,
@@ -432,7 +381,6 @@ export function toVisibleChatItems(
          * `gap-6` column, so every generated interface gained a stray gap under it. The activity
          * beside it already shows its own progress while it is being written.
          */
-        if (toolCall.function.name === GENERATE_SANDBOXED_UI) continue;
         items.push({
           kind: "tool",
           // One assistant message can carry multiple tool calls.
@@ -606,13 +554,7 @@ export function toVisibleChatItems(
   });
 }
 
-/**
- * The server's reply chips (server/src/openduet/replies.ts), drawn by `reply-chips-tool.tsx`, the
- * pages it makes (server/src/openduet/pages.ts), drawn by `page-card-tool.tsx`, the tasks a
- * check-in offers (server/src/openduet/offers.ts), drawn by `offer-task-tool.tsx`, and the tasks it
- * starts (server/src/openduet/tasks.ts), drawn by `task-card-tool.tsx`. Named here as
- * `GENERATE_SANDBOXED_UI` is: the projection only needs the strings.
- */
+
 const SUGGEST_REPLIES = "suggest_replies";
 const MAKE_PAGE = "make_page";
 const OFFER_TASK = "offer_task";

@@ -5,12 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 mod desktop_host_access;
-mod desktop_telemetry;
 
 use openbot_desktop_lib::{
-    acquire, deployment, deployment_release, engine, env as openbot_env, harness, host_access,
+    acquire, deployment, engine, env as openbot_env, harness, host_access,
     install, preparation, problem::Problem, provider, pull_metrics, quiet, stack,
-    telemetry, tray, windows as win,
+    tray, windows as win,
 };
 
 const QUIT_MENU_ACCELERATOR: &str = "CmdOrCtrl+KeyQ";
@@ -35,13 +34,6 @@ struct Shell {
     last_failure: Mutex<Option<openbot_desktop_lib::problem::Problem>>,
     selected_root: Mutex<Option<PathBuf>>,
     root: Mutex<Option<PathBuf>>,
-    /// An Intelligence sign-in waiting for its loopback callback.
-    signing_in_to_intelligence:
-        Mutex<Option<openbot_desktop_lib::intelligence::SigningInToIntelligence>>,
-    /// The credential that sign-in produced, held so a project can be chosen with it.
-    intelligence_credential: Mutex<Option<String>>,
-    self_hosted_intelligence:
-        Mutex<Option<std::sync::Arc<openbot_desktop_lib::self_hosted_intelligence::SigningIn>>>,
     /// A ChatGPT sign-in waiting for the browser redirect to complete it.
     ///
     /// Held for the same reason the Claude one is: a person leaves and comes back in the middle.
@@ -90,7 +82,6 @@ struct SavedModelSessions {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedConfiguration {
-    intelligence_api_key: Option<bool>,
     model_api_keys: SavedModelApiKeys,
     model_sessions: SavedModelSessions,
     model: Option<openbot_desktop_lib::saved_intent::ModelIntent>,
@@ -110,17 +101,6 @@ fn report<R: tauri::Runtime>(
     ok: bool,
     detail: impl Into<String>,
 ) {
-    if !ok {
-        let error_class = match step {
-            "install-engine" => telemetry::SetupErrorClass::EngineInstallFailed,
-            "engine" | "create-machine" | "start-machine" | "health-gate" => {
-                telemetry::SetupErrorClass::EngineUnavailable
-            }
-            "env" | "ports" => telemetry::SetupErrorClass::InvalidConfiguration,
-            _ => telemetry::SetupErrorClass::Unknown,
-        };
-        desktop_telemetry::failure(app, error_class);
-    }
     let _ = app.emit(
         "setup:progress",
         Progress {
@@ -151,18 +131,7 @@ fn report_running<R: tauri::Runtime>(
     );
 }
 
-fn cancel_self_hosted_sign_in(shell: &Shell) {
-    let signing = shell.self_hosted_intelligence.lock().unwrap().take();
-    if let Some(signing) = signing {
-        signing.cancel();
-    }
-}
-
 fn remember_selected_root(shell: &Shell, root: &Path) {
-    let changed = shell.selected_root.lock().unwrap().as_deref() != Some(root);
-    if changed {
-        cancel_self_hosted_sign_in(shell);
-    }
     *shell.selected_root.lock().unwrap() = Some(root.to_path_buf());
 }
 
@@ -179,7 +148,6 @@ fn cleanup_root(shell: &Shell, fallback_root: &Path) -> PathBuf {
 #[tauri::command]
 fn detect_engine<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> engine::EngineStatus {
     let status = engine::detect();
-    desktop_telemetry::observe_engine(&app, &status);
     status
 }
 
@@ -188,35 +156,7 @@ fn windows_blocker<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<win::Blocker>, Problem> {
     let result = win::blocker();
-    if cfg!(target_os = "windows") {
-        use telemetry::WindowsStageOutcome as Outcome;
-        let outcome = match &result {
-            Ok(None) => Outcome::Ready,
-            Ok(Some(win::Blocker::WslAbsent)) => Outcome::WslAbsent,
-            Ok(Some(win::Blocker::WslOne)) => Outcome::WslOne,
-            Ok(Some(win::Blocker::WslNoKernel)) => Outcome::WslNoKernel,
-            Ok(Some(win::Blocker::VirtualMachinePlatformDisabled)) => {
-                Outcome::VirtualMachinePlatformDisabled
-            }
-            Ok(Some(win::Blocker::VirtualizationDisabled)) => Outcome::VirtualizationDisabled,
-            Ok(Some(win::Blocker::NotAdministrator)) => Outcome::NotAdministrator,
-            Err(_) => Outcome::CheckFailed,
-        };
-        desktop_telemetry::record(&app, telemetry::EventData::WindowsStage { outcome });
-    }
     result
-}
-
-#[tauri::command]
-fn record_setup_event<R: tauri::Runtime>(app: tauri::AppHandle<R>, event: serde_json::Value) {
-    if let Ok(
-        event @ (telemetry::EventData::StepViewed { .. }
-        | telemetry::EventData::HarnessChosen { .. }
-        | telemetry::EventData::ModelChosen { .. }),
-    ) = serde_json::from_value(event)
-    {
-        desktop_telemetry::record(&app, event);
-    }
 }
 
 #[tauri::command]
@@ -251,7 +191,7 @@ async fn prepare_installation(app: tauri::AppHandle, root: String, harness: Opti
         }
         images.sort(); images.dedup();
         for image in images {
-            pull_metrics::pull_image(&address, &image, |_| {}, |metrics| desktop_telemetry::pull_completed(&app, metrics))?;
+            pull_metrics::pull_image(&address, &image, |_| {}, |_| {})?;
         }
         preparation::save_selected_root(&app.path().app_config_dir().map_err(|e| Problem::from(e.to_string()))?, &root)?;
         report(&app, "installation", true, "Local software installed.");
@@ -261,7 +201,6 @@ async fn prepare_installation(app: tauri::AppHandle, root: String, harness: Opti
 
 async fn engine_ready(app: &tauri::AppHandle) -> Result<engine::Address, Problem> {
     let found = engine::detect();
-    desktop_telemetry::observe_engine(app, &found);
     let address = match found.address {
         Some(address) => address,
         None => {
@@ -286,49 +225,19 @@ async fn engine_ready(app: &tauri::AppHandle) -> Result<engine::Address, Problem
     Ok(address)
 }
 
-/// Install the latest published deployment on first use, then keep its recorded version.
-///
-/// Local preparation fetches the manifest needed by both launch and plan sign-in images.
-/// An installed deployment keeps its exact tag without consulting GitHub again.
+/// Use the local PDSDuet bundle selected by the person; never download an upstream tree.
 async fn deployment_ready<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     root: &Path,
 ) -> Result<(), Problem> {
-    report_running(app, "deployment", "Checking the OpenBot release.", None);
-    // Both release discovery and downloading use blocking HTTP. Keeping them in a blocking task
-    // avoids dropping reqwest's runtime inside this async context.
-    let target = root.to_path_buf();
-    let handle = app.clone();
-    let version = tauri::async_runtime::spawn_blocking(move || {
-        let version = deployment_release::resolve_version(&target)?;
-        if deployment::needs_fetch(&target, &version) {
-            report_running(
-                &handle,
-                "deployment",
-                format!("Downloading OpenBot {version}."),
-                None,
-            );
-            deployment::fetch(&target, &version)?;
+    for entry in ["docker-compose.yml", "server/src/production-entry.ts", "app/package.json", "server/schema.sql", "container-images.json"] {
+        if !root.join(entry).is_file() {
+            return Err(Problem::plain(format!(
+                "Choose a local PDSDuet bundle containing {entry}. Desktop no longer downloads OpenBot releases."
+            )));
         }
-        Ok::<_, String>(version)
-    })
-    .await
-    .map_err(|error| format!("the download did not run: {error}"))
-    .and_then(|result| result)
-    .map_err(|error| {
-        report(app, "deployment", false, error.clone());
-        Problem::with(
-            "OpenBot could not download what it needs to run. Check the internet \
-             connection and try again.",
-            error,
-        )
-    })?;
-    report(
-        app,
-        "deployment",
-        true,
-        format!("{version} in {}", root.display()),
-    );
+    }
+    report(app, "deployment", true, format!("Local bundle in {}", root.display()));
     Ok(())
 }
 
@@ -504,25 +413,6 @@ fn saved_secret(root: &Path, key: &str) -> Result<String, Problem> {
         .map(|found| found.get(key).cloned().unwrap_or_default())
 }
 
-fn intelligence_key_for_start(
-    root: &Path,
-    given: String,
-    mut resolve: impl FnMut(&Path, &str) -> Result<String, Problem>,
-) -> Result<String, Problem> {
-    let key = if given.trim().is_empty() {
-        resolve(root, "INTELLIGENCE_API_KEY").map_err(|problem| {
-            problem.connection(openbot_desktop_lib::problem::Connection::Intelligence)
-        })?
-    } else {
-        given
-    };
-    if key.trim().is_empty() {
-        return Err(Problem::plain("That saved CopilotKit connection is no longer available. Sign in again or enter a project key.")
-            .connection(openbot_desktop_lib::problem::Connection::Intelligence));
-    }
-    Ok(key)
-}
-
 #[tauri::command]
 #[allow(
     clippy::too_many_arguments,
@@ -531,9 +421,6 @@ fn intelligence_key_for_start(
 async fn start_stack<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     root: String,
-    api_url: String,
-    gateway_ws_url: String,
-    api_key: String,
     model: ChosenModel,
     // The row the person picked, with the address only for the bring-your-own row.
     harness: Option<harness::HarnessChoice>,
@@ -544,9 +431,6 @@ async fn start_stack<R: tauri::Runtime>(
     start_stack_inner(
         app,
         root,
-        api_url,
-        gateway_ws_url,
-        api_key,
         model,
         harness,
     )
@@ -557,7 +441,7 @@ async fn start_stack<R: tauri::Runtime>(
     clippy::too_many_arguments,
     reason = "Mirror the command fields while testing startup with a resolved root."
 )]
-async fn start_stack_inner<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: PathBuf, api_url: String, gateway_ws_url: String, api_key: String, model: ChosenModel, harness: Option<harness::HarnessChoice>) -> Result<(), Problem> {
+async fn start_stack_inner<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: PathBuf, model: ChosenModel, harness: Option<harness::HarnessChoice>) -> Result<(), Problem> {
     let shell = app.state::<Shell>();
     remember_selected_root(&shell, &root);
     let credential = start_stack_credential(&root, model)?;
@@ -566,14 +450,12 @@ async fn start_stack_inner<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: Pa
     let address = status.address.clone().ok_or_else(|| Problem::plain(status.detail.clone()))?;
     let bun = install::ensure_bun(&root, which_bun())?;
     let existing = openbot_desktop_lib::vault::already_given_no_ui(&root, &root.join(".env"), &openbot_env::MINTED[..])?;
-    let api_key = intelligence_key_for_start(&root, api_key, saved_secret)?;
     let ports = openbot_env::Ports::read(&root).map_err(|e| Problem::from(e.to_string()))?;
-    let settings = openbot_env::compose(&openbot_env::Intelligence { api_url, gateway_ws_url, api_key }, &openbot_env::Model { credential: credential.clone() }, &status, &ports, &deployment::image_variables(&root)?, picked.as_ref(), &existing);
+    let settings = openbot_env::compose(&openbot_env::Model { credential: credential.clone() }, &status, &ports, &deployment::image_variables(&root)?, picked.as_ref(), &existing);
     let (settings, mut secrets) = openbot_desktop_lib::vault::split(settings);
     openbot_desktop_lib::saved_intent::persist_configuration(&root, &settings, &secrets, &secrets, &credential)?;
-    secrets.extend(desktop_telemetry::runtime_env(&app));
     stack::up(&address, &root, picked.as_ref().and_then(|p| p.installed_port()).is_some(), stack::BundledBots::for_credential(&credential), &secrets)?;
-    stack::migrate(&address, &root, &secrets)?;
+    stack::initialize(&address, &root, &secrets)?;
     let output = quiet::command(&bun).current_dir(root.join("app")).args(["run", "build"]).output().map_err(|e| Problem::from(e.to_string()))?;
     if !output.status.success() { return Err(Problem::plain(quiet::said(&output.stderr))); }
     use base64::Engine as _;
@@ -822,15 +704,12 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
     let mut values = openbot_desktop_lib::vault::already_given_file_only(
         &env_file,
         &[
-            "INTELLIGENCE_API_KEY",
-            "INTELLIGENCE_API_URL",
-            "INTELLIGENCE_GATEWAY_WS_URL",
             /*
              * The model credentials too, so the wizard never asks twice for one of these either.
              *
              * A key already in the file is one somebody has already produced, and making them find
              * it again means opening a dotfile in an editor. Read back for the same reason the
-             * Intelligence key is: it is their own file, on their own machine, and this is the
+             * model key is: it is their own file, on their own machine, and this is the
              * screen that asks for it.
              */
             "OPENAI_API_KEY",
@@ -860,10 +739,6 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
     AlreadyConfigured {
         harness,
         saved: SavedConfiguration {
-            intelligence_api_key: hint(
-                Category::Intelligence,
-                values.contains_key("INTELLIGENCE_API_KEY"),
-            ),
             model_api_keys: SavedModelApiKeys {
                 openai: hint(
                     Category::OpenAiApiKey,
@@ -1017,157 +892,6 @@ async fn finish_chatgpt_sign_in(app: tauri::AppHandle) -> Result<String, String>
 
 /// A self-hosted server authenticates in its own browser session. Only the selected project's
 /// runtime key crosses into the window; the helper owns and then closes the temporary browser.
-#[tauri::command]
-async fn begin_self_hosted_intelligence_sign_in(
-    app: tauri::AppHandle,
-    root: String,
-    api_url: String,
-) -> Result<Vec<openbot_desktop_lib::intelligence::Project>, Problem> {
-    let root = stack::root_from(&root);
-    let shell = app.state::<Shell>();
-    remember_selected_root(&shell, &root);
-    cancel_self_hosted_sign_in(&shell);
-    tauri::async_runtime::spawn_blocking(move || {
-        let bun = install::ensure_bun(&root, which_bun())?;
-        let signing = openbot_desktop_lib::self_hosted_intelligence::SigningIn::begin(&root, &bun, &api_url)?;
-        *app.state::<Shell>().self_hosted_intelligence.lock().unwrap() = Some(signing.clone());
-        let result = signing.projects();
-        if result.is_err() {
-            app.state::<Shell>().self_hosted_intelligence.lock().unwrap().take();
-            signing.cancel();
-        }
-        result
-    })
-    .await
-    .map_err(|_| Problem::plain("Intelligence sign-in could not finish."))?
-}
-
-#[tauri::command]
-async fn finish_self_hosted_intelligence_sign_in(
-    app: tauri::AppHandle,
-    root: String,
-    project: String,
-) -> Result<String, Problem> {
-    let _root = stack::root_from(&root);
-    let signing = app
-        .state::<Shell>()
-        .self_hosted_intelligence
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| Problem::plain("Sign in to this Intelligence server first."))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = signing.connect(&project);
-        let provisioned = match result {
-            Ok(provisioned) => provisioned,
-            Err(problem) => {
-                signing.cancel();
-                return Err(problem);
-            }
-        };
-        let key = provisioned.api_key.clone();
-        Ok(key)
-    })
-    .await
-    .map_err(|_| Problem::plain("Intelligence sign-in could not finish."))?
-}
-
-#[tauri::command]
-async fn cancel_self_hosted_intelligence_sign_in(app: tauri::AppHandle) -> Result<(), Problem> {
-    tauri::async_runtime::spawn_blocking(move || cancel_self_hosted_sign_in(&app.state::<Shell>()))
-        .await
-        .map_err(|_| Problem::plain("The Intelligence sign-in could not be closed."))
-}
-
-/// Start signing in to Intelligence and return the address a browser has to open.
-#[tauri::command]
-async fn begin_intelligence_sign_in(app: tauri::AppHandle) -> Result<String, String> {
-    let (signing, url) = openbot_desktop_lib::intelligence::SigningInToIntelligence::begin()?;
-    *app.state::<Shell>()
-        .signing_in_to_intelligence
-        .lock()
-        .unwrap() = Some(signing);
-    let _ = tauri_plugin_opener::OpenerExt::opener(&app).open_url(&url, None::<&str>);
-    Ok(url)
-}
-
-/// Wait for that sign-in, and answer with the projects it can see.
-///
-/// The credential is kept on this side rather than handed to the window: the window's business is
-/// which project, and a credential it never holds is one it cannot leak into a log or a screenshot.
-#[tauri::command]
-async fn finish_intelligence_sign_in(
-    app: tauri::AppHandle,
-) -> Result<Vec<openbot_desktop_lib::intelligence::Project>, openbot_desktop_lib::problem::Problem>
-{
-    let signing = app
-        .state::<Shell>()
-        .signing_in_to_intelligence
-        .lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| {
-            openbot_desktop_lib::problem::Problem::plain(
-                "That sign-in is no longer running. Start it again.",
-            )
-        })?;
-    let (credential, projects) = tauri::async_runtime::spawn_blocking(move || signing.finish())
-        .await
-        .map_err(|error| {
-            openbot_desktop_lib::problem::Problem::plain(format!(
-                "The sign-in did not finish: {error}"
-            ))
-        })??;
-    *app.state::<Shell>().intelligence_credential.lock().unwrap() = Some(credential);
-    Ok(projects)
-}
-
-/// Create a project using the account already signed in, without exposing its credential to the UI.
-#[tauri::command]
-async fn create_intelligence_project(
-    app: tauri::AppHandle,
-    name: String,
-) -> Result<openbot_desktop_lib::intelligence::Project, Problem> {
-    let credential = app
-        .state::<Shell>()
-        .intelligence_credential
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| Problem::plain("Sign in to CopilotKit first."))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        openbot_desktop_lib::intelligence::create_project(&credential, &name)
-    })
-    .await
-    .map_err(|error| Problem::with("Your project could not be created.", error.to_string()))?
-}
-
-/// Create a key for the project somebody chose, and hand it back for the field.
-#[tauri::command]
-async fn intelligence_key_for(
-    app: tauri::AppHandle,
-    project: String,
-) -> Result<String, openbot_desktop_lib::problem::Problem> {
-    let credential = app
-        .state::<Shell>()
-        .intelligence_credential
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| {
-            openbot_desktop_lib::problem::Problem::plain("Sign in to CopilotKit first.")
-        })?;
-    let provisioned = tauri::async_runtime::spawn_blocking(move || {
-        openbot_desktop_lib::intelligence::provision_connection(&credential, &project)
-    })
-    .await
-    .map_err(|error| {
-        openbot_desktop_lib::problem::Problem::plain(format!("A key could not be created: {error}"))
-    })??;
-    let key = provisioned.api_key.clone();
-    Ok(key)
-}
-
 /// The model screen's rows. Independent of the picker above, and required to stay that way: no
 /// harness on that list is tied to a vendor's models, so choosing one may not narrow this.
 #[tauri::command]
@@ -1312,7 +1036,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Shell::default())
         .invoke_handler(tauri::generate_handler![
-            record_setup_event,
             detect_engine,
             windows_blocker,
             windows_blocker_instruction,
@@ -1336,13 +1059,6 @@ fn main() {
             finish_model_oauth,
             cancel_model_oauth,
             finish_chatgpt_sign_in,
-            begin_self_hosted_intelligence_sign_in,
-            finish_self_hosted_intelligence_sign_in,
-            cancel_self_hosted_intelligence_sign_in,
-            begin_intelligence_sign_in,
-            finish_intelligence_sign_in,
-            intelligence_key_for,
-            create_intelligence_project,
         ])
         // A packaged application is not a browser tab. Left alone, WebView2 answers a right-click
         // with Back, Refresh, Save as and Print: Back walks the window out of OpenBot with nothing
@@ -1365,7 +1081,6 @@ fn main() {
             }
         })
         .setup(|app| {
-            desktop_telemetry::initialize(app.handle());
             if let Some(root) = app
                 .path()
                 .app_config_dir()
@@ -1459,7 +1174,6 @@ fn main() {
                     show_whichever_applies(app);
                 }
                 tauri::RunEvent::ExitRequested { .. } => {
-                    desktop_telemetry::shutdown(app);
                     if let Err(error) = stop_everything(app, &stack::default_root()) { eprintln!("{error}"); }
                 }
                 _ => {}

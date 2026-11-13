@@ -1,6 +1,13 @@
-import { CopilotChat } from "@copilotkit/react-core/v2";
 import { IconPlus } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { ChannelChat } from "@/components/channels/channel-chat";
+import { ConversationView } from "@/components/channels/conversation-view";
+import { stashFirstMessage } from "@/components/channels/transcript-messages";
+import { createChannelMutationOptions } from "@/lib/channels/mutations";
+import { ongoingChannel } from "@/lib/channels/ongoing";
+import { type AgentChannel, channelListQueryOptions } from "@/lib/channels/queries";
+import { queryClient } from "@/query-client";
 import { createFileRoute } from "@tanstack/react-router";
 import { ComputerChatControls } from "@/components/computer/computer-controls";
 import { ComputerViewPanel } from "@/components/computer/computer-panel";
@@ -14,9 +21,6 @@ import {
   agentListQueryOptions,
 } from "@/lib/agents/queries";
 import { tryClient } from "@/lib/client";
-import { useActiveBot } from "@/lib/copilot/active-bot";
-import { useBotThread } from "@/lib/copilot/bot-thread";
-import { useStoppedTurn } from "@/lib/copilot/stopped-turn";
 import { searchTextEntry } from "@/lib/search-text";
 
 export const Route = createFileRoute("/_authed/_app/bot")({
@@ -140,120 +144,28 @@ function RouteComponent() {
 }
 
 function BotChat({ agentId, name }: { agentId: string; name: string }) {
-  // Tool calls here act on this Bot's own computer.
-  useActiveBot(agentId);
-  /*
-   * Minted by this deployment rather than by the chat. `history` reports whether Intelligence
-   * still recognised the thread this browser remembered from a previous visit; when it did not,
-   * `useBotThread` has already swapped in a fresh id on its own; this flag exists only so the
-   * page can say so instead of letting the Bot answer as if nothing were missing. `startNew`
-   * mints another fresh thread on demand for the New chat control below.
-   */
-  const { threadId, history, startNew } = useBotThread(agentId);
-  /*
-   * A turn that ends without an answer has to be said out loud here, because the packaged chat says
-   * nothing. It reports a failed run to an `onError` prop and otherwise carries on as though the
-   * turn simply finished: the composer unlocks, the spinner goes, and the transcript keeps the
-   * person's own message with nothing under it. The banner that would have explained it belongs to
-   * a provider this app does not mount.
-   */
-  const stopped = useStoppedTurn(agentId);
+  const channels = useInfiniteQuery(channelListQueryOptions());
+  const [started, setStarted] = useState<AgentChannel | null>(null);
+  const channel = started ?? ongoingChannel(channels.data, agentId);
+  const create = useMutation(createChannelMutationOptions(queryClient));
   const { watch } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const showComputer = (open: boolean) =>
-    navigate({
-      search: (previous) => ({ ...previous, watch: open ? true : undefined }),
-    });
-
+  const showComputer = (open: boolean) => navigate({ search: (previous) => ({ ...previous, watch: open ? true : undefined }) });
+  const start = async (text?: string) => {
+    const next = await create.mutateAsync([agentId]);
+    if (text) stashFirstMessage(next.id, text);
+    setStarted(next);
+  };
   return (
-    <DetailPanel
-      title="電腦"
-      open={watch === true}
-      onClose={() => showComputer(false)}
-      detail={<ComputerViewPanel agentId={agentId} name={name} />}
-    >
+    <DetailPanel title="電腦" open={watch === true} onClose={() => showComputer(false)} detail={<ComputerViewPanel agentId={agentId} name={name} />}>
       <div className="flex h-full min-h-0 flex-col">
         <SidebarToggleBar />
-        <header className="border-b px-6 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {/*
-             * The Bot this screen is actually showing. A name written into the markup is wrong on
-             * every deployment whose package did not happen to use it, which is the same defect the
-             * route default above was fixed for: this screen called whichever Bot you opened
-             * "Browser Bot", including the one named something else two lines of state away.
-             */}
-            <h1 className="text-lg font-semibold">{name}</h1>
-            {/*
-             * Labelled rather than the bare icon button the sidebar uses for its own "start
-             * something new" control: that one opens an empty screen, but this one throws away
-             * whatever conversation is currently on screen, and a click with that consequence
-             * deserves a word, not just a glyph.
-             */}
-            <div className="flex flex-wrap items-start gap-2">
-              <ComputerChatControls
-                computerId={agentId}
-                open={watch === true}
-                onOpenChange={showComputer}
-              />
-              <Button onClick={startNew} size="sm" variant="ghost">
-                <IconPlus />
-                新增對話
-              </Button>
-            </div>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Ask it to open a page and watch it work.
-          </p>
+        <header className="flex items-center justify-between gap-3 border-b px-6 py-3">
+          <h1 className="text-lg font-semibold">{name}</h1>
+          <div className="flex gap-2"><ComputerChatControls botId={agentId} open={watch === true} onOpenChange={showComputer} /><Button onClick={() => { void start().catch(() => {}); }} disabled={create.isPending} size="sm" variant="ghost"><IconPlus />新增對話</Button></div>
         </header>
-        {/*
-         * Both banners render as plain siblings in this fixed order, never one nested inside the
-         * other, so either can appear alone or both together without the layout jumping around
-         * depending on which conditions are true.
-         */}
-        {history === "unavailable" ? (
-          <p
-            className="border-b bg-destructive/10 px-6 py-2 text-destructive text-sm"
-            data-testid="bot-chat-history-unavailable"
-            role="alert"
-          >
-            Couldn't load earlier messages. The Bot is answering without them.
-          </p>
-        ) : null}
-        {/*
-         * Under the header rather than at the end of the transcript, which is where the missing answer
-         * was going to be and where the channel draws its own version of this. The packaged chat owns
-         * that list and virtualises it, so reaching into it means replacing the whole message view and
-         * taking on its scrolling. The cost of putting the sentence here instead is that it is not
-         * beside the gap it explains; what it buys is that it is always on screen, whatever the
-         * transcript has been scrolled to, and that it survives the next release of the chat.
-         */}
-        {stopped ? (
-          <p
-            className="border-b bg-destructive/10 px-6 py-2 text-destructive text-sm"
-            data-testid="bot-chat-stopped"
-            role="alert"
-          >
-            {stopped}
-          </p>
-        ) : null}
-        <div className="min-h-0 flex-1">
-          {/*
-           * Keyed on the thread as well as the agent. Switching agents was already handled by
-           * `agentId`, but `startNew` changes only the thread while the agent stays put, and the
-           * packaged chat's own `startNewThread`/`setActiveThreadId` are proven no-ops once
-           * `threadId` is a controlled prop (node_modules/@copilotkit/react-core/dist/copilotkit-
-           * C4RqjAba.mjs:226-254): asking it to start over does nothing while it still holds the
-           * old id. A key that omits the thread would leave the previous conversation on screen
-           * under a composer that silently posts to the new one.
-           */}
-          {threadId ? (
-            <CopilotChat
-              agentId={agentId}
-              key={`${agentId}:${threadId}`}
-              threadId={threadId}
-            />
-          ) : null}
-        </div>
+        {create.error ? <p role="alert" className="px-6 py-2 text-destructive text-sm">{create.error.message}</p> : null}
+        {channel ? <ChannelChat channel={channel} runtimeAgentId={agentId} /> : <ConversationView messages={[]} restoring={channels.isPending} busy={create.isPending} disabled={channels.isPending || create.isPending} notice={channels.error?.message} placeholder={`傳送訊息給 ${name}`} onSubmit={(draft) => start(draft.text)} />}
       </div>
     </DetailPanel>
   );

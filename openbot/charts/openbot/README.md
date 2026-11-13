@@ -5,37 +5,9 @@ only difference between them is values.
 
 ## What a cluster needs first
 
-Four things this chart assumes and does not create.
-
-**An image the cluster can pull.** A release publishes `ghcr.io/copilotkit/openbot:vX.Y.Z`
-publicly, and that tag is what `image.tag` wants. It is built for **`linux/amd64` only**, so an
-arm64 node group (Graviton on EKS, Tau T2A on GKE, Ampere on AKS) cannot run it: the pods sit in
-`ImagePullBackOff`, which is the same thing a wrong tag or a missing pull secret looks like, so the
-node pool being the wrong shape is the last thing anybody checks. Either run amd64 nodes, or build the image for the
-architecture you have and push it somewhere the cluster can reach. Check before assuming:
-
-```sh
-docker manifest inspect ghcr.io/copilotkit/openbot:v0.0.9 | grep architecture
-```
-
-**Intelligence credentials.** OpenBot requires CopilotKit Intelligence and the chart refuses to
-install without `secrets.intelligenceApiKey`. It comes from the CLI, on any machine with a browser:
-
-```sh
-npx --yes copilotkit@latest login           # browser sign-in
-npx --yes copilotkit@latest project select  # prints the cpk-... runtime key
-```
-
-That key is the only Intelligence credential a managed install needs; the free plan is enough.
-`secrets.licenseToken` is optional and exists for a self-hosted Intelligence that issues its own
-licence. `npx --yes copilotkit@latest license --print` prints one without writing it to a local
-`.env`, which is what you want for something you are about to paste into a Secret. With
-`externalSecrets`, name `license-token` in its `data` and the server receives it the same way.
-
-**A self-hosted Intelligence needs that licence too, on its own deployment.** Its chart takes it as
-`appApi.licenseSecret` or `externalSecrets.secrets.license`. Without it Intelligence answers every
-entitlement read with `RUNTIME_ENTITLEMENTS_SELF_HOSTED_MISCONFIGURED` and refuses memory, while
-conversations carry on; OpenBot logs `intelligence-entitlement-not-ready` at boot when it does.
+The chart uses an application image built from this PDSDuet source tree, PostgreSQL, configured model access and the deployment's sign-in provider.
+Set `image.repository` and `image.tag` to the image you built or published. The default repository name is local `pdsduet`; no upstream image or published PDSDuet release is assumed.
+Conversation history and run state live in PostgreSQL. Intelligence credentials and licences are not used.
 
 **A default StorageClass**, or a named one. Both a Bot's computer and the bundled database ask for
 a volume, and a fresh cluster often has no class marked default. See
@@ -55,7 +27,7 @@ kubectl -n openbot create secret generic openbot-database \
 Then `--set database.existingSecret=openbot-database`. The key must be `database-url`, or name a
 different one with `database.existingSecretKey`. See
 [Your own database](#your-own-database-which-is-what-a-real-deployment-uses) for `sslmode` and the
-`vector` extension, both of which a managed database will otherwise fail on in a way that names the
+application schema, which a managed database needs to expose to its application role. This names the
 wrong problem.
 
 ### A cluster from nothing, on EKS
@@ -216,73 +188,13 @@ works on its own. A replica must not carry one: a browser is a few hundred megab
 Bot's logins, so scaling the API would scale those with it. `server.embeddedComputer` is off here,
 and asking for it with more than one replica is refused at install time.
 
-## Your own database, which is what a real deployment uses
+## Your own database
 
-```sh
---set postgresql.enabled=false \
---set database.existingSecret=openbot-database   # key: database-url
-```
+Set `database.url`, or `database.existingSecret`, to the PostgreSQL database for this deployment. Leave `postgresql.enabled` false when using an external database. The alternative is the bundled PostgreSQL service with an explicitly configured password.
 
-`postgresql.enabled` is **off by default and not production-grade**. A database on a pod goes away
-when the pod does: a rollout, a node drain or an eviction is a restart, and while the volume survives,
-nothing about that shape gives you backups, failover or point-in-time recovery. It is there so
-somebody can try OpenBot in one command.
+The application role must own its schema and be able to create tables, indexes and enums. The fresh schema has no vector extension and no requirement for a database superuser.
 
-Point it at RDS, Cloud SQL, Azure Database or your own server, and keep the URL in a Secret rather
-than in a values file. Setting both a bundled database and a URL is refused, rather than one of them
-silently winning.
-
-**Put `?sslmode=require` on the URL.** Every managed database refuses an unencrypted connection:
-RDS has `rds.force_ssl` on by default, and Cloud SQL and Azure Database do the same. Without it the
-migration fails with `no pg_hba.conf entry for host ... no encryption`, which names the host and the
-user and not the actual problem.
-
-The server accepts `disable`, `require` and `verify-full` (with `sslrootcert=/path/to/ca.pem`, or
-the system roots without it). `require` encrypts and checks nothing, as libpq's does. `verify-full`
-needs Bun 1.4 or later, because Bun 1.3 connects whatever certificate it is shown, so the server
-refuses it on 1.3 rather than appear to check. `verify-ca`, `prefer` and `allow` are refused: Bun
-can neither check the authority without the host name nor fall back between TLS and plain.
-
-**The migrating role has to OWN the `vector` extension, not just be able to see it.** The first
-migration runs `CREATE EXTENSION IF NOT EXISTS vector` and migration `0010` runs
-`DROP EXTENSION IF EXISTS "vector"` once the document index is gone. `DROP EXTENSION` is an ownership
-check, and `IF EXISTS` does not waive it — it only makes a *missing* extension not an error. So a
-role that can see an extension somebody else owns gets through the create and fails the drop, and the
-migrations Job stops with:
-
-```
-must be owner of extension vector
-```
-
-In Postgres an extension's owner is whoever ran `CREATE EXTENSION`, and there is no
-`ALTER EXTENSION ... OWNER TO` to hand it over afterwards. The advice that used to stand here — have
-the administrative role create it once so `CREATE EXTENSION IF NOT EXISTS` passes for an ordinary
-user — is therefore exactly what produces the failure: it makes the admin the owner and the migrating
-role a bystander.
-
-Do one of these instead:
-
-- **Let the migrating role create it.** Simplest, and it needs no extra step: allow that role to run
-  `CREATE EXTENSION` (`GRANT rds_superuser` on RDS, `cloudsqlsuperuser` on Cloud SQL, `azure_pg_admin`
-  on Azure Database, plus whatever extension allow-list the vendor keeps), then leave the extension
-  absent and let migration `0000` create it. The migrating role owns it and `0010` drops it cleanly.
-- **Pre-create it AS the migrating role.** Where that grant is not on offer, the administrative role
-  can still do it on the other role's behalf, which is the whole trick:
-
-  ```sql
-  SET ROLE openbot_migrator;      -- the role in DATABASE_URL
-  CREATE EXTENSION IF NOT EXISTS vector;
-  RESET ROLE;
-  ```
-
-  Ownership follows the role that ran the statement, so this is equivalent to the first option.
-
-If you have already installed with the extension owned by somebody else, drop and recreate it under
-the migrating role before upgrading — `DROP EXTENSION vector;` as the owner, then the block above.
-Nothing of yours is in it: `vector` existed for the `embedding` column on `chunks`, which `0010`
-drops in the same transaction. A deployment that added a vector column of its own is the one case
-where that is not true, and `0010` is written to fail rather than take it; that deployment should
-keep the extension and apply only the table drops by hand.
+`initialization.enabled` controls the one-off job that runs `scripts/initialize.ts`. It creates this version's fresh schema; it does not import or upgrade earlier application data.
 
 ## The five targets
 
@@ -349,7 +261,7 @@ installing on somebody's bare-metal cluster.
 The chart fails the install, naming the value to change, when: there is no database or two of them;
 nobody could sign in or nobody would be an administrator; an identity provider is configured without
 `secrets.betterAuthSecret` or `config.publicUrl`; `singleUser` is combined with a public URL or a
-public LoadBalancer; the Intelligence URLs or `secrets.intelligenceApiKey` are missing;
+public LoadBalancer;
 `secrets.keyEncryptionKey` is not a base64 32-byte value, or is the public example key; there is no
 `secrets.computerToken`; `computers.mode` is `external` with no `computers.url`, or `sandbox` on a
 cluster with no Sandbox CRD; both an Ingress and an HTTPRoute are enabled; both `externalSecrets` and
@@ -386,38 +298,6 @@ Left empty, this deployment has the Bots its tenant package declares as built-in
 somebody creates in the app without an endpoint runs here on its role description. A package entry
 pointing at an endpoint that resolves to nothing is dropped rather than registered as a coworker
 nobody can talk to.
-
-## Automatic Learning
-
-Learning is on by default, and it needs a container in the Intelligence project before it collects or
-delivers anything. With nothing saved in Admin and no `config.learning.containerId`, the server
-assigns the project's `openbot` container as the default by itself once it exists. The runtime key
-cannot create it, so give the chart a credential that can and a setup Job creates it on install and
-every upgrade:
-
-- Managed Intelligence: a CopilotKit CLI login. Sign in into an empty folder and store the file it
-  writes, then set `config.learning.setup.cliLoginSecret.name: openbot-copilotkit-cli`:
-
-  ```sh
-  COPILOTKIT_CONFIG_DIR="$(mktemp -d)"; export COPILOTKIT_CONFIG_DIR
-  npx --yes copilotkit@latest login
-  kubectl create secret generic openbot-copilotkit-cli \
-    --from-file=config.json="$COPILOTKIT_CONFIG_DIR/auth/config.json"
-  ```
-
-  It is a person's 30-day session; only the Job reads it, never the server.
-- A CopilotKit local evaluation install: a service token Secret in
-  `config.learning.setup.serviceTokenSecret` with the project's numeric ID in
-  `config.learning.setup.projectId`. The server gets it too, so Admin can create the container again.
-
-Without either, create it once with `bun scripts/setup-learning.ts` from a computer that can sign in
-to Intelligence, or in Intelligence itself; the server log and Admin → Automatic Learning say exactly
-that. `config.learning.autoAssign: false` turns the automatic assignment off.
-`config.learning.containerId` sets the initial default container
-(`CPK_INTELLIGENCE_LEARNING_CONTAINER_ID`) and `config.learning.revision` the skills revision
-(`CPK_INTELLIGENCE_SKILLS_REVISION`). Both are only starting values: settings saved in Admin →
-Automatic Learning take precedence, including switching it off. See
-[docs/automatic-learning.md](../../docs/automatic-learning.md).
 
 ## Memory and background research
 
@@ -651,40 +531,3 @@ It reaches every computer as `EGRESS_PROXY_DEFAULT`, behind the egress filter, s
 policy still decides what a Bot may reach. Turning it on with `networkPolicy.enabled` and no
 `computerExtraEgress`, or with no URL where this chart holds the Secret, is refused at install.
 
-## Upgrades
-
-### Coming from a release before 0.0.14: a computer now runs as uid 1001
-
-`computers.podSecurityContext` runs a Bot's computer as `pwuser`, uid 1001, in both `shared` and
-`sandbox` mode. It was root before. The volumes an existing release created are root-owned, so
-something has to hand them over, and that something is `fsGroup`: the kubelet takes ownership of a
-volume's contents on mount.
-
-**It does that only where the volume plugin says it can.** The EBS, PD and Azure Disk CSI drivers
-do. `hostPath` does not, and `hostPath` is what rancher/local-path-provisioner hands out, which is
-the default StorageClass on k3s. There the computer starts as 1001, finds a directory it cannot
-write, and refuses to start rather than coming up healthy with a browser profile Chromium silently
-replaced. The message names this. Two ways out:
-
-```sh
-# Either hand the existing directories to 1001 on the node, or go back to root:
-helm upgrade openbot ./charts/openbot --set computers.podSecurityContext=null
-```
-
-**`--reuse-values` will not pick this up.** A new key is not in the old release's values, so an
-upgrade run that way keeps running as root and says nothing. Pass the value, or drop the flag.
-
-`fsGroupChangePolicy: OnRootMismatch` is deliberate. Unset means `Always`, which walks every file on
-every mount, and a real Chromium profile is tens of thousands of small ones; in `sandbox` mode that
-pass would run again on every resume from idle.
-
-### How a rollout is sequenced
-
-Migrations run as a `pre-install,pre-upgrade` Job, so no replica ever serves in front of a schema it
-has not seen. An init container would mean every replica racing to migrate the same database.
-
-Roll back a failed upgrade rather than leaving half a rollout: `helm upgrade --install --atomic` on
-Helm 3, and `--rollback-on-failure` on Helm 4, which renamed the flag. Helm 4 still accepts
-`--atomic` on `upgrade` as a deprecated alias and prints a warning, so the Helm 3 spelling keeps
-working on both today; it is `helm install --atomic` that Helm 4 removed outright, which is one more
-reason this is written as `upgrade --install`.

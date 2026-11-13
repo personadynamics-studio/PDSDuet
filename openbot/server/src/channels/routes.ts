@@ -38,7 +38,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  threadChannelMappings,
   openduetChannels,
   openduetTasks,
   workItems,
@@ -443,7 +443,7 @@ export function createChannelStore(
     await transaction
       .insert(channelAgents)
       .values(agentIds.map((agentId) => ({ channelId: id, agentId })));
-    await transaction.insert(intelligenceChannelMappings).values({
+    await transaction.insert(threadChannelMappings).values({
       userId: actor.id,
       channelId: id,
       threadId,
@@ -689,7 +689,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: intelligenceChannelMappings.threadId,
+          threadId: threadChannelMappings.threadId,
           lastMessageAt: channels.lastMessageAt,
           deletedAt: agentProfiles.deletedAt,
         })
@@ -702,10 +702,10 @@ export function createChannelStore(
           ),
         )
         .innerJoin(
-          intelligenceChannelMappings,
+          threadChannelMappings,
           and(
-            eq(intelligenceChannelMappings.channelId, channels.id),
-            eq(intelligenceChannelMappings.userId, actor.id),
+            eq(threadChannelMappings.channelId, channels.id),
+            eq(threadChannelMappings.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -795,7 +795,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: intelligenceChannelMappings.threadId,
+          threadId: threadChannelMappings.threadId,
           deletedAt: agentProfiles.deletedAt,
           busy: CHANNEL_BUSY,
           channelSummary: channels.summary,
@@ -817,10 +817,10 @@ export function createChannelStore(
           ),
         )
         .innerJoin(
-          intelligenceChannelMappings,
+          threadChannelMappings,
           and(
-            eq(intelligenceChannelMappings.channelId, channels.id),
-            eq(intelligenceChannelMappings.userId, actor.id),
+            eq(threadChannelMappings.channelId, channels.id),
+            eq(threadChannelMappings.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -1126,9 +1126,9 @@ export function createChannelStore(
 
     async signalBusy(threadId, busy, runId = "server") {
       const [mapped] = await database
-        .select({ channelId: intelligenceChannelMappings.channelId })
-        .from(intelligenceChannelMappings)
-        .where(eq(intelligenceChannelMappings.threadId, threadId))
+        .select({ channelId: threadChannelMappings.channelId })
+        .from(threadChannelMappings)
+        .where(eq(threadChannelMappings.threadId, threadId))
         .limit(1);
       if (mapped) await announceBusy(mapped.channelId, busy, runId);
     },

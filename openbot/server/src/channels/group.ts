@@ -1,23 +1,4 @@
-/**
- * One conversation with several Bots.
- *
- * An Intelligence thread admits exactly one agent, so a channel with two Bots cannot be one thread
- * with two speakers. Each Bot gets a thread of its own in the group (`group_bot_threads`), and every
- * turn runs through the ordinary headless AG-UI path (`toolkit/run-turn.ts`) into that thread, so
- * learning, governance, approvals and analytics apply to a group turn exactly as they do to a routine.
- * What the people in the channel read is `group_messages`: the shared transcript, one row per person
- * message and one per Bot reply, each attributed to its speaker.
- *
- * WHO MAY BE HERE. Channel membership, resolved per request and per Bot turn, never cached. A person
- * who is not a member gets the same not-found answer for a channel that exists as for one that does
- * not, and a Bot that stops being visible to the owner is skipped rather than run.
- *
- * BOTS ANSWERING EACH OTHER. A Bot that names a peer as `@Name` in its reply hands the conversation to
- * that peer, as one more queued turn. It is the handoff desk's authority and caps, not a second set:
- * the same Bot-to-Bot grant (`mayAddress`), the same depth cap (a person's message is depth zero and
- * each hop is one deeper), the same fan-out cap per reply, the same durable leased queue, and the same
- * `agent.handoff_*` audit rows. Nothing here orchestrates beyond that one rule.
- */
+
 import { createHash } from "node:crypto";
 import type { Message } from "@ag-ui/client";
 import { and, asc, desc, eq, isNull, min, sql } from "drizzle-orm";
@@ -37,7 +18,7 @@ import type { Database } from "../db/client";
 import {
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  threadChannelMappings,
   users,
 } from "../db/schema/core";
 import { groupBotThreads, groupMessages } from "../db/schema/group";
@@ -356,11 +337,11 @@ export function createGroupStore(
             ),
           );
         await tx
-          .delete(intelligenceChannelMappings)
+          .delete(threadChannelMappings)
           .where(
             and(
-              eq(intelligenceChannelMappings.channelId, channelId),
-              eq(intelligenceChannelMappings.userId, userId),
+              eq(threadChannelMappings.channelId, channelId),
+              eq(threadChannelMappings.userId, userId),
             ),
           );
       });
@@ -382,7 +363,7 @@ export function createGroupStore(
           .onConflictDoNothing();
         // The channel store reads a member's channel through their own mapping row.
         await tx
-          .insert(intelligenceChannelMappings)
+          .insert(threadChannelMappings)
           .values({ userId: person.id, channelId, threadId: mintThread() })
           .onConflictDoNothing();
       });
@@ -395,7 +376,7 @@ export function createGroupStore(
  * Which group a Bot's group thread belongs to, for a run that thread is carrying.
  *
  * The coordination callbacks (`message_bot`, `ask_person`) authorise a run by its source thread, and a
- * group thread is in `group_bot_threads` rather than `intelligence_channel_mappings`. Resolved with the
+ * group thread is in `group_bot_threads` rather than `thread_channel_mappings`. Resolved with the
  * same checks: the run's actor still a member of a live channel, and the thread that Bot's own, unless
  * the run is a signed delegation whose claim proves a different Bot's authority.
  */
