@@ -46,8 +46,8 @@ function SignScreen() {
   const options = useQuery(deploymentCapabilitiesQueryOptions());
   const providers = options.data?.authProviders ?? [];
   const callbackURL = flowId
-    ? `${window.location.origin}/api/plugins/arcade/verify?flow_id=${encodeURIComponent(flowId)}`
-    : window.location.origin;
+    ? `/api/plugins/arcade/verify?flow_id=${encodeURIComponent(flowId)}`
+    : "/";
   const [email, setEmail] = useState("");
 
   /**
