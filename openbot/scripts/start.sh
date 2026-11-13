@@ -484,7 +484,7 @@ if ! running "bun worker/src/index.ts" "$ROOT"; then
   WORKER_DATABASE_URL="$(setting DATABASE_URL postgres://openbot:openbot@localhost:5432/openbot)"
   (cd "$ROOT" && \
     DATABASE_URL="$WORKER_DATABASE_URL" \
-    SERVER_INTERNAL_URL="http://localhost:$SERVER_PORT" \
+    SERVER_INTERNAL_URL="$(setting SERVER_INTERNAL_URL "http://127.0.0.1:$SERVER_PORT")" \
     WORKER_SHARED_SECRET="$WORKER_SHARED_SECRET" \
     bun "$ROOT/worker/src/index.ts" >"$LOGS/worker.log" 2>&1 &)
   info "  worker: started (routine sweep loop)"

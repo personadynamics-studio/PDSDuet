@@ -158,6 +158,14 @@ where the worker runs rather than a fact about the deployment `loadConfig` descr
 it at the server's own port on a laptop; the Helm chart's routines CronJob points it at the server's
 in-cluster Service address.
 
+For a worker started directly on this host, set `SERVER_INTERNAL_URL=http://127.0.0.1:3001`
+in `openbot/.env`, using the actual API port. Keep the existing `DATABASE_URL` and
+`WORKER_SHARED_SECRET`; the API and worker must use the same secret. From `openbot/`,
+start the existing worker with `bun --env-file=.env worker/src/index.ts`. Its `dev`
+command also reads this `.env`. The stack start script reads `SERVER_INTERNAL_URL`
+when set and otherwise uses its resolved `SERVER_PORT`. Starting the worker resumes
+dispatch of due routines.
+
 ## The provider spec file
 
 `shared/model-providers.json` is one file, and every language in the box reads it: the TypeScript
@@ -368,6 +376,14 @@ Set `OPENBOT_SINGLE_USER=false` and configure Google sign-in, `BETTER_AUTH_SECRE
 `<origin>/api/auth/callback/google` on the Google Web application client. Google
 sign-in requests only `openid`, `email` and `profile`; Gmail, Calendar and Drive
 connections keep their own credentials and grants.
+
+Use the native public/private Bot roster. A public Bot is available to signed-in
+users; a private Bot belongs to its creator and follows the existing owner, admin
+and team-sharing rules. Conversations and attachments follow their own membership
+rules. Computers are allocated per Bot: people using the same public Bot share its
+browser logins and workspace, while separate private Bots have separate computers.
+Users share the deployment's backend and model API. New users follow the native
+onboarding flow; login and listing Bots do not provision copies or complete it for them.
 
 Before converting an existing single-user installation, back up PostgreSQL,
 credentials, browser profiles and workspaces. Retaining the original administrator's
