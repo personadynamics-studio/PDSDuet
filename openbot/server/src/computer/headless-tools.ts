@@ -64,12 +64,12 @@ export function createHeadlessComputerTools(options: {
   const tools = [
     tool(
       "ask_google_ai",
-      "Use this when the user asks you to find information. Select your fixed Google Search AI Mode tab; repeated calls reuse it. Use your existing browser tools to ask the question and read Google's full answer and source links. Return Google's entire answer verbatim, preserving its original language, wording, paragraphs, lists and links. Do not summarize, shorten, paraphrase, translate or add your own commentary. Do not add a preamble such as 'Based on what I read with Google AI Mode'.",
+      "Use this when the user asks you to find information. Before starting the search, send one brief progress message: '我正在幫你查詢，請稍等。' Keep it separate from the final answer and do not repeat it. Select your fixed Google Search AI Mode tab; repeated calls reuse it. Use your existing browser tools to submit the question. After submitting, run computer_run_command with command 'sleep 30' and wait for it to finish before reading or inspecting the result. Then read once. If Google is still generating, run 'sleep 30' again before the next read; repeat this wait-then-read cycle while it is generating. Do not use repeated reads, snapshots or screenshots to fill the waiting time. Return Google's entire answer verbatim, preserving its original language, wording, paragraphs, lists and links. Do not summarize, shorten, paraphrase, translate or add your own commentary. Do not add a preamble such as 'Based on what I read with Google AI Mode'.",
       noArgs,
       async (_, { signal }) => ({
         ok: true,
         ...(await gateway.openGoogleAi(botId, signal)),
-        instruction: "Use Google AI Mode in this tab. Ask the question and use your existing browser tools to read Google's full answer and source links. Return Google's entire answer verbatim, preserving its original language, wording, paragraphs, lists and links. Do not summarize, shorten, paraphrase, translate or add your own commentary or a tool-use preamble.",
+        instruction: "Use Google AI Mode in this tab. If you have not already sent a progress message for this search, first say '我正在幫你查詢，請稍等。' Keep it separate from the final answer and do not repeat it. Submit the question using your existing browser tools, then run computer_run_command with command 'sleep 30' and wait for it to finish before reading or inspecting the result. Read once; if Google is still generating, run 'sleep 30' again before the next read. Repeat this wait-then-read cycle while it is generating, without consecutive empty reads, snapshots or screenshots. Return Google's entire answer and source links verbatim, preserving its original language, wording, paragraphs and lists. Do not summarize, shorten, paraphrase, translate or add your own commentary or a tool-use preamble.",
       }),
     ),
     tool(
