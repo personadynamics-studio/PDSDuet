@@ -1,4 +1,4 @@
-import { MessageSchema } from "@ag-ui/core";
+import { MessageSchema } from "@ag-ui/core/schemas";
 import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";

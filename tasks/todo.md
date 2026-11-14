@@ -31,3 +31,15 @@
 - 本輪啟動的 PostgreSQL 與 supervisor 已停止。未跑測試、lint、typecheck，未新增或修改測試檔。
 
 本次只更新這份紀錄與架構文件；實際依賴安裝位於不提交的 `node_modules`。commit／push 結果以本次對話的 Git 交付為準。
+
+## MessageSchema 與同類阻塞收尾
+
+使用者另行授權修正 MessageSchema 及後續同類阻塞，明確解除這類工作的兩輪限制；不擴大重構，仍禁止測試及子代理。
+
+- `runtime/routes.ts` 改從安裝版本正式提供的 `@ag-ui/core/schemas` 匯入 `MessageSchema`，後端成功監聽 3001；既有前端成品成功監聽 3010。
+- 實際對話先遇到 `messages[1]` 是字串的 SDK 錯誤。定位到 `settlement.ts` 將已序列化的字串直接綁定為 JSONB，Bun 會再編碼一次；所有該流程的 JSON 參數改以 `::text::jsonb` 傳入，初始化亦修復先前保存成 JSON 字串的訊息、事件及 run 欄位。
+- 套用修正後，已有發言可正常恢復顯示。下一步遇到 `http://localhost:4201/ag-ui` 拒絕連線；現有保險 Bot 配置的 LangGraph 容器原本停止，已建置目前源碼並以原有模型環境載入。部署沒有保留已刪除檔案的舊 bind mount、舊工具回呼設定或健康檢查。
+- 最後在正式入口選擇既有「保險 PDF 文案總監」，實際收到兩句香港繁體中文回覆，生成結束後介面恢復可輸入狀態。沒有自動重播失敗訊息或冒稱舊的失敗 run 成功。
+- API、前端、PostgreSQL、supervisor、模型服務及該 Bot 的電腦保持運行。沒有重建未改動的前端，沒有執行測試、lint、typecheck 或另開子代理。
+
+本次程式碼只修改 runtime 的匯入及 JSON 保存接線，文件同步記錄實際結果。Bot 名單實際仍包含「Your agent」及「OpenDuet」兩個舊項目，本次沒有擴大清理。這次對話未執行瀏覽器操作或 Bot 委派，不能據此宣稱這些流程均已運行成功。

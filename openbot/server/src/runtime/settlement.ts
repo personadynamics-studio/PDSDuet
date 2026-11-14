@@ -46,12 +46,12 @@ export function createSettlement(database: Database, options: { actorFor(id: str
   const notify = (tx: Executor, threadId: string) => tx.execute(sql`select pg_notify(${UPDATES},${threadId})`);
   async function event(tx: Executor, threadId: string, runId: string, body: ThreadEvent): Promise<StoredEvent> {
     const [row] = await tx.execute<{ seq: number }>(sql`insert into local_events(thread_id,run_id,body)
-      values(${threadId},${runId},${JSON.stringify(body)}::jsonb) returning seq`);
+      values(${threadId},${runId},${JSON.stringify(body)}::text::jsonb) returning seq`);
     return { ...body, seq: Number(row.seq) };
   }
   async function save(tx: Executor, record: ExecutionRecord, messages: readonly ThreadMessage[]) {
     for (const message of messages) await tx.execute(sql`insert into local_messages(thread_id,id,run_id,body)
-      values(${record.threadId},${message.id},${record.id},${JSON.stringify(message)}::jsonb)
+      values(${record.threadId},${message.id},${record.id},${JSON.stringify(message)}::text::jsonb)
       on conflict(thread_id,id) do update set body=excluded.body,run_id=excluded.run_id`);
   }
   async function announce(tx: Transaction, threadId: string, message?: ThreadMessage, needsInput = false) {
@@ -101,7 +101,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
         if (message.role === "user") continue;
         if (message.role !== "tool") throw new ConversationError("Only human messages and actual waiting answers may be submitted.", 400);
         const matches = await database.execute<ExecutionRecord>(sql`select ${fields} from local_runs where thread_id=${input.threadId}
-          and status='waiting' and stop_requested=false and waiting @> ${JSON.stringify([{ toolCallId: message.toolCallId, answerable: true }])}::jsonb`);
+          and status='waiting' and stop_requested=false and waiting @> ${JSON.stringify([{ toolCallId: message.toolCallId, answerable: true }])}::text::jsonb`);
         if (matches.length !== 1 || (resumed && resumed.id !== matches[0].id)) throw new ConversationError("The answer does not identify one waiting execution.", 409);
         resumed = matches[0];
       }
@@ -138,7 +138,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
           where id=${record.id} and status='waiting' and stop_requested=false returning id`);
         if (!changed.length) throw new ConversationError("The waiting execution has already changed.", 409);
       } else await tx.execute(sql`insert into local_runs(id,thread_id,user_id,bot_ids,bot_index,status,parent_run_id,instruction,initiator)
-        values(${record.id},${record.threadId},${record.userId},${JSON.stringify(record.botIds)}::jsonb,0,'running',${record.parentRunId ?? null},${record.instruction ?? null},${JSON.stringify(record.initiator ?? { kind: "person" })}::jsonb)`);
+        values(${record.id},${record.threadId},${record.userId},${JSON.stringify(record.botIds)}::text::jsonb,0,'running',${record.parentRunId ?? null},${record.instruction ?? null},${JSON.stringify(record.initiator ?? { kind: "person" })}::text::jsonb)`);
       await save(tx, record, prepared.added);
       for (const message of prepared.added) await event(tx, record.threadId, record.id, { type: "CUSTOM", name: "thread.message", value: message } as ThreadEvent);
       await event(tx, record.threadId, record.id, { type: "RUN_STARTED", threadId: record.threadId, runId: record.id } as ThreadEvent);
@@ -187,7 +187,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
         await database.transaction(async tx => {
           await save(tx, record, changed);
           if (removed.length) await tx.execute(sql`delete from local_messages where thread_id=${record.threadId} and run_id=${record.id} and id in(${sql.join(removed.map(id => sql`${id}`), sql`,`)})`);
-          if (body.type === "STATE_SNAPSHOT") await tx.execute(sql`update local_runs set model_states=${JSON.stringify(record.modelStates)}::jsonb where id=${record.id}`);
+          if (body.type === "STATE_SNAPSHOT") await tx.execute(sql`update local_runs set model_states=${JSON.stringify(record.modelStates)}::text::jsonb where id=${record.id}`);
           if (body.type === "MESSAGES_SNAPSHOT") body = { ...body, messages: (await context(record.threadId, tx)).messages };
           await event(tx, record.threadId, record.id, body); await notify(tx, record.threadId);
         });
@@ -202,8 +202,8 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       const [saved] = await tx.execute<ExecutionRecord>(sql`update local_runs set
         status=case when stop_requested then 'stopped' else ${outcome.status} end,
         error=case when stop_requested then 'The work was cancelled.' else ${outcome.error ?? null} end,
-        waiting=case when stop_requested then '[]'::jsonb else ${JSON.stringify(outcome.waiting ?? [])}::jsonb end,
-        bot_index=${record.botIndex},model_states=${JSON.stringify(record.modelStates)}::jsonb,updated_at=now() where id=${record.id} returning ${fields}`);
+        waiting=case when stop_requested then '[]'::jsonb else ${JSON.stringify(outcome.waiting ?? [])}::text::jsonb end,
+        bot_index=${record.botIndex},model_states=${JSON.stringify(record.modelStates)}::text::jsonb,updated_at=now() where id=${record.id} returning ${fields}`);
       if (!saved) throw new ConversationError("The execution is unavailable for settlement.", 409);
       await tx.execute(sql`update local_threads set updated_at=now() where id=${record.threadId}`);
       await event(tx, record.threadId, record.id, { type: "RUN_FINISHED", threadId: record.threadId, runId: record.id,
@@ -285,6 +285,18 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await database.execute(sql`create table if not exists local_messages(position bigserial,thread_id text not null references local_threads(id) on delete cascade,id text not null,run_id text,body jsonb not null,primary key(thread_id,id))`);
       await database.execute(sql`alter table local_messages add column if not exists run_id text`);
       await database.execute(sql`create table if not exists local_events(seq bigserial primary key,thread_id text not null references local_threads(id) on delete cascade,run_id text not null references local_runs(id) on delete cascade,body jsonb not null)`);
+      // Bind serialized values as text before casting: Bun otherwise JSON-encodes the string again.
+      await database.transaction(async tx => {
+        await tx.execute(sql`update local_messages set body=(body #>> '{}')::jsonb where jsonb_typeof(body)='string'`);
+        await tx.execute(sql`update local_events set body=(body #>> '{}')::jsonb where jsonb_typeof(body)='string'`);
+        await tx.execute(sql`update local_runs set
+          bot_ids=case when jsonb_typeof(bot_ids)='string' then (bot_ids #>> '{}')::jsonb else bot_ids end,
+          waiting=case when jsonb_typeof(waiting)='string' then (waiting #>> '{}')::jsonb else waiting end,
+          initiator=case when jsonb_typeof(initiator)='string' then (initiator #>> '{}')::jsonb else initiator end,
+          model_states=case when jsonb_typeof(model_states)='string' then (model_states #>> '{}')::jsonb else model_states end
+          where jsonb_typeof(bot_ids)='string' or jsonb_typeof(waiting)='string'
+            or jsonb_typeof(initiator)='string' or jsonb_typeof(model_states)='string'`);
+      });
       await database.execute(sql`create index if not exists local_events_thread_idx on local_events(thread_id,seq)`);
       await database.execute(sql`create index if not exists local_runs_thread_idx on local_runs(thread_id,updated_at desc)`);
       await database.execute(sql`create index if not exists local_messages_run_idx on local_messages(run_id,position)`);
