@@ -13,7 +13,7 @@ import {
 /**
  * What the shell's page chrome shows for the page under it (parity-spec 2.9): every screen that is
  * not a tab (Bots, Connections, Settings, a conversation opened from the menu) is a page pushed over
- * the app, with a back disc, its title in a pill in the middle, and no menu, avatar or tab bar.
+ * the app, with menu and back discs, its title in a pill in the middle, and no avatar or tab bar.
  *
  * The shell draws the chrome and the page names itself, so the title sits in one place on every
  * page and no page draws a header of its own.

@@ -22,20 +22,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   const computerId = requestedBot ?? session?.botId ?? (mainChat ? bot?.id : undefined);
   const computer = computerId ? { id: computerId, name: agents.data?.find((item) => item.id === computerId)?.name ?? computerId } : undefined;
   const layout = (computerAction?: ReactNode) => conversation ? (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <ShellHeader floating={mainChat} menuOpen={menuOpen} onMenu={() => setMenuOpen(true)} computerAction={computerAction} />
-      <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
     </div>
   ) : (
     <PageChromeProvider>
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <PageHeader computerAction={computerAction} />
+        <PageHeader menuOpen={menuOpen} onMenu={() => setMenuOpen(true)} computerAction={computerAction} />
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
       </div>
     </PageChromeProvider>
   );
   return (
-    <div className="duet-touch flex h-svh min-h-0 flex-col overflow-hidden bg-duet-surface text-duet-ink">
+    <div className="duet-touch flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden bg-duet-surface text-duet-ink">
       {conversation ? <ChatWorkspace bot={computer} requestedCallId={waiting?.toolCallId}>{layout}</ChatWorkspace> : layout()}
       <MenuSheet open={menuOpen} onOpenChange={setMenuOpen} />
     </div>

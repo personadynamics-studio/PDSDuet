@@ -17,12 +17,12 @@ export function MenuSheet({ open, onOpenChange }: { open: boolean; onOpenChange(
   const close = () => onOpenChange(false);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="left" className="w-[340px] gap-0 p-0 sm:max-w-[340px]">
-        <SheetHeader className="px-5 py-5">
+      <SheetContent side="left" className="gap-0 p-0 sm:max-w-[340px]" style={{ width: "min(340px, calc(100vw - 3rem))" }}>
+        <SheetHeader className="shrink-0 px-5 py-5 pr-14">
           <SheetTitle>{appConfig.brand.productName}</SheetTitle>
           <SheetDescription>選擇機械人或繼續已有對話。</SheetDescription>
         </SheetHeader>
-        <nav aria-label="選單" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 pb-5">
+        <nav aria-label="選單" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-3 pb-5">
           <section aria-label="機械人">
             <h2 className="px-3 py-2 text-sm font-medium text-muted-foreground">機械人</h2>
             {agents.isPending ? <p role="status" className="px-3 py-2">正在載入…</p> : agents.error && !agents.data ? <p role="alert" className="px-3 py-2 text-destructive">無法載入機械人。</p> : (agents.data ?? []).map((agent) => (
