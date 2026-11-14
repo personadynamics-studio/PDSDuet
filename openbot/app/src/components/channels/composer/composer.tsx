@@ -348,7 +348,7 @@ export function Composer({
    */
   const releaseStagedRows = useCallback((released: readonly Attachment[]) => {
     for (const attachment of released) {
-      const rowId = stagedRowId(attachment);
+      const rowId = stagedRowId(attachment.source);
       if (rowId !== undefined) {
         uploadedRows.current.delete(rowId);
       }
@@ -492,7 +492,7 @@ export function Composer({
     }
     const drawn = new Set<string>();
     for (const attachment of attachments) {
-      const rowId = stagedRowId(attachment);
+      const rowId = stagedRowId(attachment.source);
       if (rowId !== undefined) {
         drawn.add(rowId);
       }
@@ -844,24 +844,11 @@ export function Composer({
           name: attachment.filename ?? "附件",
           size: attachment.size,
           loading: attachment.status === "uploading",
-          /*
-           * Warned, never refused. The server accepts the whole file and the
-           * model reads its first MAX_EXTRACTED_CHARACTERS; mayBeTruncatedForModel
-           * is exact in the safe direction (N bytes decode to at most N chars),
-           * so a file at or under the ceiling cannot be cut. Only text reaches
-           * the extraction path: images are excluded by the filter above, and an
-           * unnamed pick whose type is still unknown gets no warning until the
-           * server has sniffed it (then the strip re-renders off the url source).
-           *
-           * THE FILTER IS THE ONLY IMAGE TEST, DELIBERATELY. `attachment.type` is
-           * the browser's claim, fixed at pick time and never revised; the filter
-           * runs `stagedModality`, which prefers what the server sniffed. Testing
-           * both would not narrow this to text, it would only subtract: a file the
-           * browser called a PNG and the server read as text lands in this strip,
-           * goes down the extraction path, and is exactly the one that gets cut.
-           */
+          // Only stored text is truncated for the model; PDFs are sent as original files.
           mayTruncate:
             attachment.status !== "uploading" &&
+            attachment.source.mimeType !== undefined &&
+            classifyAttachment(attachment.source.mimeType) === "text" &&
             attachment.size !== undefined &&
             mayBeTruncatedForModel(attachment.size),
         })),

@@ -8,9 +8,9 @@ PDSDuet is an independently maintained AI workstation with a focused sales-prepa
 
 Development continues in [personadynamics-studio/PDSDuet](https://github.com/personadynamics-studio/PDSDuet), with a fresh Git history beginning from the existing PDSDuet code and modifications. Future features and architecture are maintained independently of OpenDuet.
 
-**Project status:** Personal MVP in active development. The web frontend was built and deployed to the self-hosted installation on 13 November 2026, with a 20 MiB upload limit per PDF or Markdown/text file.
+**Project status:** Personal MVP in active development. The web frontend was built and loaded into the self-hosted installation on 14 November 2026, with a 20 MiB upload limit per PDF or Markdown/text file.
 
-**14 November source update:** Browser use, Bot discovery/calls and group authorship now share one server execution/tool loop. Background work, automatic research and generic approval/delivery workers have been removed from that core. This extraction has not been built or applied to the installation; see [the current architecture](openbot/docs/architecture.md).
+**14 November update:** Browser use, Bot discovery/calls and group authorship share one server execution/tool loop. Background work, automatic research and generic approval/delivery workers have been removed from that core. The extraction is now loaded in the self-hosted installation: actual chat, browser navigation and uploaded PDF reading have completed. Bot delegation and group operation were not exercised in this run; see [the current architecture](openbot/docs/architecture.md).
 
 ## The problem it addresses
 
