@@ -1,69 +1,78 @@
 # Browser and Bot execution core
 
-This describes the source extraction of 2026-11-14. It has not been built, loaded or exercised. Source and Git publication do not establish runtime success.
+This describes the source extraction of 2026-11-14. Build and operation results belong in `tasks/todo.md`; source publication alone does not establish runtime success.
 
-## One execution owner
+## Execution and settlement
 
-The signed-in person selects a Bot from the same visible profile roster used by Bot collaboration. Chat, groups and independent schedules enter the same executor.
+The signed-in person explicitly selects a Bot from the same visible profile roster used by Bot collaboration. Chat, group replies and Bot delegation share one execution owner and one transcript writer.
 
 ```mermaid
 flowchart LR
-  Chat --> Executor
-  Group --> Executor
-  Routine --> Executor
-  Executor --> Runner[LocalAgentRunner]
-  Executor --> Tools[One server tool loop]
-  Runner --> Store[Canonical messages, events and runs]
-  Tools --> Browser
+  Chat --> Routes[Thread HTTP API]
+  Routes --> Execution[execution.ts]
+  Group[Group API] --> Execution
+  Execution --> Model[Selected Bot model segment]
+  Model --> Tools[Server HeadlessToolsMiddleware]
+  Tools --> Browser[Browser and computer]
   Tools --> Connectors[Granted connectors and manual mail]
-  Tools --> Peer[Another Bot in this conversation]
-  Peer --> Executor
+  Tools --> Peer[message_bot]
+  Peer --> Execution
+  Execution --> Settlement[settlement.ts]
+  Settlement --> DB[Messages, runs and replayable events]
+  DB --> View[Snapshot and SSE]
 ```
 
-`toolkit/src/run-turn.ts` builds the Bot and tools once. `start` returns its run/event source; `run` waits on that same execution. `toolkit/src/headless-tools.ts` executes application tools on the server, including browser, Bot, connector, mail, host and component tools. Mixed calls do not get split between a browser observer and a background worker.
+The runtime has four modules:
 
-`server/src/runtime/local-runner.ts` owns execution and cleanup. `thread-store.ts` owns messages, events, run state and conversation occupancy. The root holds the conversation once; children use real parent ancestry. Only the occupancy owner renews it. Expired execution is recorded as interrupted.
+| Module | Responsibility |
+| --- | --- |
+| `server/src/runtime/types.ts` | Execution input, outcome, persisted run and writer contracts. |
+| `server/src/runtime/execution.ts` | `start`, `run`, `stop` and `close`; actual SDK/tool resources, cancellation and group phases. |
+| `server/src/runtime/settlement.ts` | Conversation access, input persistence, output projection, waiting/terminal state and event replay. |
+| `server/src/runtime/routes.ts` | Authenticated HTTP parsing, snapshots, SSE and explicit Stop. |
 
-## Bots and groups
+`start` returns the admitted run ID; `run` waits for that same execution. Group targets are phases of one root run. Real child executions carry `parentRunId`. One in-process map owns actual live promises and abort controllers. There is no worker queue, claim, lease renewal, occupancy owner or separate completion ledger.
 
-`agents/bot-tools.ts` supplies `list_bots`, `message_bot` and `ask_person`. Visibility comes from `profiles.list(actor)`. Pairwise Bot grants and numeric handoff depth/fan-out gates have been removed; account visibility and genuine connector grants remain.
+`server/src/index.ts` assembles the selected model and all application tools once per phase. `toolkit/src/headless-tools.ts` owns server execution of browser, Bot, connector, mail, host and component tools. Native and LangGraph adapters produce model segments and tool-call batches; they do not call a second `/api/agent-tools/call` executor. Unknown, unoffered calls fail rather than silently finish.
 
-`message_bot` directly invokes a child through the same executor and thread. Its output carries its own `senderBotId`; the caller is not asked to generate a relay of an already saved answer. An active ancestor cannot synchronously delegate back into itself.
+The Helm API Deployment has one replica and uses `Recreate`. Horizontal scaling and overlapping API owners are not supported by this execution model. An update therefore interrupts API availability while the process changes.
 
-`local_messages` is the runtime transcript. `senderBotId`, `senderUserId` and `createdAt` describe real authors and time. Internal delegation instructions are model input, not human messages.
+## Bots, authors and model history
 
-Groups check channel membership and read one canonical thread. Ordinary group replies do not create `group.turn` or `bot.message` work items. The initializer copies historical `group_messages` using original IDs and `ON CONFLICT DO NOTHING`; that table is not a second live transcript. The initializer has not been executed.
+The left menu lists visible profiles and switches to their conversations. With no selected Bot, the UI asks the person to select or create one. New native Bots require a real role description; remote Bots require an explicit endpoint. No stock Bot or automatic introduction is selected as a fallback.
 
-`historyForBot` is the sole model-input adapter. It pairs a Bot's own calls/results and quotes foreign Bot records as data. It leaves the saved transcript intact. A formal human answer preserves the unanswered siblings of that exact tool batch so the tool owner finishes them before asking the model again.
+`agents/bot-tools.ts` supplies `list_bots`, `message_bot` and `ask_person`. Visibility comes from `profiles.list(actor)`. Real account visibility, connector grants and filesystem containment remain at their owning boundaries.
 
-## Stop, waiting and reconnect
+`message_bot` invokes a child through the same executor and thread. Replies retain their actual `senderBotId`; the caller receives the real child result without another delivery or relay model call. A child awaiting human input leaves the parent waiting on that child. Completing the leaf supplies the original parent tool result and resumes the parent under its existing run ID.
 
-Stop follows the real parent family, cancels running descendants and closes waiting calls. It leaves stop intent on completed phases so later group replies cannot start in the gap between phases. Completed output retains its actual status.
+`local_messages` is the canonical transcript. `senderBotId`, `senderUserId` and `createdAt` describe real authors and time. Delegation instructions are model input, not fabricated human messages. Groups check membership and use this same thread; ordinary replies do not create work items.
 
-Waiting records the actual tool call ID and tool-specific metadata. Person questions, browser takeover and private field input resume through the thread API. The response resolves the saved leaf Bot/run by call ID rather than guessing from the selected Bot. It uses canonical messages and state, not a second continuation snapshot.
+`historyForBot` adapts canonical history for the selected Bot and quotes foreign Bot records as data. `mergeContinuationHistory` keeps tool-call/result pairs adjacent for model input. Neither rewrites the saved transcript. Model state is stored per run and Bot in `local_runs.model_states`, so a group phase or child cannot replace another Bot's state.
 
-Human inputs and tool answers are saved with transcript events in the same transaction. Output is persisted before completion; terminal run state and its event are committed together. Snapshots return messages, event cursor and real run/waiting state. SSE uses database notifications and `Last-Event-ID`.
+## Waiting, Stop and reconnect
 
-Authenticated remote callbacks must belong to a running, non-stopped run. Callback I/O consumes both HTTP cancellation and that run's stop notification. A signed identity does not authorize a completed run to continue acting.
+Waiting retains the actual tool call ID and tool-specific metadata. Person questions, browser takeover and private input are answered through the thread API. Settlement resolves the recorded waiting leaf and its owner; the currently selected UI Bot does not choose the recipient. Resume keeps the same run ID and completes unexecuted siblings in the original tool batch before another model segment. There is no full continuation snapshot alongside history.
 
-Closing a screen or leaving an SSE view does not cancel execution. Explicit Stop does.
+Stop aborts actual live resources before waiting on database cancellation. It follows the real parent family and records stop intent so later group phases cannot start. Waiting or orphaned runs can be closed directly; live tools finish their cancellation before their execution settles. Already submitted atomic mouse/keyboard input cannot be undone, and arbitrary synchronous page JavaScript has no hard cancellation API.
+
+Settlement saves human input and its transcript events in one transaction. Streamed output is saved through the same writer. Final output, waiting/terminal status and the terminal event commit together. Model or storage failures are not reported as successful delivery. Screens, notifications, recording and acknowledgements are not prerequisites for settlement.
+
+Snapshots read canonical messages, the event cursor and actual run/waiting state together. SSE replays persisted events after `Last-Event-ID` and follows PostgreSQL notifications. Closing a view does not cancel execution; explicit Stop does. Browser screen reconnection uses its native WebSocket independently of thread SSE.
 
 ## Browser and computer
 
-`agent-computer` owns Playwright/Chromium and the native persistent profile. `--restore-last-session` uses browser-owned state; application cookie JSON copies and restore timers have been removed. No user profile, cookie or workspace data was deleted by executing this change.
+`agent-computer` owns Playwright/Chromium and the native persistent profile. Browser-owned restore state preserves sessions; application cookie JSON copies and restore timers have been removed. This source change does not delete profile, cookie or workspace data.
 
-The screen is a live WebSocket view bound to an authenticated, visible Bot. Opening it does not wait for demonstration recording or a screenshot database write.
+The live screen is bound to an authenticated, visible Bot. Opening it does not wait for recording or a screenshot database write. Taking control cancels the in-flight Bot action and blocks new Bot input, producing a real waiting tool. Release or private input answers that saved call through the common execution flow.
 
-The existing control holder owns input. Taking control cancels the in-flight Bot action and blocks new Bot input. That condition becomes a real waiting tool. Release or private input answers the same saved call, without a Responsibility or approval worker.
+Cancellation reaches provider lookup, HTTP and supported Playwright operations. It preserves the page/profile rather than closing the browser to imitate cancellation. Profile and workspace operations retain containment and Bot isolation at the filesystem owner. SPIRE interception, browser eviction quotas and automatic recording are no longer on this path.
 
-Cancellation is passed through provider lookup, HTTP and the supported Playwright operations. Already submitted atomic mouse/keyboard input cannot be undone; arbitrary synchronous page JavaScript has no hard cancellation API. The implementation preserves the browser session rather than closing its page to imitate cancellation.
+## Startup and retained capabilities
 
-Profiles and workspace operations keep containment and Bot isolation at the filesystem owner. Fleet listings use the visible profile roster. SPIRE attestation, Web Bot Auth interception, browser eviction quotas and automatic recording have been removed from this path.
+`settlement.initialize()` creates or updates the canonical runtime tables. It retires unfinished runs belonging to the removed executor as interrupted, removes obsolete lease/executor columns, and copies historical public group messages with original IDs and recorded authors. Historical group storage is not a second live transcript. New-runtime waiting records survive a process restart; runs left executing by a dead process become interrupted instead of being automatically replayed.
 
-## Independent features and delivery boundary
+Manual mail/calendar, granted connectors, uploaded documents, saved pages, settings and genuine shared-account consent remain. The old routine/scheduling engine, Task intake, proactive research, Responsibility, generic approvals, delivery routing and their workers are not assembled. No working daily-schedule capability is claimed by this extraction.
 
-Manual mail/calendar, other granted connectors, saved pages, account settings and genuine shared-account consent remain. Ordinary routines use the same executor and consume actual waiting/stopped outcomes.
+Existing tests and checker files have not been changed. Test suites, lint and type checking are excluded from this delivery. Builds and actual operation are limited to the two rounds authorized by the user; any failed build or startup consumes its round.
 
-Proactive research, Task intake, Responsibility, automatic follow-ups, delivery routing, generic approval review/inbox and their worker loops are not assembled by the core. `createApp(config, services)` names API dependencies instead of passing a long positional list. Optional broker errors are reported for that connector and do not terminate browser startup.
-
-No tests, test assets, lint, type checking, builds, services, SQL, browser operations or actual conversations were executed for this extraction. Existing test/checker files remain untouched. Runtime operation count is still 0 of the previously allowed 2 rounds.
+Both rounds have now been used. The first frontend build found a stale `seedMessage` import, which was removed. In the second round the frontend, computer image and supervisor image built successfully, but the host API failed to resolve `@ai-sdk/openai` from `toolkit/src/native-agent.ts`. The package is declared in the toolkit manifest and lockfile. No dependency installation or third startup was attempted; no real conversation was reached. The PostgreSQL and supervisor started for this attempt were stopped.

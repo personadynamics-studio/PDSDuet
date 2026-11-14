@@ -10,7 +10,6 @@ import {
   toFieldChange,
 } from "@/components/channels/compose-state";
 import { ConversationView } from "@/components/channels/conversation-view";
-import { seedMessage } from "@/components/channels/transcript-messages";
 import { usePageChrome } from "@/components/shell/page-chrome";
 import {
   Combobox,
@@ -62,7 +61,7 @@ function RouteComponent() {
   );
 
   const [error, setError] = useState<string | null>(null);
-  // Optimistic seed shown before the first channel record exists.
+  // Show the person's submitted text while the channel is created.
   const [sent, setSent] = useState<Message | null>(null);
 
   // Stale or private `?agent=` values are ignored because the roster is permission-filtered.
@@ -232,7 +231,7 @@ function RouteComponent() {
         }
 
         setError(null);
-        setSent(seedMessage(draft.text, newId()));
+        setSent({ id: newId(), role: "user", content: draft.text });
 
         try {
           // Recorded, then started: a coworker picked here is as much a choice as an `@` on the

@@ -176,23 +176,6 @@ This template renders nothing.
 {{- end }}
 
 {{- /*
-  A replica count that cannot survive the thing replicas are for.
-
-  One replica is a supported way to run this and not the default, so this is a note rather than a
-  refusal only when somebody has also asked for a disruption budget, where one replica means a node
-  drain blocks rather than being safe.
-*/}}
-{{- if and (not .Values.server.autoscaling.enabled) (lt (int .Values.server.replicaCount) 1) }}
-{{- fail "server.replicaCount must be at least 1." }}
-{{- end }}
-
-{{- if .Values.server.embeddedComputer }}
-{{- if gt (int .Values.server.replicaCount) 1 }}
-{{- fail "server.embeddedComputer runs a browser inside every API pod, which cannot be replicated: each replica would hold a profile directory belonging to one Bot. Either set server.replicaCount=1, or leave embeddedComputer off and give the Bots a computer of their own." }}
-{{- end }}
-{{- end }}
-
-{{- /*
   A Bot endpoint with nothing on the request that says who is calling.
 
   The server refuses to start in this state, and it is better to hear it from `helm install` than

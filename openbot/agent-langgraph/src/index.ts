@@ -1,7 +1,7 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
 import { ChatAnthropic } from "@langchain/anthropic";
-import { type AIMessage, ToolMessage } from "@langchain/core/messages";
+import type { AIMessage } from "@langchain/core/messages";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import {
   END,
@@ -23,7 +23,6 @@ import {
 import { toLangChainMessages } from "./history";
 import { readReasoningEffort } from "./model-options";
 import { streamRun } from "./stream";
-import { toolAnswer, ToolWaiting } from "./tool-answer";
 
 /**
  * The same Bot, on a framework.
@@ -40,9 +39,8 @@ import { toolAnswer, ToolWaiting } from "./tool-answer";
  * a person for help is the wrong trade. Here it is `useResponsesApi`, one line, because the
  * migration belongs to the people who maintain the integration.
  *
- * The tool loop still runs on the client, exactly as it does in `agent-bot`: a Bot's actions happen
- * on a browser the person is watching, and the surface remains the place that executes those tools.
- * The graph provides model orchestration without changing that contract.
+ * The graph produces one model segment. Every tool supplied in input.tools belongs to the
+ * server's execution loop, which returns actual results in the next segment's messages.
  */
 
 const PORT = listenPort(process.env.PORT, 4201);
@@ -214,174 +212,23 @@ function buildModel() {
   });
 }
 
-/**
- * Where this Bot runs a tool.
- *
- * Not the vendor: this deployment. A Bot that called an MCP server directly would be a Bot that
- * walked around the grant, the policy and the audit row, and those are the product. So the loop runs
- * here, in this process, and every call it makes goes back through the deployment that granted it.
- */
-const TOOL_URL =
-  // Numeric, never `localhost`: it resolves to `::1` under Node and `127.0.0.1` under bun, so a
-  // name here reaches a different interface depending on what started the process.
-  process.env.OPENBOT_TOOL_URL ?? "http://127.0.0.1:3001/api/agent-tools/call";
-const TOOL_TOKEN = process.env.AGENT_TOOL_TOKEN ?? "";
-
-async function callTool(
-  run: string,
-  name: string,
-  args: Record<string, unknown>,
-  signal: AbortSignal,
-  toolCallId: string,
-): Promise<string> {
-  if (!TOOL_TOKEN) {
-    return "Refused. This Bot has no credential for calling tools back through its deployment.";
-  }
-  if (!run) {
-    /*
-     * No statement from the deployment about whose run this is, so there is nothing to act on behalf
-     * of. Reported as a result rather than thrown: the run continues and says what it could not do.
-     */
-    return "Refused. This run carried no signed statement of which Bot and person it is for.";
-  }
-  try {
-    const response = await fetch(TOOL_URL, {
-      signal,
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-openbot-agent-token": TOOL_TOKEN,
-      },
-      /*
-       * The deployment's own statement, handed straight back.
-       *
-       * The Bot and the actor used to be sent from here, which meant this process asserted who it was
-       * acting for. It is not in a position to know, and anything holding the token could claim
-       * anything, so the deployment says it and this only carries the note.
-       */
-      body: JSON.stringify({ name, args, run, toolCallId }),
-    });
-    return await toolAnswer(response);
-  } catch (error) {
-    signal.throwIfAborted();
-    if (error instanceof ToolWaiting) throw error;
-    // Reported to the model as a result rather than thrown: the run continues and says what broke.
-    return `That tool could not be called: ${
-      error instanceof Error ? error.message : "unknown error"
-    }`;
-  }
-}
-
-/**
- * The deployment's signed statement of what this run is.
- *
- * Opaque here on purpose: this process cannot read it and has no reason to. It carries it back when it
- * calls a tool, and the deployment that signed it is the only thing that can open it.
- */
-function runAssertionOf(input: RunAgentInput): string {
-  const props = input.forwardedProps as { openbotRun?: unknown } | undefined;
-  return typeof props?.openbotRun === "string" ? props.openbotRun : "";
-}
-
-/**
- * The tools this deployment runs, as opposed to the ones the surface draws.
- *
- * Both arrive in the same list and no naming rule separates them, so the deployment names its own.
- * Absent, nothing is treated as the deployment's: a Bot that guessed wrong would either apologise for
- * a component it did show, or quietly report a governed tool as drawn without ever calling it. The
- * first is embarrassing and the second is a lie about governance, so an unmarked run does neither.
- */
-function deploymentToolsOf(input: RunAgentInput): Set<string> {
-  const props = input.forwardedProps as
-    | { openbotDeploymentTools?: unknown }
-    | undefined;
-  const names = props?.openbotDeploymentTools;
-  return new Set(
-    Array.isArray(names)
-      ? names.filter((name) => typeof name === "string")
-      : [],
-  );
-}
-
-/** Did the model reach for something the surface owns rather than something this deployment runs? */
-function callsTheSurface(
-  calls: { name: string }[],
-  ours: Set<string>,
-): boolean {
-  return calls.some((call) => !ours.has(call.name));
-}
-
-/**
- * The graph, with the tool loop where it belongs.
- *
- * The loop used to run in the browser: this emitted a call, ended the run, and waited for a surface
- * to execute it and start another. That made a watching browser a requirement for a Bot to do
- * anything, which rules out an embed, a schedule, and anything unattended.
- *
- * Now it answers, calls what it needs, reads the results and answers again, which is what a harness
- * is for. `recursionLimit` bounds a model that would otherwise call tools in a circle.
- */
+/** The model emits calls; the server's one tool owner supplies their real results. */
 function buildGraph(input: RunAgentInput, signal: AbortSignal) {
   const model = buildModel();
-  const run = runAssertionOf(input);
-
   const tools = toBoundTools(input);
-  const bound = tools.length > 0 ? model.bindTools(tools) : model;
-  const ours = deploymentToolsOf(input);
-
+  const bound = tools.length ? model.bindTools(tools) : model;
+  const offered = new Set((input.tools ?? []).map(tool => tool.name));
   return new StateGraph(MessagesAnnotation)
-    .addNode("answer", async (state) => ({
+    .addNode("answer", async state => ({
       messages: [await bound.invoke(state.messages, { signal })],
     }))
-    .addNode("tools", async (state) => {
-      const last = state.messages.at(-1) as AIMessage;
-      const results = await Promise.all(
-        /*
-         * Only this deployment's own tools. A component is drawn by the surface, and a decision is
-         * answered there by a person, so neither is executed here and neither gets a result invented
-         * here. The run ends instead, and the surface starts the next one carrying what it produced.
-         */
-        (last.tool_calls ?? [])
-          .filter((call) => ours.has(call.name))
-          .map(async (call) => {
-            const text = await callTool(
-              run,
-              call.name,
-              (call.args ?? {}) as Record<string, unknown>,
-              signal,
-              call.id!,
-            );
-            return new ToolMessage({
-              content: text,
-              tool_call_id: call.id!,
-              name: call.name,
-            });
-          }),
-      );
-      return { messages: results };
-    })
     .addEdge(START, "answer")
-    .addConditionalEdges("answer", (state) => {
+    .addConditionalEdges("answer", state => {
       const last = state.messages.at(-1) as AIMessage | undefined;
-      const calls = last?.tool_calls ?? [];
-      if (calls.length === 0) return END;
-      /*
-       * A call the surface owns ends the run.
-       *
-       * This is how a tool that lives in the browser is supposed to work: the Bot asks for it, the
-       * run finishes, the surface draws it or puts the question to a person, and the surface begins
-       * the next run with the answer in hand. Running the loop through it here instead invents a
-       * result: the Bot apologises for a chart the person is looking at, and an approval card that
-       * has already been answered on its behalf sits waiting for a click that can never land.
-       *
-       * A turn that asks for both kinds at once ends too, and the model asks again for what it still
-       * has no answer to. That is the rarer case and the safe way round: the alternative runs a
-       * governed tool whose result nobody is waiting for.
-       */
-      if (callsTheSurface(calls, ours)) return END;
-      return "tools";
+      if ((last?.tool_calls ?? []).some(call => !offered.has(call.name)))
+        throw new Error("The model requested a tool that was not offered for this run.");
+      return END;
     })
-    .addEdge("tools", "answer")
     .compile();
 }
 

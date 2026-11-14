@@ -1,4 +1,4 @@
-import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
+import type { RunAgentInput } from "@ag-ui/client";
 import { projectThreadEvent, type ThreadEvent, type ThreadMessage, type ThreadRun } from "@openbot/shared/thread-events";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
@@ -173,7 +173,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
         if (body.type === "TOOL_CALL_RESULT" && typeof body.messageId !== "string") body = { ...body, messageId: `tool-result:${String(body.toolCallId)}` };
         let removed: string[] = [];
         if (body.type === "MESSAGES_SNAPSHOT") {
-          const messages = (body.messages as ThreadMessage[]).filter(message => !inputIds.has(message.id) && message.role !== "user" && message.role !== "system")
+          const messages = (body.messages as ThreadMessage[]).filter(message => !inputIds.has(message.id) && (message.role === "assistant" || message.role === "tool" || message.role === "activity"))
             .map(message => ({ ...message, senderBotId: botId }));
           const ids = new Set(messages.map(message => message.id)); removed = [...phaseIds].filter(id => !ids.has(id));
           body = { ...body, messages };
@@ -286,6 +286,8 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await database.execute(sql`alter table local_messages add column if not exists run_id text`);
       await database.execute(sql`create table if not exists local_events(seq bigserial primary key,thread_id text not null references local_threads(id) on delete cascade,run_id text not null references local_runs(id) on delete cascade,body jsonb not null)`);
       await database.execute(sql`create index if not exists local_events_thread_idx on local_events(thread_id,seq)`);
+      await database.execute(sql`create index if not exists local_runs_thread_idx on local_runs(thread_id,updated_at desc)`);
+      await database.execute(sql`create index if not exists local_messages_run_idx on local_messages(run_id,position)`);
       await database.execute(sql`do $$ begin if exists(select 1 from information_schema.columns where table_name='local_runs' and column_name='agent_id') then
         update local_runs set bot_ids=jsonb_build_array(agent_id) where bot_ids is null;
         with retired as(update local_runs set status='interrupted',error='The previous execution runtime was retired.',waiting='[]'::jsonb,updated_at=now()

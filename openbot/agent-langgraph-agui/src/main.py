@@ -18,14 +18,12 @@ from ag_ui_langgraph import add_langgraph_fastapi_endpoint
 from fastapi import FastAPI
 from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 from .tool_runtime import (
     ToolAwareAgent,
     bind_tools,
-    execute_tools,
     model_messages,
-    next_step,
 )
 
 
@@ -223,9 +221,7 @@ async def answer(state: MessagesState):
 builder = StateGraph(MessagesState)
 builder.add_node("answer", answer)
 builder.add_edge(START, "answer")
-builder.add_node("tools", execute_tools)
-builder.add_conditional_edges("answer", next_step)
-builder.add_edge("tools", "answer")
+builder.add_edge("answer", END)
 # A checkpointer, because the AG-UI integration resumes a thread by id and LangGraph refuses to
 # without one. In memory rather than in Postgres: OpenBot's database is where a conversation lives,
 # and two stores remembering the same thread is how they come to disagree.

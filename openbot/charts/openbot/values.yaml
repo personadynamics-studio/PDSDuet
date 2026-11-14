@@ -24,13 +24,8 @@ image:
 imagePullSecrets: []
 
 server:
-  replicaCount: 2
-  # Two by default because horizontal is the point. Everything that has to survive a replica is in
-  # PostgreSQL, and one replica hides every bug that is not.
-
-  # THE BROWSER IS NOT IN THIS POD. The image runs a Bot's computer beside the API for the
-  # one-container case; a replica of the API must not carry one, because a browser is a few hundred
-  # megabytes holding one Bot's logins, and scaling the API would scale those with it.
+  # One API process owns live executions. The Deployment uses one replica and Recreate updates.
+  # Computers normally run separately; the one-container image can embed one instead.
   embeddedComputer: false
 
   resources:
@@ -40,22 +35,7 @@ server:
     limits:
       memory: 2Gi
 
-  # Off by default. Turn it on and set the metric you actually want to scale on.
-  autoscaling:
-    enabled: false
-    minReplicas: 2
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: null
-    behavior: {}
-
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-    maxUnavailable: null
-
-  # Spread replicas so a node or zone going away does not take the deployment with it. Soft by
-  # default: a single-node cluster still schedules, which is what a first `helm install` runs on.
+  # Optional placement for the single API pod.
   topologySpreadConstraints: []
   podAntiAffinity: soft
 

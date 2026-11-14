@@ -10,10 +10,10 @@ metadata:
 {{ toYaml . | indent 4 }}
   {{- end }}
 spec:
-  {{- /* Left unset when the HPA owns it, so a chart upgrade cannot undo a scale the HPA decided. */}}
-  {{- if not .Values.server.autoscaling.enabled }}
-  replicas: {{ .Values.server.replicaCount }}
-  {{- end }}
+  # One process owns live SDK executions; updates must not overlap owners.
+  replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
 {{ include "openbot.componentSelectorLabels" (dict "root" . "component" $component) | indent 6 }}

@@ -163,7 +163,11 @@ export function createExecution(options: {
     const runId = prepared.run.id;
     const existing = active.get(runId);
     if (existing) {
-      if (prepared.run.status === "waiting" && input.messages?.some(message => message.role === "tool") && !input.childResultRunId) {
+      if (input.childResultRunId) {
+        await existing.promise;
+        const ready = await settlement.ready(input.childResultRunId);
+        if (ready.includes(input.childResultRunId)) return open(input);
+      } else if (prepared.run.status === "waiting" && input.messages?.some(message => message.role === "tool")) {
         await existing.promise;
         return open(input);
       }
