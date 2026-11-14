@@ -25,7 +25,7 @@ export function createBotTools(options: {
     const tools: GrantedTool[] = [{
       name: "list_bots",
       ref: "bot/list_bots",
-      description: "List the other Bots visible to this person, with their exact IDs, names and roles.",
+      description: "List the other Bots visible to this person, with their exact IDs, names and roles. This list excludes you; use message_bot to ask one of these peers for help.",
       parameters: z.object({}),
       execute: async (_args, context) => {
         context?.signal?.throwIfAborted();
@@ -56,9 +56,9 @@ export function createBotTools(options: {
       tools.push({
         name: "message_bot",
         ref: "bot/message_bot",
-        description: "Ask another Bot to help in this conversation. Use its exact ID from this list: " +
+        description: "Delegate an internal task to another Bot. Use its exact ID from this list: " +
           JSON.stringify(roster) +
-          ". The Bot answers here under its own name. Its answer is already visible to the person; do not repeat or relay it.",
+          ". Its response returns to you as private tool data and is not delivered directly to the person. Use the peer's findings to finish the task and answer your requester; do not merely announce that you forwarded it.",
         parameters,
         execute: async (args, context) => {
           context?.signal?.throwIfAborted();
@@ -81,6 +81,7 @@ export function createBotTools(options: {
             { kind: "bot_wait", childRunId: result.runId },
           );
           return JSON.stringify({
+            requesterBotId: source.botId,
             botId: input.botId,
             runId: result.runId,
             status: result.status,

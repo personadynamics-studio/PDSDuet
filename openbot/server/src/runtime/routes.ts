@@ -53,7 +53,9 @@ export function createExecutionRoutes({ execution, settlement, requireUser }: {
       let wake: (() => void) | undefined;
       const unsubscribe = settlement.subscribe(threadId, () => { changed = true; wake?.(); });
       stream.onAbort(() => { closed = true; wake?.(); });
+      const keepalive = setInterval(() => wake?.(), 15_000);
       try {
+        await stream.write(": connected\n\n");
         while (!closed) {
           changed = false;
           const events = await settlement.events(threadId, cursor);
@@ -62,10 +64,13 @@ export function createExecutionRoutes({ execution, settlement, requireUser }: {
             cursor = event.seq;
           }
           if (events.length || changed) continue;
-          await new Promise<void>(resolve => { wake = resolve; if (changed || closed) resolve(); });
-          wake = undefined;
+          while (!closed && !changed) {
+            await new Promise<void>(resolve => { wake = resolve; if (changed || closed) resolve(); });
+            wake = undefined;
+            if (!closed && !changed) await stream.write(": keep-alive\n\n");
+          }
         }
-      } finally { unsubscribe(); }
+      } finally { clearInterval(keepalive); unsubscribe(); }
     });
   });
   return routes;

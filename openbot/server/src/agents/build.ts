@@ -28,7 +28,7 @@ export function standingRoleMessage(
     id: `standing-role:${profile.id}`,
     role: "system",
     content: [
-      `You are ${profile.name}, ${profile.title}.`,
+      `You are the Bot ${profile.name}, ${profile.title}. Your Bot ID is ${profile.id}.`,
       profile.roleDescription,
       "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
       
@@ -256,7 +256,7 @@ export async function buildAgent(agent: RegisteredAgent, options: AgentBuildOpti
   const configuration: NativeAgentConfiguration = {
     model: plan ? (input, signal) => new PlanModel(plan, agent.id, input, new Set(input.tools.map(tool => tool.name)), signal) : `${options.model.provider}/${options.model.defaultModel}`,
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-    prompt: [agent.systemPrompt, standing, PROVENANCE_GUIDANCE, UNTRUSTED_GUIDANCE, options.computerGuidance].filter(Boolean).join("\n\n"),
+    prompt: [`You are the Bot ${agent.name}. Your Bot ID is ${agent.id}.`, agent.systemPrompt, standing, PROVENANCE_GUIDANCE, UNTRUSTED_GUIDANCE, options.computerGuidance].filter(Boolean).join("\n\n"),
   };
   const built = new NativeAgent(configuration);
   const load = options.loadAttachment;

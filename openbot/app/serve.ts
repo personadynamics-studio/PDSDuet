@@ -193,6 +193,9 @@ if (import.meta.main) {
     },
     async fetch(request, server) {
       const url = new URL(request.url);
+      if (url.pathname.startsWith("/api/threads/") && url.pathname.endsWith("/events")) {
+        server.timeout(request, 0);
+      }
       if (url.pathname === "/api/audio/transcriptions") {
         server.timeout(request, DICTATION_HTTP_IDLE_SECONDS);
       }

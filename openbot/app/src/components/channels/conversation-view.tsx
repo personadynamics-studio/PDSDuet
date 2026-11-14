@@ -6,6 +6,8 @@ import { toDraft } from "./composer/draft";
 import { ChatTranscript } from "./chat-transcript";
 import { ConversationSendContext, latestTurnToolCalls } from "./conversation-send";
 import { PageSheetHost } from "@/components/duet/page-sheet";
+import { useConversationSession } from "@/lib/chat/active-bot";
+import { ToolCard } from "@/lib/chat/tool-cards";
 
 export function ConversationView({
   messages, busy = false, pending = false, restoring = false, disabled = false,
@@ -19,7 +21,18 @@ export function ConversationView({
   autoFocus?: boolean;
   speakerNames?: ReadonlyMap<string, string>;
 }) {
+  const session = useConversationSession();
   const latest = useMemo(() => new Set(latestTurnToolCalls(messages)), [messages]);
+  const visibleCalls = useMemo(() => new Set(messages.flatMap(message =>
+    message.role === "assistant" ? (message.toolCalls ?? []).map(call => call.id) : [],
+  )), [messages]);
+  // The published session can lag one render while switching conversations.
+  const questions = !disabled && !restoring && session?.messages === messages && session.activeRun?.status === "waiting"
+    ? (session.activeRun.waiting ?? []).flatMap(waiting => {
+      const question = waiting.metadata?.message;
+      return waiting.answerable && waiting.metadata?.kind === "person_question" && typeof question === "string" && !visibleCalls.has(waiting.toolCallId)
+        ? [{ id: waiting.toolCallId, question }] : [];
+    }) : [];
   const send = useMemo(() => ({
     send: (words: string) => {
       if (disabled || busy || pending) return false;
@@ -36,6 +49,9 @@ export function ConversationView({
         </div>
         <div className="shrink-0 border-t bg-background px-4 py-3">
           {notice}
+          {questions.length > 0 ? <div className="space-y-3 pb-3">{questions.map(question =>
+            <ToolCard key={question.id} id={question.id} name="ask_person" args={JSON.stringify({ question: question.question })} />,
+          )}</div> : null}
           <Composer agents={agents} channelId={channelId} autoFocus={autoFocus} className="w-full" compact disabled={disabled || restoring} pending={busy || pending} stoppable={stoppable ?? busy} onStop={onStop} onSubmit={onSubmit} placeholder={placeholder} />
         </div>
         <PageSheetHost />

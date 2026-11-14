@@ -55,3 +55,18 @@
 - 本次只執行使用者指定的實際上網、PDF 操作與必要建置；沒有新增或修改測試內容，沒有跑測試套件、lint、typecheck 或子代理。Bot 委派、群聊與日程沒有藉此擴大執行。
 
 角色及 Bot 刪除已保存於部署資料；Git 只提交附件修正與結果文件。commit／push 的實際結果以本次對話的 Git 交付為準。
+
+## Bot 雙向互叫、對外作者及重連
+
+使用者指定直接跑既有保險 Bot 與自己建立的 `test` Bot，發現問題直接修、不擴大重構、不跑測試套件。本輪另行明確要求開滿代理，三個子代理分別追查 SSE、訊息分層與公開／內部投影；實際操作由主代理完成。
+
+- 初次實際呼叫已復現：`test` 叫到保險 Bot，但 child 重做原使用者的委派要求，查名單後以為找不到自己。另發現 Native 模型沒有取得自己的真實名稱／ID，而 `message_bot` 描述仍要求同伴直接對人回答。
+- 身份進入 Native／Remote 模型輸入；當前委派以 model-only `bot_request` 放在歷史之後，sender 由真 parent run 推導，recipient 為真 child Bot。任務文字保持 request 資料，不升格 system，亦不落成人類發言。
+- 最外層 Bot 統一對外回答，child 直接聊天與側欄預覽不公開。依使用者補充，root 的既有工具紀錄仍可檢視：協作小標預設收起，展開才顯示雙方任務、回傳內容、狀態及錯誤；沒有新增端點、schema 或另一份對話紀錄。
+- 公開 active/last run 選 root，模型只額外讀自己的 private run，不讀其他 child。真正需要人的問題保留真 leaf call ID；content-free root update 讓 child 再次等待時能更新現有問題卡。
+- 反覆重連的來源是 API 已關閉 thread SSE 閒置逾時、前端代理卻仍使用預設逾時。已補齊代理設定、初始連線 comment 及單一 15 秒 keepalive；不新增資料庫輪詢或平行重連器。本輪互叫及其後閒置觀察未再看到反覆重連提示；沒有另外做斷網或故障注入。
+- 實際 `test` → 保險 Bot：root `17ec9828-97b0-4a65-9607-8cc5144b46d1`，child `35fe7002-4393-48aa-a87a-3e0444637782` 均 completed；root 真正執行 list_bots、message_bot，child 回傳任務結果，由 test 整理對人回覆。
+- 實際保險 Bot → `test`：root `e50bc84f-4d56-4add-9996-59cd4e4b8377`，child `dd64b131-db9c-4e7f-9868-36233503ffd4` 均 completed；主對話只見保險 Bot 最終回覆。已實際展開協作小標，能查看保險 Bot → test 的任務及 test → 保險 Bot 的結果。
+- 舊的中止協作若沒有結果，不再永久標為處理中。前端成品已建置並載入，API／app 仍在運行。沒有新增或執行測試案例、測試套件、lint 或 typecheck。
+
+同一工作樹有另一個正在進行的工作，使用者已確認。其 Google AI、瀏覽器及模型上下文改動保留；本輪只提交互叫、對外作者、協作小標及 SSE 相關檔案／hunk，不把另一工作混入提交。

@@ -16,6 +16,8 @@ export class ConversationError extends Error {
 const UPDATES = "local_thread_updated";
 const fields = sql`id,thread_id as "threadId",user_id as "userId",bot_ids as "botIds",bot_index as "botIndex",
   parent_run_id as "parentRunId",instruction,initiator,status,error,waiting,stop_requested as "stopRequested",model_states as "modelStates"`;
+const humanWaiting = (waiting: ThreadRun["waiting"]) => (waiting ?? []).filter(item =>
+  item.answerable !== false && item.metadata?.kind !== "bot_wait");
 
 /** The sole writer of conversation output, execution outcomes and their replayable events. */
 export function createSettlement(database: Database, options: { actorFor(id: string): Promise<AgentActor> }) {
@@ -35,8 +37,11 @@ export function createSettlement(database: Database, options: { actorFor(id: str
     return row;
   }
   async function requireAccess(threadId: string, userId: string) { await access(threadId, userId); }
-  async function context(threadId: string, executor: Executor = database) {
-    const rows = await executor.execute<{ body: ThreadMessage }>(sql`select body from local_messages where thread_id=${threadId} order by position`);
+  async function context(threadId: string, executor: Executor = database, ownRunId?: string) {
+    const rows = await executor.execute<{ body: ThreadMessage; runId: string | null }>(sql`
+      select m.body,m.run_id as "runId" from local_messages m left join local_runs r on r.id=m.run_id
+      where m.thread_id=${threadId} and (m.run_id is null or (r.id is not null and r.parent_run_id is null)
+        or m.body->>'role'='user' or m.run_id=${ownRunId ?? null}) order by m.position`);
     return { messages: rows.map(row => row.body) };
   }
   async function run(runId: string): Promise<ExecutionRecord | undefined> {
@@ -45,6 +50,10 @@ export function createSettlement(database: Database, options: { actorFor(id: str
   }
   const notify = (tx: Executor, threadId: string) => tx.execute(sql`select pg_notify(${UPDATES},${threadId})`);
   async function event(tx: Executor, threadId: string, runId: string, body: ThreadEvent): Promise<StoredEvent> {
+    // Model snapshots/state are private execution records, not public transcript replacements.
+    if (["MESSAGES_SNAPSHOT", "STATE_SNAPSHOT", "STATE_DELTA"].includes(body.type) ||
+      (body.type === "CUSTOM" && body.name === "openbot.headless.waiting" && (body.value as { kind?: string })?.kind === "bot_wait"))
+      body = { ...body, internal: true };
     const [row] = await tx.execute<{ seq: number }>(sql`insert into local_events(thread_id,run_id,body)
       values(${threadId},${runId},${JSON.stringify(body)}::text::jsonb) returning seq`);
     return { ...body, seq: Number(row.seq) };
@@ -94,7 +103,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       if (!resumed || !call) throw new ConversationError("The parent is not waiting for this child result.", 409);
       const output = await database.execute<{ body: ThreadMessage }>(sql`select body from local_messages where run_id=${child.id} and body->>'role'='assistant' order by position`);
       added = [{ id: `tool-result:${call.toolCallId}`, role: "tool", toolCallId: call.toolCallId,
-        content: JSON.stringify({ runId: child.id, status: child.status, answer: output.map(row => typeof row.body.content === "string" ? row.body.content : "").filter(Boolean).join("\n\n"), ...(child.error ? { error: child.error } : {}) }),
+        content: JSON.stringify({ requesterBotId: resumed.botIds[resumed.botIndex], botId: child.botIds[child.botIndex], runId: child.id, status: child.status, answer: output.map(row => typeof row.body.content === "string" ? row.body.content : "").filter(Boolean).join("\n\n"), ...(child.error ? { error: child.error } : {}) }),
         createdAt: new Date().toISOString() }];
     } else {
       for (const message of added) {
@@ -142,7 +151,8 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await save(tx, record, prepared.added);
       for (const message of prepared.added) await event(tx, record.threadId, record.id, { type: "CUSTOM", name: "thread.message", value: message } as ThreadEvent);
       await event(tx, record.threadId, record.id, { type: "RUN_STARTED", threadId: record.threadId, runId: record.id } as ThreadEvent);
-      await announce(tx, record.threadId, prepared.added.findLast(message => message.role === "user"));
+      if (record.parentRunId) await event(tx, record.threadId, prepared.ancestors[0]!, { type: "CUSTOM", name: "thread.updated", value: null });
+      if (!record.parentRunId) await announce(tx, record.threadId, prepared.added.findLast(message => message.role === "user"));
       await notify(tx, record.threadId);
     });
   }
@@ -163,10 +173,10 @@ export function createSettlement(database: Database, options: { actorFor(id: str
         inputIds = new Set(modelInput.map(message => message.id)); rows = []; phaseIds = new Set();
         await database.execute(sql`update local_runs set bot_index=${botIndex},updated_at=now() where id=${record.id}`);
       },
-      context: async botIndex => ({...(await context(record.threadId)),state:record.modelStates?.[record.botIds[botIndex]]??null}),
+      context: async botIndex => ({...(await context(record.threadId, database, record.id)),state:record.modelStates?.[record.botIds[botIndex]]??null}),
       async record(raw) {
         if (raw.type === "RUN_STARTED" || raw.type === "RUN_FINISHED" || raw.type === "RUN_ERROR") return;
-        if (raw.type === "CUSTOM" && raw.name === "thread.message") { console.warn("An agent emitted a reserved transcript event.", record.id); return; }
+        if (raw.type === "CUSTOM" && ["thread.message", "thread.updated"].includes(raw.name)) { console.warn("An agent emitted a reserved transcript event.", record.id); return; }
         const botId = record.botIds[record.botIndex];
         let body = { ...raw, senderBotId: botId } as ThreadEvent;
         if (body.type === "TOOL_CALL_START" && typeof body.parentMessageId !== "string") body = { ...body, parentMessageId: String(body.toolCallId) };
@@ -188,8 +198,9 @@ export function createSettlement(database: Database, options: { actorFor(id: str
           await save(tx, record, changed);
           if (removed.length) await tx.execute(sql`delete from local_messages where thread_id=${record.threadId} and run_id=${record.id} and id in(${sql.join(removed.map(id => sql`${id}`), sql`,`)})`);
           if (body.type === "STATE_SNAPSHOT") await tx.execute(sql`update local_runs set model_states=${JSON.stringify(record.modelStates)}::text::jsonb where id=${record.id}`);
-          if (body.type === "MESSAGES_SNAPSHOT") body = { ...body, messages: (await context(record.threadId, tx)).messages };
-          await event(tx, record.threadId, record.id, body); await notify(tx, record.threadId);
+          if (body.type === "MESSAGES_SNAPSHOT") body = { ...body, messages: (await context(record.threadId, tx, record.id)).messages };
+          const written = await event(tx, record.threadId, record.id, body);
+          if (!record.parentRunId && written.internal !== true) await notify(tx, record.threadId);
         });
       },
     };
@@ -208,7 +219,8 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await tx.execute(sql`update local_threads set updated_at=now() where id=${record.threadId}`);
       await event(tx, record.threadId, record.id, { type: "RUN_FINISHED", threadId: record.threadId, runId: record.id,
         status: saved.status, ...(saved.error ? { error: saved.error } : {}) } as ThreadEvent);
-      await announce(tx, record.threadId, output.outputs.findLast(message => message.role === "assistant" && typeof message.content === "string" && message.content.length > 0), saved.status === "waiting");
+      if (record.parentRunId) await event(tx, record.threadId, prepared.ancestors[0]!, { type: "CUSTOM", name: "thread.updated", value: null });
+      if (!record.parentRunId) await announce(tx, record.threadId, output.outputs.findLast(message => message.role === "assistant" && typeof message.content === "string" && message.content.length > 0), saved.status === "waiting");
       await notify(tx, record.threadId); return saved;
     });
     return { runId: record.id, status: terminal.status, messages: output.outputs,
@@ -243,17 +255,23 @@ export function createSettlement(database: Database, options: { actorFor(id: str
     return rows.map(row => row.id);
   }
   const publicRun = (record: ExecutionRecord): ThreadRun => ({ id: record.id, status: record.status,
-    ...(record.error ? { error: record.error } : {}), waiting: record.waiting ?? [] });
+    ...(record.error ? { error: record.error } : {}), waiting: humanWaiting(record.waiting) });
   async function snapshot(threadId: string, userId: string) {
     await requireAccess(threadId, userId);
     return database.transaction(async tx => {
       await tx.execute(sql`set transaction isolation level repeatable read`);
       const stored = await context(threadId, tx);
       const [cursor] = await tx.execute<{ seq: number }>(sql`select coalesce(max(seq),0) as seq from local_events where thread_id=${threadId}`);
-      const records = await tx.execute<ExecutionRecord>(sql`select ${fields} from local_runs where thread_id=${threadId}
+      const records = await tx.execute<ExecutionRecord>(sql`select ${fields} from local_runs where thread_id=${threadId} and parent_run_id is null
         order by case status when 'running' then 0 when 'waiting' then 1 else 2 end,updated_at desc,created_at desc`);
       const last = records[0];
-      const waiting = records.filter(record => record.status === "waiting").flatMap(record => record.waiting ?? []);
+      const family = last && (last.status === "running" || last.status === "waiting")
+        ? await tx.execute<{ waiting: ThreadRun["waiting"] }>(sql`with recursive family as (
+            select id,status,waiting from local_runs where id=${last.id}
+            union all select c.id,c.status,c.waiting from local_runs c join family p on c.parent_run_id=p.id where c.thread_id=${threadId}
+          ) select waiting from family where status='waiting'`)
+        : [];
+      const waiting = family.flatMap(record => humanWaiting(record.waiting));
       return { messages: stored.messages, cursor: Number(cursor.seq), ...(last ? { lastRun: publicRun(last) } : {}),
         ...(last && (last.status === "running" || last.status === "waiting") ? { activeRun: { ...publicRun(last), waiting } } : {}) };
     });
@@ -262,7 +280,10 @@ export function createSettlement(database: Database, options: { actorFor(id: str
   return {
     prepare, begin, writer, settle, cancel, ready, snapshot, run, requireAccess,
     async events(threadId: string, after: number): Promise<StoredEvent[]> {
-      const rows = await database.execute<{ seq: number; body: ThreadEvent }>(sql`select seq,body from local_events where thread_id=${threadId} and seq>${after} order by seq limit 500`);
+      const rows = await database.execute<{ seq: number; body: ThreadEvent }>(sql`
+        select e.seq,e.body from local_events e join local_runs r on r.id=e.run_id
+        where e.thread_id=${threadId} and e.seq>${after} and r.parent_run_id is null
+          and e.body->>'internal' is distinct from 'true' order by e.seq limit 500`);
       return rows.map(row => ({ ...row.body, seq: Number(row.seq) }));
     },
     subscribe(threadId: string, changed: () => void) {
@@ -298,6 +319,15 @@ export function createSettlement(database: Database, options: { actorFor(id: str
             or jsonb_typeof(initiator)='string' or jsonb_typeof(model_states)='string'`);
       });
       await database.execute(sql`create index if not exists local_events_thread_idx on local_events(thread_id,seq)`);
+      await database.execute(sql`update local_events e set body=e.body||'{"internal":true}'::jsonb
+        where e.body->>'internal' is distinct from 'true' and (
+          e.body->>'type' in('MESSAGES_SNAPSHOT','STATE_SNAPSHOT','STATE_DELTA')
+          or (e.body->>'type'='CUSTOM' and e.body->>'name'='openbot.headless.waiting' and e.body->'value'->>'kind'='bot_wait')
+        )`);
+      await database.execute(sql`update local_events set body=body-'internal' where body->>'internal'='true' and (
+        body->>'type' in('TOOL_CALL_START','TOOL_CALL_ARGS','TOOL_CALL_END','TOOL_CALL_RESULT')
+        or (body->>'type'='CUSTOM' and body->>'name'='thread.message')
+      )`);
       await database.execute(sql`create index if not exists local_runs_thread_idx on local_runs(thread_id,updated_at desc)`);
       await database.execute(sql`create index if not exists local_messages_run_idx on local_messages(run_id,position)`);
       await database.execute(sql`do $$ begin if exists(select 1 from information_schema.columns where table_name='local_runs' and column_name='agent_id') then
@@ -328,6 +358,15 @@ export function createSettlement(database: Database, options: { actorFor(id: str
           where status in('pending','running') returning id,thread_id as "threadId"`);
         for (const record of interrupted) { await event(tx, record.threadId, record.id, { type: "RUN_FINISHED", threadId: record.threadId, runId: record.id, status: "interrupted", error: "The previous process ended before settlement." } as ThreadEvent); await notify(tx, record.threadId); }
       });
+      // Replace old child-authored sidebar previews with the last genuinely public message.
+      const delegatedThreads = await database.execute<{ threadId: string }>(sql`select distinct thread_id as "threadId" from local_runs where parent_run_id is not null`);
+      for (const { threadId } of delegatedThreads) {
+        const last = (await context(threadId)).messages.findLast(message =>
+          (message.role === "user" || message.role === "assistant") && typeof message.content === "string" && message.content.length > 0);
+        await database.execute(sql`update channels set last_message=${last ? Array.from(String(last.content)).slice(0, 200).join("") : null},
+          last_message_agent_id=${last?.senderBotId ?? null},last_message_at=coalesce(${last?.createdAt ?? null}::timestamptz,last_message_at)
+          where id in(select channel_id from thread_channel_mappings where thread_id=${threadId})`);
+      }
     },
   };
 }

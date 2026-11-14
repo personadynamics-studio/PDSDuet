@@ -85,7 +85,7 @@ export function useThread(threadId: string, agentId?: string) {
           cursor.current = sequence;
           setMessages((rows) => projectThreadEvent(rows, event));
           if (event.type === "RUN_STARTED") setActiveRun({ id: String(event.runId), status: "running" });
-          if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") void refresh();
+          if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR" || (event.type === "CUSTOM" && event.name === "thread.updated")) void refresh();
         } catch {
           setError("無法讀取最新進度，正在重新載入對話。");
           void refresh();
