@@ -40,8 +40,7 @@ export type ChannelActivityEvent = {
   /**
    * A turn started or ended in this channel. Absent on an ordinary activity event.
    *
-   * Message-less aggregate of persisted, unexpired run claims. Both explicit releases and the
-   * server expiry sweep publish it; roster reads recover the same state after missed events.
+   * Read from the canonical root execution status; roster reads recover it after missed events.
    */
   busy?: boolean;
 };

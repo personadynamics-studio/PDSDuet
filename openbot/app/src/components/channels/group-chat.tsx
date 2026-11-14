@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { groupQueryOptions, sendGroupMessageMutationOptions, type GroupConversation } from "@/lib/groups";
@@ -18,16 +18,15 @@ export function GroupChat({ channelId }: { channelId: string }) {
   return <GroupSession key={group.data.threadId} channelId={channelId} group={group.data} />;
 }
 function GroupSession({ channelId, group }: { channelId: string; group: GroupConversation }) {
-  const queryClient = useQueryClient();
   const thread = useThread(group.threadId);
   useActiveConversation({ threadId: group.threadId, messages: thread.messages, activeRun: thread.activeRun, answer: thread.answer });
   const roster = useQuery(agentListQueryOptions());
-  const send = useMutation(sendGroupMessageMutationOptions(queryClient, channelId));
+  const send = useMutation(sendGroupMessageMutationOptions(channelId));
   const [firstFailed, setFirstFailed] = useState<{ id: string; text: string } | null>(null);
   const sendFirst = useCallback(async (message: { id: string; text: string }) => {
-    try { await send.mutateAsync({ ...message, agentId: null }); setFirstFailed(null); await thread.refresh(); }
+    try { await send.mutateAsync({ ...message, agentId: null }); setFirstFailed(null); }
     catch { setFirstFailed(message); }
-  }, [send.mutateAsync, thread.refresh]);
+  }, [send.mutateAsync]);
   useEffect(() => {
     if (thread.restoring || thread.busy) return;
     const text = takeFirstMessage(channelId);
@@ -36,14 +35,13 @@ function GroupSession({ channelId, group }: { channelId: string; group: GroupCon
   const names = new Map([...(roster.data ?? []), ...group.bots].map((bot) => [bot.id, bot.name]));
   for (const person of group.people) names.set(person.userId, person.name || person.email);
   return (
-      <ConversationProvider ask={(words) => { void send.mutateAsync({ id: newId(), text: words, agentId: null }).then(() => thread.refresh()).catch(() => {}); }}>
+      <ConversationProvider ask={(words) => { void send.mutateAsync({ id: newId(), text: words, agentId: null }).catch(() => {}); }}>
         <ConversationView
           messages={thread.messages}
           speakerNames={names}
           busy={thread.busy || send.isPending}
           restoring={thread.restoring}
           agents={toAgentOptions(group.bots)}
-          commands={[]}
           stoppable={Boolean(thread.activeRun)}
           onStop={() => { void thread.stop(); }}
           stopped={thread.error ?? undefined}
@@ -52,7 +50,6 @@ function GroupSession({ channelId, group }: { channelId: string; group: GroupCon
           onSubmit={async (draft) => {
             setFirstFailed(null);
             await send.mutateAsync({ id: newId(), text: draft.text, agentId: draft.agentId });
-            await thread.refresh();
           }}
         />
       </ConversationProvider>

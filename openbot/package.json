@@ -7,7 +7,6 @@
   "workspaces": [
     "app",
     "server",
-    "worker",
     "shared",
     "toolkit"
   ],

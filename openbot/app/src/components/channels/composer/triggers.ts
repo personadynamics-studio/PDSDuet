@@ -1,6 +1,6 @@
 import type { TriggerConfig, TriggerSuggestion } from "prompt-area/helpers";
-import { commandTrigger, mentionTrigger } from "prompt-area/helpers";
-import { AGENT_TRIGGER, COMMAND_TRIGGER, type CommandOption } from "./draft";
+import { mentionTrigger } from "prompt-area/helpers";
+import { AGENT_TRIGGER } from "./draft";
 
 /**
  * The composer's trigger registry.
@@ -69,37 +69,6 @@ export function agentTrigger(agents: readonly AgentOption[]): TriggerConfig {
   });
 }
 
-/**
- * `/` is restricted to the start of a line, so a URL or a date in the middle of a sentence never
- * opens the dropdown. Selection resolves to a chip; `applyCommandChips` then rewrites the ones that
- * are really prompts or client actions.
- */
-export function slashCommandTrigger(
-  commands: readonly CommandOption[],
-): TriggerConfig {
-  return commandTrigger({
-    char: COMMAND_TRIGGER,
-    position: "start",
-    accessibilityLabel: "技能",
-    emptyMessage: "找不到相符的技能",
-    onSearch: (query): TriggerSuggestion[] =>
-      commands
-        .filter((command) => matches(query, command.name, command.description))
-        .map((command) => ({
-          value: command.id,
-          label: command.name,
-          description: command.description,
-        })),
-    onSelect: (suggestion) => suggestion.label,
-  });
-}
-
-export function buildTriggers({
-  agents,
-  commands,
-}: {
-  agents: readonly AgentOption[];
-  commands: readonly CommandOption[];
-}): TriggerConfig[] {
-  return [agentTrigger(agents), slashCommandTrigger(commands)];
+export function buildTriggers({ agents }: { agents: readonly AgentOption[] }): TriggerConfig[] {
+  return agents.length ? [agentTrigger(agents)] : [];
 }

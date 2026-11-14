@@ -118,20 +118,6 @@ function defaultTitle(runtime: Runtime): string {
 }
 
 /**
- * The role description sent when the person wrote no custom instructions.
- *
- * The server requires one, and for a Bot that runs here it is more than a description: it is the
- * system prompt the Bot runs on. So that one gets a sentence it can actually act on. A Bot somebody
- * else runs takes its instructions from wherever it runs, and gets a plain line saying where.
- */
-function defaultInstructions(name: string, runtime: Runtime): string {
-  if (runtime.kind === "builtin") {
-    return `You are ${name}. Help the people you work with on whatever they bring you, clearly and briefly.`;
-  }
-  return `Connected from ${defaultTitle(runtime)}.`;
-}
-
-/**
  * The steps and everything answered in them, held above all three so going Back loses nothing.
  *
  * Every way forward — Continue, Create, or Enter in a field — is the form's submit. Create on the
@@ -143,8 +129,8 @@ function defaultInstructions(name: string, runtime: Runtime): string {
 function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
   const createAgent = useMutation(createAgentMutationOptions(queryClient));
   /*
-   * Assumed available while the answer loads, so the common deployment never sees the option flash
-   * from disabled to enabled; the server refuses the create either way.
+   * The server reports whether its Native factory is present, independently of remote endpoints
+   * and model credentials.
    */
   const { data: capabilities } = useQuery(agentCapabilitiesQueryOptions());
   const builtInAvailable = capabilities?.builtInAvailable ?? true;
@@ -169,7 +155,7 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
   const [createdId, setCreatedId] = useState<string>();
   const reduceMotion = useReducedMotion();
 
-  // A deployment with no Bot of its own cannot run one here, so nothing is chosen for the person.
+  // A real absent Native factory would clear this choice; remote configuration does not.
   useEffect(() => {
     if (!builtInAvailable) {
       setRuntime((current) => (current?.kind === "builtin" ? null : current));
@@ -203,7 +189,7 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
   const canContinue =
     !busy &&
     (step === "about"
-      ? named
+      ? named && (runtime?.kind !== "builtin" || instructions.trim().length > 0)
       : step === "runtime"
         ? runtime !== null
         : endpointIssue === undefined || !tried);
@@ -222,8 +208,7 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
       agentInputFrom({
         name: name.trim(),
         title: title.trim() || defaultTitle(chosen),
-        roleDescription:
-          instructions.trim() || defaultInstructions(name.trim(), chosen),
+        roleDescription: instructions.trim(),
         visibility,
         // A Bot that runs here has no address; whatever was typed on the way past stays behind.
         endpoint: managed ? endpoint.trim() : "",
@@ -500,22 +485,7 @@ const VISIBILITY_OPTIONS: Array<{
   },
 ];
 
-/**
- * The last step: what to call it, who can see it, and — only if the person wants to be more
- * specific — a line describing it and the instructions it follows.
- *
- * Title and instructions are optional and say so; who can see it always holds an answer, so a Bot
- * named and nothing else is a complete answer, and Create waits for nothing more.
- *
- * The instructions field says what it is for the Bot being made. For one that runs here it is the
- * prompt it runs on, so it is called Instructions and says how it behaves without them; for one
- * somebody else runs it is a line added to a prompt written elsewhere, so it is called Role. The
- * title's example is the framework's name, which is what it becomes when left blank.
- *
- * Who can see it was the old wizard's last step. It is here because this step had the room, and a
- * question that does not change what is being made is cheaper answered alongside the name than as a
- * screen of its own.
- */
+/** Native Bots require the person's actual role instruction; remote roles are optional. */
 function AboutStep({
   name,
   title,
@@ -570,7 +540,7 @@ function AboutStep({
       <Field>
         <FieldLabel htmlFor="new-bot-instructions">
           {runsHere ? "指示" : "角色"}
-          <span className="font-normal text-muted-foreground">選填</span>
+          <span className="font-normal text-muted-foreground">{runsHere ? "必填" : "選填"}</span>
         </FieldLabel>
         <Textarea
           autoComplete="off"
@@ -579,11 +549,12 @@ function AboutStep({
           onChange={(event) => onInstructions(event.target.value)}
           placeholder="審核收據、分類開支，並編製報銷報告。"
           rows={5}
+          required={runsHere}
           value={instructions}
         />
         <FieldDescription>
           {runsHere
-            ? "說明它應如何工作。留空即可協助處理各類工作。"
+            ? "這段內容就是機械人的角色指令，請說明它應如何工作。"
             : "會附加在代理程式本身的指示後。"}
         </FieldDescription>
       </Field>

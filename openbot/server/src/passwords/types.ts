@@ -33,7 +33,6 @@ export type SignInRequestRecord = {
   threadId: string | null;
   toolCallId: string | null;
   controlRequestId: string | null;
-  continuation: Record<string, unknown> | null;
   createdAt: Date;
   expiresAt: Date;
   resolvedAt: Date | null;
@@ -41,10 +40,10 @@ export type SignInRequestRecord = {
   fillingUntil: Date | null;
 };
 
-/** What a route may return about a request. No continuation, which carries the conversation. */
+/** What the private sign-in route may return to its owner. */
 export type SignInRequestView = Omit<
   SignInRequestRecord,
-  "continuation" | "ownerUserId"
+  "ownerUserId"
 > & {
   /** Saved logins for this site, by username. Offered only while the password manager is on. */
   savedLogins: { id: string; username: string }[];

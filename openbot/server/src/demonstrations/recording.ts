@@ -1,8 +1,3 @@
-import {
-  type DemonstrationRoutineCreator,
-  type DemonstrationScheduleInput,
-  scheduleDemonstrationSkill,
-} from "./schedule";
 import type { DemonstrationStore } from "./store";
 import {
   DEMONSTRATION_MAX_DURATION_MS,
@@ -16,8 +11,6 @@ export function createDemonstrationRecorder(options: {
   >;
   ownsBot: (ownerUserId: string, botId: string) => Promise<boolean>;
   ownsSkill: (ownerUserId: string, slug: string) => Promise<boolean>;
-  /** The routine store's own create, so a scheduled skill is an ordinary routine. */
-  routines?: DemonstrationRoutineCreator;
   /** Overridable for tests; production stops a recording at ten minutes. */
   maxDurationMs?: number;
 }) {
@@ -93,33 +86,6 @@ export function createDemonstrationRecorder(options: {
           "Save a skill you own before linking this demonstration.",
         );
       return options.store.markPublished(ownerUserId, id, slug);
-    },
-    /** Run the published skill on a schedule, through the routine store's ordinary create. */
-    async schedule(
-      ownerUserId: string,
-      id: string,
-      input: DemonstrationScheduleInput,
-    ) {
-      if (!options.routines)
-        throw new DemonstrationRefusedError(
-          "Routines are not available in this deployment.",
-        );
-      const recording = await options.store.get(ownerUserId, id);
-      if (
-        recording.status !== "published" ||
-        !recording.skillSlug ||
-        !(await options.ownsSkill(ownerUserId, recording.skillSlug))
-      )
-        throw new DemonstrationRefusedError(
-          "Save this demonstration as a skill before scheduling it.",
-        );
-      return scheduleDemonstrationSkill(options.routines, {
-        ownerUserId,
-        botId: recording.botId,
-        title: recording.title,
-        slug: recording.skillSlug,
-        input,
-      });
     },
   };
 }

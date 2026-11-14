@@ -52,8 +52,6 @@ import {
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
 import {
-  applyCommandChips,
-  type CommandOption,
   type ComposerDraft,
   canSendDraft,
   enforceSingleAgent,
@@ -61,7 +59,6 @@ import {
 } from "./draft";
 import { screenPickedFiles } from "./picked-files";
 import { type RejectedFile, RejectedFiles } from "./rejected-files";
-import { PLACEHOLDER_COMMANDS } from "./sources";
 import { type AgentOption, buildTriggers } from "./triggers";
 import { useDictation } from "./use-dictation";
 import { VoiceSheet } from "./voice-sheet";
@@ -113,7 +110,6 @@ export type ComposerProps = {
   glass?: boolean;
   /** Agents that `@` can address. Empty means the mention menu reports an empty channel. */
   agents?: readonly AgentOption[];
-  commands?: readonly CommandOption[];
   /**
    * Receives the whole draft rather than a string, so a mention or a command reaches the caller as
    * structured data instead of something it would have to re-parse out of the text.
@@ -224,7 +220,6 @@ export function Composer({
   compact = false,
   glass = false,
   agents = [],
-  commands = PLACEHOLDER_COMMANDS,
   onSubmit,
   onStop,
   disabled = false,
@@ -875,8 +870,8 @@ export function Composer({
 
   const isBusy = pending || isSubmitting;
   const triggers = useMemo(
-    () => buildTriggers({ agents, commands }),
-    [agents, commands],
+    () => buildTriggers({ agents }),
+    [agents],
   );
   const draft = useMemo(() => toDraft(value, staged), [staged, value]);
   useEffect(() => {
@@ -907,21 +902,7 @@ export function Composer({
    */
   const tooManyStaged = overCap(draft);
 
-  const handleChange = useCallback(
-    (next: Segment[]) => {
-      const { segments, actions } = applyCommandChips(
-        enforceSingleAgent(next),
-        commands,
-      );
-      setValue(segments);
-      // Run after the commit so an action that navigates or opens a panel is not fighting the
-      // editor's own state update for the same tick.
-      for (const action of actions) {
-        action();
-      }
-    },
-    [commands],
-  );
+  const handleChange = useCallback((next: Segment[]) => setValue(enforceSingleAgent(next)), []);
 
   /**
    * The single submit path for Enter, the send button, and the form.

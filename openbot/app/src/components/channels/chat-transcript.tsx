@@ -16,7 +16,6 @@ import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import { useConversationSession } from "@/lib/chat/active-bot";
 import { drawsTool, ToolCard } from "@/lib/chat/tool-cards";
-import { readFiring } from "@/lib/channels/routine-firing";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { personToolLabel, readToolName } from "@/lib/plugins/tool-name";
@@ -49,8 +48,6 @@ import { ToolLine } from "./tool-line";
 
 type ChatTranscriptProps = {
   busy?: boolean;
-  /** Comma-separated `/` command names, used to tell a skill chip from a leading slash. */
-  commandNames?: string;
   messages: ReadonlyArray<Readonly<Message>>;
   speakerNames?: ReadonlyMap<string, string>;
   /** History has been asked for and has not arrived. Drawn only when there is nothing else to draw. */
@@ -81,30 +78,6 @@ const AGENT_PROSE =
 const AGENT_BUBBLE =
   "max-w-[82%] *:data-[slot=bubble-content]:bg-duet-bubble *:data-[slot=bubble-content]:text-duet-ink";
 const USER_BUBBLE = "max-w-[85%] *:data-[slot=bubble-content]:bg-duet-user";
-
-/**
- * Split a person's message into the skill they invoked and the rest of what they typed.
- *
- * ONLY A KNOWN COMMAND COUNTS. "/etc/hosts is broken" is a sentence, not a skill, and drawing a chip
- * around it would invent a thing that never happened. The names come from the same list the `/` menu
- * was built from, so this stays true as skills are granted and revoked.
- *
- * The trigger only opens at the start of a line, so the chip is the first token or there is none.
- */
-function splitSkillChip(
-  text: string,
-  commandNames: string,
-): { chip: string; rest: string } | null {
-  const match = /^\/([a-z0-9][a-z0-9-]*)(\s|$)/.exec(text);
-  if (!match) {
-    return null;
-  }
-  const known = commandNames.split(",").filter(Boolean);
-  if (!known.includes(match[1])) {
-    return null;
-  }
-  return { chip: match[1], rest: text.slice(match[0].length) };
-}
 
 /**
  * The shape of a conversation, while it is still being fetched. Shaped like what is coming rather
@@ -300,32 +273,6 @@ function Arriving({
 }
 
 /**
- * A turn a schedule asked for, drawn as the event it is.
- *
- * The frame around a firing is addressed to the model — see `shared/routine-firing.ts` — and it
- * reached the transcript wearing `role: "user"`, which drew it as a muted bubble on the right, in
- * the exact style of something the person typed. Somebody reading back through a channel found
- * three sentences of instructions to a model in their own voice, telling their Bot what it may not
- * do. For a product whose whole claim is that a Bot is a coworker you can hold to account, a record
- * that misattributes who said what is the one thing it cannot afford.
- *
- * So: start-aligned and muted, because this is not the person speaking; the clock, because that is
- * what a routine already is everywhere else in the app; and the instruction ALONE, because that is
- * the part a person wrote and the only part addressed to them.
- */
-function RoutineFiring({ instruction }: { instruction: string }) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-2 text-muted-foreground text-sm">
-      <DuetIcon className="shrink-0 translate-y-0.5" name="clock" size={16} />
-      <span className="min-w-0">
-        <span className="font-medium">已執行例行工作。</span>{" "}
-        <span className="whitespace-pre-wrap">{instruction}</span>
-      </span>
-    </div>
-  );
-}
-
-/**
  * One drawn message, and it is memoised on PRIMITIVES ON PURPOSE.
  *
  * A streamed answer changes `messages` on every chunk, and `toVisibleChatItems` builds fresh objects
@@ -339,7 +286,6 @@ function RoutineFiring({ instruction }: { instruction: string }) {
  * It is also what keeps the entrance honest — no remount means no replay of the fade.
  */
 const TranscriptMessage = memo(function TranscriptMessage({
-  commandNames = "",
   delay,
   role,
   senderName,
@@ -348,7 +294,6 @@ const TranscriptMessage = memo(function TranscriptMessage({
   seen = false,
   streaming = false,
 }: {
-  commandNames?: string;
   delay: number;
   role: "user" | "assistant";
   senderName?: string;
@@ -359,28 +304,10 @@ const TranscriptMessage = memo(function TranscriptMessage({
   streaming?: boolean;
 }) {
   const isUser = role === "user";
-  /*
-   * Checked before anything else a person's message gets. A firing is not a person's message: the
-   * chip split, the end alignment and the bubble are all wrong for it, and each one of them would
-   * have to learn about firings separately if this branched any later.
-   */
-  const firing = isUser ? readFiring(text) : null;
-  if (firing !== null) {
-    return (
-      <MessageRow align="start">
-        <MessageContent>
-          <Arriving delay={delay}>
-            <RoutineFiring instruction={firing} />
-          </Arriving>
-        </MessageContent>
-      </MessageRow>
-    );
-  }
   const align = isUser && mine !== false ? "end" : "start";
   // Slack/Teams turns carry a model-facing participant line; show a marker instead of the line.
   const origin = isUser ? splitChatOrigin(text) : null;
   const said = origin ? origin.text : text;
-  const invoked = isUser ? splitSkillChip(said, commandNames) : null;
 
   return (
     <MessageRow align={align}>
@@ -395,36 +322,14 @@ const TranscriptMessage = memo(function TranscriptMessage({
           {isUser ? (
             <Bubble align={align} className={USER_BUBBLE} variant="muted">
               <BubbleContent className={BUBBLE_CONTENT}>
-                {/*
-                 * A person's own message is shown exactly as they typed it. Rendering it as
-                 * markdown would silently reformat what they said, and an asterisk in a sentence
-                 * is not emphasis. The chip is the one exception, and it is not reformatting: it is
-                 * drawing the thing that was already a chip in the composer as a chip here too, so
-                 * the transcript shows a skill was used rather than a slash that was typed.
-                 */}
+                {/* A person's own words stay literal. */}
                 <span className="whitespace-pre-wrap">
                   {origin && (
                     <span className="mr-1.5 inline-flex items-center rounded bg-foreground/10 px-1.5 py-0.5 align-middle text-foreground/70 text-xs">
                       via {origin.via}
                     </span>
                   )}
-                  {invoked ? (
-                    <>
-                      {/*
-                       * The same icon the sidebar uses for Skills, so the badge says WHAT KIND of
-                       * thing was invoked before it says which one. `inline-flex` with
-                       * `align-middle` rather than a block: this sits mid-sentence, and a badge that
-                       * breaks the line it is in reads as a separate message.
-                       */}
-                      <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
-                        <DuetIcon className="shrink-0" name="box" size={12} />/
-                        {invoked.chip}
-                      </span>
-                      {invoked.rest}
-                    </>
-                  ) : (
-                    said
-                  )}
+                  {said}
                 </span>
               </BubbleContent>
             </Bubble>
@@ -464,7 +369,7 @@ export function seenMessageId(items: readonly TranscriptItem[]): string | null {
   const newest = items.findLastIndex(
     (item) =>
       item.kind === "text" &&
-      isPersonSentMessage(item.role, item.text),
+      isPersonSentMessage(item.role),
   );
   if (newest === -1) return null;
   const answered = items
@@ -1114,25 +1019,9 @@ export function ServerToolLine({
   );
 }
 
-/**
- * Whether a text item is the person actually sending something, as opposed to a routine firing that
- * merely arrived wearing `role: "user"`.
- *
- * A FIRING IS NOT THE PERSON SPEAKING — `TranscriptMessage` already knows that and draws it as
- * `RoutineFiring` rather than as their bubble, via the same `readFiring` check used here. The scroll
- * machinery below was the one place left that had not caught up: it smooth-scrolled and anchored on
- * `role === "user"` alone, so a routine firing while somebody was reading back through the channel
- * yanked their viewport to the bottom as though they had just typed and sent something. They hadn't;
- * the schedule had. Exported so this can be checked without mounting anything.
- */
-export function isPersonSentMessage(
-  role: "user" | "assistant",
-  text: string,
-): boolean {
-  return (
-    role === "user" &&
-    readFiring(text) === null
-  );
+/** Human submissions are the scroll anchors; Bot output never moves the question. */
+export function isPersonSentMessage(role: "user" | "assistant"): boolean {
+  return role === "user";
 }
 
 /**
@@ -1174,7 +1063,7 @@ function anchorRowIds(items: readonly TranscriptItem[]): Set<string> {
   const anchors = new Set<string>();
   const claimed = new Set<string>();
   for (const item of items) {
-    const sent = item.kind === "attachments" || (item.kind === "text" && isPersonSentMessage(item.role, item.text));
+    const sent = item.kind === "attachments" || (item.kind === "text" && isPersonSentMessage(item.role));
     if (!sent) continue;
     const turn = turnOf(item);
     if (claimed.has(turn)) continue;
@@ -1221,7 +1110,6 @@ function useSmoothSendScroll(
 
 export function ChatTranscript({
   busy = false,
-  commandNames = "",
   messages,
   restoring = false,
   stopped,
@@ -1270,7 +1158,7 @@ export function ChatTranscript({
     items.findLast(
       (item) =>
         (item.kind === "text" &&
-          isPersonSentMessage(item.role, item.text)) ||
+          isPersonSentMessage(item.role)) ||
         /*
          * Same reasoning as `waitingOnFirstToken` above: an attachment is always the person's own,
          * so a turn that is only a file still counts as them sending something. This id decides
@@ -1395,7 +1283,6 @@ export function ChatTranscript({
                   scrollAnchor={anchorRows.has(item.id)}
                 >
                   <TranscriptMessage
-                    commandNames={commandNames}
                     delay={delays.delayFor(item.id, index, items.length)}
                     role={item.role}
                     senderName={item.senderBotId ? speakerNames?.get(item.senderBotId) ?? botName(item.senderBotId) : item.senderUserId && item.senderUserId !== me?.id ? speakerNames?.get(item.senderUserId) ?? item.senderUserId : undefined}

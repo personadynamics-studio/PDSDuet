@@ -53,7 +53,6 @@ export function mountServerRoutes({
        * to answer only the first, so a grant could read "May call this tool" on a deployment where
        * every call was refused before it reached the boundary.
        */
-      botsMayCallBack: connect?.botsMayCallBack === true,
       /*
        * Whether this deployment has a broker at all, so the page knows whether brokered apps are
        * on offer.
@@ -358,14 +357,6 @@ export function mountServerRoutes({
   routes.delete("/servers/:id", requireUser, async (context) => {
 
     const serverId = context.req.param("id");
-    /*
-     * READ BEFORE THE ROW GOES. The ask-before-write rule a Shared app was given lives in the
-     * approval policy, not on the row, so nothing cascades it away; asked afterwards, the mode is
-     * gone with the row and the rule would outlive the account it guarded.
-     */
-    const wasShared =
-      shared !== undefined &&
-      (await store.serverAddress(serverId))?.accountMode === "shared";
     try {
       await store.removeServer(serverId, actorEmail(context));
     } catch (error) {
@@ -403,32 +394,6 @@ export function mountServerRoutes({
         `Removing this app did not finish, and neither this deployment nor ${activeVendor} said why, so the app is still here rather than gone with grants of its own left live at the vendor. Press Remove again: every account is withdrawn at ${activeVendor} before anything here is deleted, so repeating it is safe and asks only for what is left. Check this deployment's ${activeVendor} key if it persists.`,
       );
       return context.json({ error: refusal.error }, refusal.status);
-    }
-    /*
-     * THE SAME SHAPE AS THE MINT'S RECORD-AFTER-THE-FACT BELOW, AND GUARDED FOR THE SAME REASON.
-     * `removeServer` has already returned, which means every account was withdrawn AT THE VENDOR
-     * and every row here is gone — none of it undoable, and none of it repeatable either: a second
-     * Remove finds no app. Unhandled, a fault tidying up the one leftover ask-before-write rule
-     * answered that completed removal with a bodyless 500, so the administrator was told the
-     * removal failed and had no press left to make.
-     *
-     * SO THE ANSWER STAYS `ok`, BECAUSE THE REMOVAL REALLY DID HAPPEN, and the leftover is named on
-     * the console instead: a revoked-rule row that outlives the app it guarded, which an
-     * administrator can retire from the rules screen and which grants nobody anything meanwhile.
-     */
-    if (wasShared) {
-      try {
-        await shared?.modes.forgetRule(serverId, context.var.actor.id);
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            type: "shared-rule-not-forgotten",
-            server: serverId,
-            note: "An app was removed, at the vendor and here, and its ask-before-write rule could not be retired afterwards. The administrator was answered ok, because the removal is done and cannot be repeated; the rule is still standing.",
-            error: reasonWithoutStatement(error),
-          }),
-        );
-      }
     }
     return context.json({ ok: true });
   });

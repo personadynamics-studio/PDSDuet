@@ -475,32 +475,6 @@ const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
     ]),
     docsUrl: "https://developers.notion.com/guides/mcp/build-mcp-client",
   },
-  {
-    key: "routines",
-    title: "Routines",
-    vendor: "OpenBot",
-    summary:
-      "Standing instructions a Bot runs on a schedule, as whoever scheduled them.",
-    /*
-     * First-party and in-process: no host to dial, no credential to hold. In the catalogue anyway,
-     * because the catalogue is where a deployment decides WHICH Bots may do WHAT — and scheduling
-     * future work is a capability an administrator should grant as deliberately as a vendor.
-     */
-    host: "builtin://routines",
-    path: "/",
-    transport: "builtin-routines",
-    auth: Object.freeze({ kind: "builtin" }),
-    writeTools: Object.freeze([
-      "create_routine",
-      "update_routine",
-      "delete_routine",
-      "create_trigger",
-      "pause_trigger",
-      "resume_trigger",
-      "delete_trigger",
-    ]),
-    docsUrl: "https://github.com/local runtime/OpenBot/blob/main/docs/routines.md",
-  },
 ]);
 
 /** The environment variable that points {@link GOOGLE_WORKSPACE} at a stand-in for Google. */

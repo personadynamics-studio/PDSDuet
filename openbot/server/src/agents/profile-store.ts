@@ -12,11 +12,6 @@ import {
   retireReplacedKey,
   storeAgentAuth,
 } from "./auth-header";
-import {
-  hashCallbackToken,
-  mintCallbackToken,
-  sameToken,
-} from "./callback-token";
 import { assignedToActor } from "../team-bots/access";
 import type {
   AgentActor,
@@ -38,23 +33,7 @@ export type AgentProfileStore = {
     actor: AgentActor,
     id: string,
   ): Promise<AgentProfile | null>;
-  create(
-    actor: AgentActor,
-    input: CreateAgentInput & {
-      /**
-       * The standing instruction for a coworker with nowhere else to run.
-       *
-       * Only consulted when there is neither an endpoint nor a Bot in the box, and it is what makes
-       * that a `built_in` coworker rather than a refusal. `POST /api/agents` never sends it — the
-       * form has no such field — so a hand-made Bot on a deployment without a managed agent is
-       * refused exactly as it is today.
-       *
-       * Not on `CreateAgentInput`, so `update` cannot take it: changing an existing Bot's type is a
-       * different act with different consequences, and this is the creation path.
-       */
-      systemPrompt?: string;
-    },
-  ): Promise<AgentProfile>;
+  create(actor: AgentActor, input: CreateAgentInput): Promise<AgentProfile>;
   update(
     actor: AgentActor,
     id: string,
@@ -64,23 +43,6 @@ export type AgentProfileStore = {
   setHidden(actor: AgentActor, id: string, hidden: boolean): Promise<void>;
   setPinned(actor: AgentActor, id: string, pinned: boolean): Promise<void>;
   softDelete(actor: AgentActor, id: string): Promise<void>;
-  /**
-   * Issue this agent a credential for calling tools back, and return it once.
-   *
-   * Returned rather than stored: only the hash is kept, so this is the one moment the token exists in
-   * a readable form. Calling it again replaces the old one, which is how rotation works and how a
-   * leaked token is retired.
-   */
-  issueCallbackToken(actor: AgentActor, id: string): Promise<string>;
-  /** Take the credential away. The agent may talk, and may no longer call anything back. */
-  revokeCallbackToken(actor: AgentActor, id: string): Promise<void>;
-  /**
-   * Which agent holds this token, if any.
-   *
-   * By hash, because that is all this side keeps. Not scoped to an actor: the caller is a machine
-   * presenting a credential, and the credential is the whole of its claim.
-   */
-  agentForCallbackToken(hash: string): Promise<{ id: string } | null>;
 };
 
 export class AgentNotFoundError extends Error {
@@ -92,15 +54,13 @@ export class AgentNotFoundError extends Error {
 
 
 
-export class ManagedAgentUnavailableError extends Error {
-  constructor() {
-    super("OpenBot has no managed Bot. Give this Bot its own AG-UI endpoint.");
-    this.name = "ManagedAgentUnavailableError";
-  }
+export class AgentDefinitionError extends Error {
+  constructor(message: string) { super(message); this.name = "AgentDefinitionError"; }
 }
 
 const joinedProjection = {
   id: agents.id,
+  type: agents.type,
   name: agents.name,
   title: agentProfiles.title,
   roleDescription: agentProfiles.roleDescription,
@@ -111,8 +71,6 @@ const joinedProjection = {
   hiddenAt: agentPreferences.hiddenAt,
   pinnedAt: agentPreferences.pinnedAt,
   deletedAt: agentProfiles.deletedAt,
-  /* The hash, only so a surface can say whether one exists. It never leaves this module. */
-  callbackTokenHash: agentProfiles.callbackTokenHash,
   configuration: agents.configuration,
 };
 
@@ -149,7 +107,6 @@ function mapProfile(
     visibility: row.visibility,
     ownerUserId: row.ownerUserId,
     systemOwned: row.packageId !== null,
-    hasCallbackToken: row.callbackTokenHash !== null,
     hidden: row.hiddenAt !== null,
     pinned: row.pinnedAt !== null,
     assignedToMe: Boolean(row.assignedToMe),
@@ -158,6 +115,7 @@ function mapProfile(
     // Whether a key is set, never which. The form needs to show "a key is set" so a person does not
     // wipe one by saving an unrelated edit; showing the value would put a secret in a screenshot.
     hasAuth: authFromConfiguration(row.configuration) !== null,
+    builtIn: row.type === "built_in",
   };
 }
 
@@ -186,16 +144,15 @@ function remoteAgentIdOf(configuration: unknown): string | null {
  * The instruction a Bot in the box runs on, read back out of its stored configuration.
  *
  * The mirror of {@link endpointOf}, and needed for the same reason: a copy has to be made of what
- * the original actually was, and for a `built_in` coworker the prompt IS the coworker. Trimmed and
- * required to be non-empty, matching `registeredAgentFromRow`, which will not build a Bot from a
- * blank one either.
+ * the original actually was. Check that the prompt has words while preserving its exact stored
+ * contents for a duplicate, including the original role's formatting.
  */
 function systemPromptOf(configuration: unknown): string | null {
   if (!configuration || typeof configuration !== "object") return null;
   const prompt = (configuration as { systemPrompt?: unknown }).systemPrompt;
   if (typeof prompt !== "string") return null;
   const trimmed = prompt.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return trimmed.length > 0 ? prompt : null;
 }
 
 /** What a coworker is, and what it runs on: the two `agents` columns a copy has to reproduce. */
@@ -204,73 +161,20 @@ export type AgentRun = {
   configuration: Record<string, unknown>;
 };
 
-/**
- * What a duplicate runs on, decided from what the original ran on.
- *
- * WHY THIS IS NOT JUST THE ENDPOINT. Duplicate used to rebuild the copy from `source.endpoint` alone
- * and write `type: "remote_ag_ui"` flat. #328 fixed the half of that a coworker with its own endpoint
- * saw. The other half is a coworker that has no endpoint because it is not supposed to have one: a
- * `built_in` Bot's configuration is `{ systemPrompt }`, so the endpoint read came back null, the copy
- * fell through to the managed Bot, and the prompt was dropped on the floor.
- *
- * That copy is the failure this repository already has a paragraph about. It looks identical on every
- * screen and its whole instruction becomes `standingRoleMessage` — see the note above that function
- * in `copilot.ts`, which names the compliance Bot that answered a filing question with invented
- * thresholds because one sentence of role description was all that reached it. The default tenant
- * package ships two `built_in` coworkers, and one of them, `Knowledge`, is a careful
- * do-not-fabricate instruction. Copy it and you get a coworker with the name, the title, the avatar,
- * and none of that.
- *
- * The type is carried too, not only the configuration, so a copy runs the same way its original
- * does.
- *
- * `null` means there is nothing to run this copy on, which the caller turns into
- * {@link ManagedAgentUnavailableError}. That can now only happen for a source that had neither an
- * endpoint nor a prompt on a deployment with no managed Bot — never for a `built_in` source, which
- * brings its own instruction and needs no managed Bot to fall back to.
- *
- * `auth` is deliberately not carried: it is a reference into the vault, and two coworkers sharing one
- * credential would mean rotating either one's key silently changed the other's.
- */
-export function runForDuplicate(
-  source: {
-    type: "built_in" | "remote_ag_ui" | "remote_mastra";
-    configuration: unknown;
-  },
-  managed: Record<string, unknown> | undefined,
-): AgentRun | null {
-  const systemPrompt = systemPromptOf(source.configuration);
-  if (source.type === "built_in" && systemPrompt) {
-    return { type: "built_in", configuration: { systemPrompt } };
+/** Copy the original runtime identity and role; credentials belong to the original Bot. */
+export function runForDuplicate(source: {
+  type: "built_in" | "remote_ag_ui" | "remote_mastra";
+  configuration: unknown;
+}): AgentRun | null {
+  if (source.type === "built_in") {
+    const systemPrompt = systemPromptOf(source.configuration);
+    return systemPrompt ? { type: source.type, configuration: { systemPrompt } } : null;
   }
-
   const endpoint = endpointOf(source.configuration);
-  if (endpoint) {
-    /*
-     * The copy is dialled the way the original was, and that is not cosmetic. A Mastra endpoint
-     * speaks Mastra's client protocol and has no AG-UI route, so a duplicate written as
-     * `remote_ag_ui` would carry the right address and be unable to say anything to it. The Bot
-     * would appear, accept a grant, and answer nothing.
-     *
-     * Which agent on that server comes with it for the same reason: a Mastra endpoint is a roster,
-     * and a copy that forgets the name falls back to a different agent, or refuses. See
-     * `pickFromRoster`.
-     */
-    if (source.type === "remote_mastra") {
-      const remoteAgentId = remoteAgentIdOf(source.configuration);
-      return {
-        type: "remote_mastra",
-        configuration: remoteAgentId
-          ? { endpoint, remoteAgentId }
-          : { endpoint },
-      };
-    }
-    return { type: "remote_ag_ui", configuration: { endpoint } };
-  }
-
-  return managed ? { type: "remote_ag_ui", configuration: managed } : null;
+  if (!endpoint?.trim()) return null;
+  const remoteAgentId = remoteAgentIdOf(source.configuration);
+  return { type: source.type, configuration: { endpoint, ...(remoteAgentId ? { remoteAgentId } : {}) } };
 }
-
 async function findProfile(
   executor: DatabaseExecutor,
   actor: AgentActor,
@@ -289,49 +193,14 @@ function newAgentId() {
   return `agent_${crypto.randomUUID()}`;
 }
 
-/**
- * Which agent a token belongs to.
- *
- * Selected by hash and then compared in constant time. The lookup alone would be enough to identify
- * the row, and the comparison is what keeps a timing difference from confirming a partial guess
- * against an index.
- */
-async function findByTokenHash(
-  database: Database,
-  hash: string,
-): Promise<{ id: string } | null> {
-  const rows = await database
-    .select({
-      agentId: agentProfiles.agentId,
-      hash: agentProfiles.callbackTokenHash,
-    })
-    .from(agentProfiles)
-    .where(
-      and(
-        eq(agentProfiles.callbackTokenHash, hash),
-        isNull(agentProfiles.deletedAt),
-      ),
-    )
-    .limit(1);
-
-  const row = rows[0];
-  if (!row?.hash) return null;
-  return sameToken(row.hash, hash) ? { id: row.agentId } : null;
-}
-
 export function createAgentProfileStore(
   database: Database,
-  managedAgentAgUiUrl: URL | undefined,
   /**
    * Where a customer agent's key is kept. Optional so a deployment without a vault still runs; an
    * agent with a key then simply cannot be created, which is better than storing it in the clear.
    */
   vault?: { store: CredentialStore; encryptionKey: string },
 ): AgentProfileStore {
-  const managedConfiguration = managedAgentAgUiUrl
-    ? { endpoint: managedAgentAgUiUrl.toString() }
-    : undefined;
-
   return {
     async list(actor, hidden = false) {
       const rows = await joinedProfiles(database, actor).where(
@@ -356,10 +225,11 @@ export function createAgentProfileStore(
     create(actor, input) {
       return database.transaction(async (transaction) => {
         const id = newAgentId();
-        const endpoint = input.endpoint
-          ? { endpoint: input.endpoint }
-          : managedConfiguration;
-        const systemPrompt = input.systemPrompt?.trim();
+        const endpoint = input.endpoint?.trim();
+        const roleDescription = input.roleDescription.trim();
+        if (!endpoint && !roleDescription) throw new AgentDefinitionError("A Native Bot needs a role description, or provide a remote endpoint.");
+        if (!endpoint && input.auth) throw new AgentDefinitionError("A Native Bot does not use a remote endpoint credential.");
+        if (input.auth && !vault) throw new AgentDefinitionError("Remote endpoint credentials cannot be saved without the credential vault.");
         if (endpoint) {
           await transaction.insert(agents).values({
             id,
@@ -368,7 +238,7 @@ export function createAgentProfileStore(
             // The key, if there is one, goes to the vault and only its reference is stored here. See
             // auth-header.ts for why a bearer token must not sit next to the endpoint.
             configuration: {
-              ...endpoint,
+              endpoint,
               ...(input.auth && vault
                 ? {
                     auth: await storeAgentAuth({
@@ -383,35 +253,19 @@ export function createAgentProfileStore(
                 : {}),
             },
           });
-        } else if (systemPrompt) {
-          /*
-           * Nowhere to send it, so it runs here.
-           *
-           * This is the shape General Assistant and Knowledge already have, and the shape
-           * `registeredAgentFromRow` reads: `built_in` plus a non-empty `configuration.systemPrompt`.
-           * A key is deliberately not written on this branch — a key authenticates to an address and
-           * this coworker has none, so storing one would leave a live credential in the vault that
-           * nothing can ever present.
-           */
+        } else {
           await transaction.insert(agents).values({
             id,
             name: input.name,
             type: "built_in",
-            configuration: { systemPrompt },
+            configuration: { systemPrompt: roleDescription },
           });
-        } else {
-          /*
-           * No address, no Bot in the box, and no instruction to run on. There is nothing to create:
-           * a `built_in` row with an empty prompt is a coworker `registeredAgentFromRow` drops on
-           * the floor, and the Bot would exist on every screen while answering nobody.
-           */
-          throw new ManagedAgentUnavailableError();
         }
         await transaction.insert(agentProfiles).values({
           agentId: id,
           ownerUserId: actor.id,
           title: input.title,
-          roleDescription: input.roleDescription,
+          roleDescription,
           avatarSeed: id,
           visibility: input.visibility,
         });
@@ -443,51 +297,30 @@ export function createAgentProfileStore(
             .from(agents)
             .where(eq(agents.id, id))
             .limit(1);
-          const previous = (row?.configuration ?? {}) as Record<
-            string,
-            unknown
-          >;
-          /**
-           * A coworker that runs here runs on its role description, so editing one has to move both.
-           *
-           * `create` writes the role description into `configuration.systemPrompt` for a coworker
-           * with no address, and that prompt is the ONLY instruction such a coworker ever gets:
-           * `registeredAgentFromRow` gives a `built_in` agent its `systemPrompt` and no standing
-           * role message, so `agentProfiles.roleDescription` never reaches it. Left out of this
-           * merge, an edit wrote the new text to the profile every screen reads and left the Bot
-           * running on the original — permanently, with nothing anywhere to say so. That is the
-           * worst shape a failed edit can take, and it is the same one the endpoint comment above
-           * describes.
-           *
-           * Only for `built_in`, and that matters. A remote Bot has no `systemPrompt` and must not
-           * acquire one; its instruction travels as the standing role message instead.
-           */
-          const configuration = {
-            ...previous,
-            ...(row?.type === "built_in"
-              ? { systemPrompt: input.roleDescription }
-              : {}),
-            ...(input.endpoint ? { endpoint: input.endpoint } : {}),
-            ...(input.auth && vault
-              ? {
-                  auth: await storeAgentAuth({
-                    store: vault.store,
-                    encryptionKey: vault.encryptionKey,
-                    agentId: id,
-                    header: input.auth.header,
-                    value: input.auth.value,
-                    // An agent that already has a live key is being edited, not
-                    // first-created, so the vault rotates rather than inserting
-                    // a second live row for the same agent id.
-                    previousCredentialId: authFromConfiguration(
-                      row?.configuration,
-                    )?.credentialId,
-                    executor: transaction,
-                  }),
-                }
-              : {}),
-          };
-
+          if (!row) throw new AgentNotFoundError(id);
+          const previous = row.configuration as Record<string, unknown>;
+          const roleDescription = input.roleDescription.trim();
+          const endpoint = input.endpoint === undefined ? endpointOf(previous) : input.endpoint.trim();
+          let configuration: Record<string, unknown>;
+          if (row.type === "built_in") {
+            if (!roleDescription) throw new AgentDefinitionError("A Native Bot's role description cannot be empty.");
+            if (input.endpoint?.trim() || input.auth) throw new AgentDefinitionError("A Native Bot does not use a remote endpoint or its credential.");
+            const changed = roleDescription !== profile.roleDescription.trim();
+            if (!changed && !systemPromptOf(previous)) throw new AgentDefinitionError("This Native Bot has no role instruction. Supply its role before saving.");
+            configuration = { ...previous, ...(changed ? { systemPrompt: roleDescription } : {}) };
+          } else {
+            if (!endpoint?.trim()) throw new AgentDefinitionError("A remote Bot needs its own endpoint.");
+            if (input.auth && !vault) throw new AgentDefinitionError("Remote endpoint credentials cannot be saved without the credential vault.");
+            configuration = {
+              ...previous, endpoint,
+              ...(input.auth && vault ? { auth: await storeAgentAuth({
+                store: vault.store, encryptionKey: vault.encryptionKey, agentId: id,
+                header: input.auth.header, value: input.auth.value,
+                previousCredentialId: authFromConfiguration(previous)?.credentialId,
+                executor: transaction,
+              }) } : {}),
+            };
+          }
           /*
            * The key this one replaces is already retired, by the rotation above.
            *
@@ -506,7 +339,7 @@ export function createAgentProfileStore(
             .update(agentProfiles)
             .set({
               title: input.title,
-              roleDescription: input.roleDescription,
+              roleDescription,
               visibility: input.visibility,
               updatedAt,
             })
@@ -542,12 +375,8 @@ export function createAgentProfileStore(
         if (!stored) throw new AgentNotFoundError(id);
 
         // `auth` is a vault reference and is deliberately not carried: see `runForDuplicate`.
-        const run = runForDuplicate(stored, managedConfiguration);
-        // After the source read, so a source that brings its own endpoint or its own prompt needs no
-        // managed Bot to fall back to.
-        if (!run) {
-          throw new ManagedAgentUnavailableError();
-        }
+        const run = runForDuplicate(stored);
+        if (!run) throw new AgentDefinitionError("This Bot is missing its role instruction or remote endpoint and cannot be duplicated.");
         const duplicateId = newAgentId();
         await transaction.insert(agents).values({
           id: duplicateId,
@@ -658,58 +487,5 @@ export function createAgentProfileStore(
       );
     },
 
-    issueCallbackToken(actor, id) {
-      return database.transaction(
-        async (transaction) => {
-          const profile = await findProfile(transaction, actor, id);
-          if (!profile) throw new AgentNotFoundError(id);
-          /*
-           * Whoever may change the agent may credential it.
-           *
-           * The same gate as renaming it or repointing its endpoint, and repointing the endpoint is
-           * the more dangerous of the two: it decides which process the token is for.
-           */
-
-          const token = mintCallbackToken();
-          const issuedAt = new Date();
-          await transaction
-            .update(agentProfiles)
-            .set({
-              callbackTokenHash: hashCallbackToken(token),
-              callbackTokenIssuedAt: issuedAt,
-              updatedAt: issuedAt,
-            })
-            .where(eq(agentProfiles.agentId, id));
-
-          // The only time it is readable. Nothing here writes it to a log.
-          return token;
-        },
-        { isolationLevel: "read committed" },
-      );
-    },
-
-    revokeCallbackToken(actor, id) {
-      return database.transaction(
-        async (transaction) => {
-          const profile = await findProfile(transaction, actor, id);
-          if (!profile) throw new AgentNotFoundError(id);
-
-          const now = new Date();
-          await transaction
-            .update(agentProfiles)
-            .set({
-              callbackTokenHash: null,
-              callbackTokenIssuedAt: null,
-              updatedAt: now,
-            })
-            .where(eq(agentProfiles.agentId, id));
-        },
-        { isolationLevel: "read committed" },
-      );
-    },
-
-    agentForCallbackToken(hash) {
-      return findByTokenHash(database, hash);
-    },
   };
 }

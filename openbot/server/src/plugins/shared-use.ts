@@ -18,19 +18,12 @@ export type SharedUseApproval = {
   members: ApprovalMember[];
 };
 
-/** The two sources a person writes the prompt for. Every other source, including ones added later, is outside input. */
-export const OWNER_STEERED_SOURCES: ReadonlySet<string> = new Set([
-  "manual",
-  "schedule",
-]);
-
 export type Steering =
   | { kind: "refuse"; why: string }
   | { kind: "actor"; outside: boolean };
 
 export async function steeringOf(
   initiator: AuditInitiator | undefined,
-  sourcesOf: (responsibilityId: string) => Promise<readonly string[]>,
 ): Promise<Steering> {
   /*
    * NO INITIATOR IS NOT A PERSON. Every path that runs a Bot says what started the run — a person's
@@ -54,24 +47,19 @@ export async function steeringOf(
   >;
   switch (initiator.kind) {
     case "person":
-    case "routine":
     case "memory":
       return { kind: "actor", outside: false };
-    case "responsibility": {
-      const sources = await sourcesOf(initiator.id);
-      return {
-        kind: "actor",
-        outside: sources.some((source) => !OWNER_STEERED_SOURCES.has(source)),
-      };
-    }
+    case "routine":
+    case "responsibility":
+      return { kind: "refuse", why: "this execution source has been retired" };
     case "handoff":
-      if (!initiator.origin || initiator.origin.kind === "handoff") {
+      if (!initiator.origin) {
         return {
           kind: "refuse",
           why: "a handoff that does not say what started it",
         };
       }
-      return steeringOf(initiator.origin, sourcesOf);
+      return steeringOf(initiator.origin);
     case "deployment":
       return { kind: "refuse", why: "a run with no person behind it" };
     default:
@@ -122,13 +110,11 @@ export type BotFacts = {
     members: ApprovalMember[];
   } | null;
   assignments: readonly string[];
-  sources: readonly string[];
 };
 
 export function exposureOf(bot: BotFacts): SharedUseApproval {
-  const outsideInput = bot.sources.some(
-    (source) => !OWNER_STEERED_SOURCES.has(source),
-  );
+  // Executions now start only from authenticated people or their direct Bot delegation.
+  const outsideInput = false;
   if (
     bot.visibility === "public" ||
     bot.publication?.audience === "team" ||

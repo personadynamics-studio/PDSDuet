@@ -9,10 +9,6 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type {
-  ProactiveRunStatus,
-  SuggestionStatus,
-} from "../../proactive/types";
 import { agents, channels, users } from "./core";
 
 /**
@@ -44,7 +40,7 @@ export const proactiveSettings = pgTable(
       .defaultNow(),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     lastStatus: text("last_status")
-      .$type<ProactiveRunStatus>()
+      .$type<"idle" | "running" | "succeeded" | "error">()
       .notNull()
       .default("idle"),
     lastError: text("last_error"),
@@ -100,7 +96,7 @@ export const proactiveSuggestions = pgTable(
     fromChannelId: text("from_channel_id").references(() => channels.id, {
       onDelete: "set null",
     }),
-    status: text("status").$type<SuggestionStatus>().notNull().default("open"),
+    status: text("status").$type<"open" | "dismissed" | "started">().notNull().default("open"),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

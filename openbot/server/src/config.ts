@@ -237,26 +237,6 @@ export type DeploymentConfig = {
    * mounted and failing: a capability that is not configured should be missing, not broken.
    */
   computer?: ComputerConfig;
-  /**
-   * The secret a Bot presents when it calls a tool back through this server.
-   *
-   * A framework Bot runs its own tool loop, in its own process, which is what makes it a real
-   * harness rather than a shape the browser drives. It still may not reach a vendor directly: it
-   * calls here, and here is where the grant, the policy and the audit row are. This is what tells
-   * that call apart from anybody else on the network.
-   *
-   * Absent means no Bot may call tools back, and a deployment that wanted them gets a refusal rather
-   * than an open door.
-   */
-  agentToolToken?: string;
-  /**
-   * The secret the worker presents when it hands a routine run back to this server.
-   *
-   * Absent means the internal routines endpoint refuses everything, which is the correct state of a
-   * deployment with no worker — a deployment that has not asked for scheduled turns should not have a
-   * door for them standing open.
-   */
-  workerSharedSecret?: string;
 };
 
 type Environment = Record<string, string | undefined>;
@@ -668,7 +648,6 @@ export function loadConfig(
       "GITHUB_APP_CLIENT_ID needs OPENBOT_PUBLIC_URL (or BETTER_AUTH_URL) so GitHub can send people back to this server.",
     );
   }
-  const workerSharedSecret = optional(environment, "WORKER_SHARED_SECRET");
   const deploymentKey = keyEncryptionKey(environment);
 
   const loaded = {
@@ -705,10 +684,6 @@ export function loadConfig(
       ? { appDistDir: optional(environment, "APP_DIST_DIR") as string }
       : {}),
     computer: computerConfig(environment),
-    ...(optional(environment, "AGENT_TOOL_TOKEN")
-      ? { agentToolToken: optional(environment, "AGENT_TOOL_TOKEN") as string }
-      : {}),
-    ...(workerSharedSecret ? { workerSharedSecret } : {}),
   };
   // After everything above, so its refusals keep the order they were always raised in.
   return {

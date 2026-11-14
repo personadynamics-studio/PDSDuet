@@ -6,9 +6,6 @@ import {
   exists,
   inArray,
   isNull,
-  lt,
-  ne,
-  or,
   sql,
 } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
@@ -28,17 +25,12 @@ import {
   channelMemberships,
   channels,
   threadChannelMappings,
-  openduetChannels,
-  openduetTasks,
 } from "../db/schema";
 import type { ChannelActivityEvent, ChannelEventHub } from "./events";
 import {
   announceChannelActivity,
-  MAX_CHANNEL_EVENT_TEXT_BYTES,
 } from "./notifications";
 import { upgradeWebSocket } from "./socket";
-import { oneLine } from "./text";
-import type { ThreadIdentity } from "./thread-identity";
 
 export type AgentChannel = {
   id: string;
@@ -59,7 +51,7 @@ export type AgentChannel = {
 
 /** A channel plus the last thing said in it, which is what a roster renders. */
 export type ChannelSummary = AgentChannel & {
-  /** Aggregate of unexpired run claims, also published through channel events. */
+  /** Whether the canonical root execution is running or waiting. */
   busy: boolean;
   /** A few words about the conversation, or null. Readers fall back to the channel's name. */
   summary: string | null;
@@ -70,39 +62,10 @@ export type ChannelSummary = AgentChannel & {
   pinned: boolean;
   /** When the caller last had this channel open, or null for never. The caller's, only. */
   lastReadAt: Date | null;
-  /**
-   * The OpenDuet task this conversation belongs to, or null for an ordinary one. A task works in a
-   * conversation of its own (openduet/task-store.ts); the app keeps those out of Chat and the menu
-   * and lists them under Tasks instead.
-   */
-  taskId: string | null;
-  /**
-   * Whether this conversation is one of the person's OpenDuet channels, with a look of its own
-   * (openduet/channels.ts). Chat and `direct` leave those out, as they leave out a task's: a channel
-   * the person talked in last must not become their conversation with the Bot.
-   */
-  openduetChannel: boolean;
 };
-
-/** The task a channel belongs to, if any: at most one, by the task table's unique channel index. */
-const TASK_OF_CHANNEL = sql<
-  string | null
->`(select ${openduetTasks.id} from ${openduetTasks} where ${openduetTasks.channelId} = ${channels.id})`;
-
-/** Whether a channel has an OpenDuet look, which makes it a channel rather than Chat. */
-const IS_OPENDUET_CHANNEL = sql<boolean>`exists (select 1 from ${openduetChannels} where ${openduetChannels.channelId} = ${channels.id})`;
 
 /** A channel has one conversation, shared by every member. */
 const CANONICAL_THREAD = sql<string>`(select thread_id from thread_channel_mappings where channel_id = ${channels.id} order by created_at,user_id limit 1)`;
-
-/** What a client that ran an agent reports back about the message it just saw. */
-export type ChannelActivity = {
-  text: string;
-  /** The agent that said it, or null when a person did. */
-  agentId: string | null;
-  at: Date;
-  needsInput?: boolean;
-};
 
 /** One page of somebody's channels, newest activity first. */
 export type ChannelPage = {
@@ -197,23 +160,13 @@ const ROSTER_ORDER = [
 type ChannelTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export type ChannelStore = {
-  /** Publish task/workstream metadata in the same transaction that makes its channel visible. */
+  /** Make an ordinary conversation for the people and Bots explicitly selected. */
   create(
     actor: AgentActor,
     agentIds: string[],
     transaction?: ChannelTransaction,
   ): Promise<AgentChannel>;
-  /**
-   * The one conversation this person has with this Bot alone, made if they have not had one yet.
-   *
-   * FOUND BEFORE IT IS MADE, because the callers that want it are called more than once for the
-   * same pair. A hop delivered to a Bot is retried when the delivery fails, and creating here would
-   * leave a fresh empty conversation behind for every attempt: the person would open the roster to
-   * five Knowledge channels, four of them empty, and no way to tell which one holds the answer.
-   *
-   * The one it finds is the one the person already talks to that Bot in, which is also where they
-   * would look for the answer.
-   */
+  /** Open an existing private conversation with the chosen Bot, or create one. */
   direct(actor: AgentActor, agentId: string): Promise<AgentChannel>;
   get(actor: AgentActor, channelId: string): Promise<AgentChannel | null>;
   list(actor: AgentActor, query?: ChannelQuery): Promise<ChannelPage>;
@@ -235,51 +188,11 @@ export type ChannelStore = {
    * no-op, so it announces nothing and its route records nothing.
    */
   softDelete(actor: AgentActor, channelId: string): Promise<boolean>;
-  recordActivity(
-    actor: AgentActor,
-    channelId: string,
-    activity: ChannelActivity,
-    source?: {
-      id: string;
-      /** Enrich this source's preview at the same timestamp only while this text still matches. */
-      enrichFrom?: string;
-    },
-  ): Promise<void>;
-  /**
-   * Tell a channel's members that a turn started or ended in it, by the thread it runs in.
-   *
-   * Keyed by thread because that is all a headless turn knows. A thread that maps to no channel —
-   * the scratch thread a handoff answers in — resolves to nothing and signals nowhere, which is
-   * the point of a scratch thread. Run claims are persisted with a bounded lifetime, so another
-   * replica can publish expiry after a producer disappears and a roster read can recover state.
-   */
-  signalBusy(threadId: string, busy: boolean, runId?: string): Promise<void>;
-  /**
-   * The same signal, from a person's own run, by the channel they are in.
-   *
-   * A browser knows exactly when its run starts and stops and which channel it is in, which the
-   * server cannot see: the runtime does not tell this deployment when a person's turn begins. So
-   * the browser reports it, and this checks the caller belongs to the channel before announcing —
-   * the membership check `signalBusy` does not need, because that one is only ever called by the
-   * server about work it started itself.
-   */
-  signalChannelBusy(
-    actor: AgentActor,
-    channelId: string,
-    busy: boolean,
-    runId?: string,
-  ): Promise<void>;
 };
 
 /** What a conversation made here is described as, until somebody gives it a purpose. */
 export const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
 const MAX_CHANNEL_NAME_CODE_POINTS = 120;
-const MAX_ACTIVITY_GRAPHEMES = 200;
-
-/** Reduce a message to the one line a roster draws. See `oneLine` for why it is shared. */
-function previewOf(text: string) {
-  return oneLine(text, MAX_ACTIVITY_GRAPHEMES, MAX_CHANNEL_EVENT_TEXT_BYTES);
-}
 
 function channelName(names: string[]) {
   const joined = names.join(", ");
@@ -288,82 +201,16 @@ function channelName(names: string[]) {
   return `${codePoints.slice(0, MAX_CHANNEL_NAME_CODE_POINTS - 1).join("")}…`;
 }
 
-/** The database clock is authoritative for both roster reads and expiry notifications. */
-const BUSY_NOW = sql<number>`extract(epoch from statement_timestamp())::float8 * 1000`;
+/** Busy is a read of the same canonical executions returned by the conversation snapshot. */
 const CHANNEL_BUSY = sql<boolean>`exists (
-  select 1 from jsonb_each_text(${channels.busyClaims}) as claim
-  where claim.value::float8 > ${BUSY_NOW}
+  select 1 from local_runs r where r.thread_id = ${CANONICAL_THREAD}
+  and r.status in ('running','waiting')
 )`;
-
-async function writeBusyClaims(
-  transaction: ChannelTransaction,
-  channelId: string,
-  claims: Record<string, number>,
-) {
-  await transaction
-    .update(channels)
-    .set({ busyClaims: claims })
-    .where(eq(channels.id, channelId));
-  const members = await transaction
-    .select({ userId: channelMemberships.userId })
-    .from(channelMemberships)
-    .where(eq(channelMemberships.channelId, channelId));
-  await announceChannelActivity(transaction, {
-    channelId,
-    memberIds: members.map((member) => member.userId),
-    lastMessage: null,
-    lastMessageAt: null,
-    lastMessageAgentId: null,
-    busy: Object.keys(claims).length > 0,
-  });
-}
-
-/**
- * One bounded expiry pass, including claims left by a previous process. Every replica may run it:
- * the row lock orders pruning and notification with busy writers; SKIP LOCKED avoids duplicate
- * work and waiting on active channels. Reads never prune, so they cannot consume an owed event.
- */
-export async function expireChannelBusyClaims(
-  database: Database,
-): Promise<void> {
-  await database.transaction(async (transaction) => {
-    const expired = await transaction
-      .select({ id: channels.id, claims: channels.busyClaims, now: BUSY_NOW })
-      .from(channels)
-      .where(
-        and(
-          isNull(channels.deletedAt),
-          sql`exists (
-        select 1 from jsonb_each_text(${channels.busyClaims}) as claim
-        where claim.value::float8 <= ${BUSY_NOW}
-      )`,
-        ),
-      )
-      .limit(100)
-      .for("update", { skipLocked: true });
-    for (const row of expired) {
-      const claims = Object.fromEntries(
-        Object.entries(row.claims).filter(([, until]) => until > row.now),
-      );
-      await writeBusyClaims(transaction, row.id, claims);
-    }
-  });
-}
 
 export function createChannelStore(
   database: Database,
   profileStore: AgentProfileStore,
-  threadIdentity: ThreadIdentity,
 ): ChannelStore {
-  /**
-   * Making a channel, on a transaction the caller already holds.
-   *
-   * Extracted so `direct` can find-or-create inside ONE transaction. Two of those arriving together
-   * for the same person and Bot each found nothing and each made a conversation, so that person had
-   * two Knowledge channels holding two threads, with their answers split between them. Reproduced
-   * against a real PostgreSQL: it needs no cluster, only two hops delivered at once, which is what a
-   * Bot asking for several things in one turn produces.
-   */
   const makeChannel = async (
     transaction: ChannelTransaction,
     actor: AgentActor,
@@ -382,10 +229,8 @@ export function createChannelStore(
       profilesById.set(agentId, profile);
     }
 
-    const id = `channel_${crypto.randomUUID()}`;
-    // Minted rather than a bare random id, so the thread says which deployment it belongs to
-    // in a project that may hold more than one. See thread-identity.ts.
-    const threadId = threadIdentity.mint();
+    const id = crypto.randomUUID();
+    const threadId = crypto.randomUUID();
     // Named from the caller's ordering, which is the order the channel presents its agents in.
     const name = channelName(
       agentIds.map((agentId) => {
@@ -416,29 +261,6 @@ export function createChannelStore(
     return { id, name, agentIds, threadId, active: true, lastMessageAt: null };
   };
 
-  async function announceBusy(channelId: string, busy: boolean, runId: string) {
-    await database.transaction(async (transaction) => {
-      // Row locking orders the claim mutation and its notification across all replicas.
-      const [row] = await transaction
-        .select({
-          claims: channels.busyClaims,
-          now: BUSY_NOW,
-        })
-        .from(channels)
-        .where(eq(channels.id, channelId))
-        .for("update");
-      if (!row) return;
-      const at = row.now;
-      let claims = Object.fromEntries(
-        Object.entries(row.claims).filter(([, until]) => until > at),
-      );
-      // A computed key creates an own claim even for IDs such as "__proto__".
-      if (busy) claims = { ...claims, [runId]: at + 15 * 60_000 };
-      else delete claims[runId];
-      await writeBusyClaims(transaction, channelId, claims);
-    });
-  }
-
   const store: ChannelStore = {
     create(actor, agentIds, transaction) {
       if (transaction) return makeChannel(transaction, actor, agentIds);
@@ -449,79 +271,17 @@ export function createChannelStore(
     },
 
     async direct(actor, agentId) {
-      const found = await database.transaction(
-        async (transaction) => {
-          /*
-           * ONE AT A TIME PER PERSON AND BOT, across every replica.
-           *
-           * Looking and then making is not find-or-create: two hops delivered at the same moment
-           * each saw nothing and each made a conversation, and that person ended up with two
-           * Knowledge channels holding two threads, with the answers split between them. A Bot
-           * asking for several things in one turn produces exactly that, so it needs no cluster and
-           * no unusual timing.
-           *
-           * An advisory lock rather than a unique constraint, because what has to be unique is not a
-           * column: it is "this person's channel whose whole roster is this one Bot", which is a
-           * count over another table. The lock is held for the transaction and taken on the pair, so
-           * nothing else on the channel table waits behind it.
-           */
-          await transaction.execute(
-            sql`select pg_advisory_xact_lock(hashtext(${`channel:direct:${actor.id}:${agentId}`}))`,
-          );
-          const [existing] = await transaction
-            .select({ id: channels.id })
-            .from(channels)
-            .innerJoin(
-              channelMemberships,
-              and(
-                eq(channelMemberships.channelId, channels.id),
-                eq(channelMemberships.userId, actor.id),
-              ),
-            )
-            .innerJoin(
-              channelAgents,
-              and(
-                eq(channelAgents.channelId, channels.id),
-                eq(channelAgents.agentId, agentId),
-              ),
-            )
-            /*
-             * A channel of this person's whose whole roster is this one Bot. The count is what makes
-             * it "alone": a channel holding this Bot and another one would match an agent test on
-             * its own, and delivering into it would put the answer in front of a Bot nobody asked.
-             */
-            .where(
-              and(
-                isNull(channels.deletedAt),
-                sql`(select count(*) from ${channelAgents} where ${channelAgents.channelId} = ${channels.id}) = 1`,
-                /*
-                 * Not a task's. A task works in a conversation of its own with the same Bot, and it
-                 * is usually the most recent, so without this the person's conversation with the Bot
-                 * would turn into whichever task ran last.
-                 */
-                sql`${TASK_OF_CHANNEL} is null`,
-                // Nor one of the person's OpenDuet channels, for the same reason: a channel is a
-                // workstream of its own, and the answer to a hop belongs in their one thread.
-                sql`not ${IS_OPENDUET_CHANNEL}`,
-              ),
-            )
-            .orderBy(...ROSTER_ORDER)
-            .limit(1);
-
-          return existing
-            ? existing.id
-            : await makeChannel(transaction, actor, [agentId]);
-        },
-        { isolationLevel: "read committed" },
-      );
-
-      if (typeof found !== "string") return found;
-      const channel = await store.get(actor, found);
-      // If it was deleted between reads, repeat selection under the same advisory lock. Another
-      // caller may already have made the replacement; creating outside the lock duplicates it.
-      return channel ?? store.direct(actor, agentId);
+      const [found] = await database.select({ id: channels.id }).from(channels)
+        .innerJoin(channelMemberships, and(eq(channelMemberships.channelId, channels.id), eq(channelMemberships.userId, actor.id)))
+        .innerJoin(channelAgents, and(eq(channelAgents.channelId, channels.id), eq(channelAgents.agentId, agentId)))
+        .where(and(isNull(channels.deletedAt), sql`(select count(*) from channel_agents where channel_id=${channels.id})=1`))
+        .orderBy(...ROSTER_ORDER).limit(1);
+      if (found) {
+        const channel = await store.get(actor, found.id);
+        if (channel) return channel;
+      }
+      return store.create(actor, [agentId]);
     },
-
     async get(actor, channelId) {
       const rows = await database
         .select({
@@ -637,8 +397,6 @@ export function createChannelStore(
           createdAt: channels.createdAt,
           pinnedAt: channelMemberships.pinnedAt,
           lastReadAt: channelMemberships.lastReadAt,
-          taskId: TASK_OF_CHANNEL,
-          openduetChannel: IS_OPENDUET_CHANNEL,
         })
         .from(channels)
         .innerJoin(
@@ -692,8 +450,6 @@ export function createChannelStore(
           createdAt: row.createdAt,
           pinned: row.pinnedAt !== null,
           lastReadAt: row.lastReadAt,
-          taskId: row.taskId,
-          openduetChannel: row.openduetChannel,
         });
       }
       return { channels: [...summaries.values()], nextCursor };
@@ -727,7 +483,7 @@ export function createChannelStore(
             )
             .returning({ channelId: channelMemberships.channelId });
           // Not a member, no such channel, or a deleted one: the same answer every way, matching
-          // recordActivity and `get`.
+          // ordinary conversation reads.
           if (updated.length === 0) throw new ChannelNotFoundError(channelId);
 
           /*
@@ -848,126 +604,6 @@ export function createChannelStore(
       );
     },
 
-    recordActivity(actor, channelId, activity, source) {
-      return database.transaction(
-        async (transaction) => {
-          const [membership] = await transaction
-            .select({ channelId: channelMemberships.channelId })
-            .from(channelMemberships)
-            // Joined rather than checked on the membership alone, so a deleted channel is refused
-            // too. `get` and `list` filter on `deleted_at`, so without this a client holding a stale
-            // roster row can bump `last_message` on a channel nobody can see and announce it to
-            // every member, each of whom refetches their roster for an invisible row.
-            .innerJoin(
-              channels,
-              and(
-                eq(channels.id, channelMemberships.channelId),
-                isNull(channels.deletedAt),
-              ),
-            )
-            .where(
-              and(
-                eq(channelMemberships.channelId, channelId),
-                eq(channelMemberships.userId, actor.id),
-              ),
-            );
-          // Not a member, no such channel, or a deleted one: the same answer every way, so belonging
-          // to a channel is not something an outsider can probe for.
-          if (!membership) throw new ChannelNotFoundError(channelId);
-
-          if (activity.agentId !== null) {
-            const [linked] = await transaction
-              .select({ agentId: channelAgents.agentId })
-              .from(channelAgents)
-              .where(
-                and(
-                  eq(channelAgents.channelId, channelId),
-                  eq(channelAgents.agentId, activity.agentId),
-                ),
-              );
-            if (!linked) throw new AgentNotFoundError(activity.agentId);
-          }
-
-          // A person's message and the agent's reply are reported separately, so they can arrive out
-          // of order. Only move forwards, except to enrich the same source's placeholder.
-          // The source, timestamp and text comparison is atomic across server replicas.
-          const lastMessage = previewOf(activity.text);
-          const applied = await transaction
-            .update(channels)
-            .set({
-              lastMessage,
-              lastMessageSourceId: source?.id ?? null,
-              lastMessageNeedsInput:
-                activity.agentId !== null &&
-                (activity.needsInput ?? false),
-              lastMessageAt: activity.at,
-              lastMessageAgentId: activity.agentId,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(channels.id, channelId),
-                or(
-                  isNull(channels.lastMessageAt),
-                  lt(channels.lastMessageAt, activity.at),
-                  source?.enrichFrom !== undefined
-                    ? and(
-                        eq(channels.lastMessageAt, activity.at),
-                        eq(channels.lastMessageSourceId, source.id),
-                        eq(channels.lastMessage, previewOf(source.enrichFrom)),
-                        ne(channels.lastMessage, lastMessage),
-                        activity.agentId === null
-                          ? isNull(channels.lastMessageAgentId)
-                          : eq(channels.lastMessageAgentId, activity.agentId),
-                      )
-                    : undefined,
-                ),
-              ),
-            )
-            .returning({ id: channels.id });
-          // Nothing changed, so there is nothing to announce: a stale report is not news.
-          if (applied.length === 0) return;
-
-          const members = await transaction
-            .select({ userId: channelMemberships.userId })
-            .from(channelMemberships)
-            .where(eq(channelMemberships.channelId, channelId));
-
-          // Announced inside the transaction, so it is delivered on commit and a write that rolls
-          // back is never announced. The payload carries the members because the writer has already
-          // resolved them; the announcer partitions them within NOTIFY's complete JSON byte limit.
-          const event: ChannelActivityEvent = {
-            channelId,
-            memberIds: members.map((member) => member.userId),
-            lastMessage,
-            lastMessageAt: activity.at.toISOString(),
-            lastMessageAgentId: activity.agentId,
-          };
-          await announceChannelActivity(transaction, event);
-        },
-        { isolationLevel: "read committed" },
-      );
-    },
-
-    async signalBusy(threadId, busy, runId = "server") {
-      const [mapped] = await database
-        .select({ channelId: threadChannelMappings.channelId })
-        .from(threadChannelMappings)
-        .where(eq(threadChannelMappings.threadId, threadId))
-        .limit(1);
-      if (mapped) await announceBusy(mapped.channelId, busy, runId);
-    },
-
-    async signalChannelBusy(
-      actor,
-      channelId,
-      busy,
-      runId = `legacy:${actor.id}`,
-    ) {
-      const channel = await store.get(actor, channelId);
-      if (!channel) throw new ChannelNotFoundError(channelId);
-      await announceBusy(channelId, busy, runId);
-    },
   };
   return store;
 }
@@ -1018,66 +654,6 @@ export function parseChannelInput(input: unknown): ChannelInputParseResult {
 
 function isChannelInputObject(input: unknown): input is ChannelInputObject {
   return typeof input === "object" && input !== null && !Array.isArray(input);
-}
-
-type ActivityInputParseResult =
-  | { ok: true; value: ChannelActivity }
-  | { ok: false; error: string };
-
-/**
- * Parse a reported message.
- *
- * `at` comes from the client that saw the message, because only it knows when the message arrived,
- * and it may say when, but not later than now. The store compares it against what is stored and
- * only ever moves forwards, and that guard is shared with every other clock in the deployment:
- * the routine runner's, a relayed handoff answer's, every other member's browser. A browser whose
- * clock ran seven minutes ahead used to stamp the row seven minutes into the future, and it was
- * not that report that got lost — every correct one for the next seven minutes was, silently: a
- * routine's reply landed in the thread and never on the roster. Clamped rather than refused,
- * because clocks are a little ahead all the time and a report a second early is still the report.
- * A stamp in the past is kept as it is, so a person's message and the reply, reported separately
- * by the same clock, still land in the order that clock saw them.
- */
-export function parseActivityInput(
-  input: unknown,
-  /** The server's own clock, injectable so a test can be about a specific gap. */
-  now: Date = new Date(),
-): ActivityInputParseResult {
-  if (!isChannelInputObject(input)) {
-    return { ok: false, error: "Activity must be a JSON object." };
-  }
-  const object = input as { text?: unknown; agentId?: unknown; at?: unknown };
-
-  if (typeof object.text !== "string" || object.text.trim().length === 0) {
-    return { ok: false, error: "Text is required." };
-  }
-  if (object.agentId !== null && typeof object.agentId !== "string") {
-    return { ok: false, error: "Agent ID must be a string or null." };
-  }
-  if (
-    typeof object.agentId === "string" &&
-    object.agentId.trim().length === 0
-  ) {
-    return { ok: false, error: "Agent ID must be a string or null." };
-  }
-  if (typeof object.at !== "string") {
-    return { ok: false, error: "Timestamp is required." };
-  }
-  const reported = new Date(object.at);
-  if (Number.isNaN(reported.getTime())) {
-    return { ok: false, error: "Timestamp must be an ISO-8601 date." };
-  }
-  const at = reported.getTime() > now.getTime() ? now : reported;
-
-  return {
-    ok: true,
-    value: {
-      agentId:
-        typeof object.agentId === "string" ? object.agentId.trim() : null,
-      at,
-      text: object.text,
-    },
-  };
 }
 
 export function createChannelRoutes(
@@ -1216,53 +792,6 @@ export function createChannelRoutes(
     }
   });
 
-  routes.post("/:channelId/activity", requireUser, async (context) => {
-    const parsed = parseActivityInput(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.ok) return context.json({ error: parsed.error }, 400);
-    // A whitespace channel id would reach the store and answer 500 on some backends instead of
-    // a 400 for a malformed call.
-    const channelId = context.req.param("channelId");
-    if (!channelId.trim()) {
-      return context.json({ error: "A channel id is required." }, 400);
-    }
-
-    try {
-      await store.recordActivity(context.var.actor, channelId, parsed.value);
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
-  routes.post("/:channelId/busy", requireUser, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as {
-      busy?: unknown;
-      runId?: unknown;
-    } | null;
-    if (typeof body?.busy !== "boolean") {
-      return context.json({ error: "busy must be true or false" }, 400);
-    }
-    if (!context.req.param("channelId").trim()) {
-      return context.json({ error: "A channel id is required." }, 400);
-    }
-
-    try {
-      await store.signalChannelBusy(
-        context.var.actor,
-        context.req.param("channelId"),
-        body.busy,
-        typeof body.runId === "string" && body.runId.length <= 200
-          ? body.runId
-          : undefined,
-      );
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
   routes.put("/:channelId/pin", requireUser, async (context) => {
     const body = await context.req.json().catch(() => null);
     if (!isChannelInputObject(body)) {
@@ -1352,8 +881,6 @@ function channelSummaryDto(channel: ChannelSummary) {
     pinned: channel.pinned,
     // Serialised as ISO-8601 like lastMessageAt, so the browser can compare the two as strings.
     lastReadAt: channel.lastReadAt?.toISOString() ?? null,
-    taskId: channel.taskId,
-    openduetChannel: channel.openduetChannel,
   };
 }
 

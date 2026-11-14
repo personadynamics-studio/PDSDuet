@@ -1,7 +1,7 @@
 import type { Message } from "@ag-ui/core";
 import { type ReactNode, useMemo } from "react";
 import { text } from "prompt-area/helpers";
-import { Composer, type AgentOption, type CommandOption, type ComposerDraft } from "./composer";
+import { Composer, type AgentOption, type ComposerDraft } from "./composer";
 import { toDraft } from "./composer/draft";
 import { ChatTranscript } from "./chat-transcript";
 import { ConversationSendContext, latestTurnToolCalls } from "./conversation-send";
@@ -9,12 +9,12 @@ import { PageSheetHost } from "@/components/duet/page-sheet";
 
 export function ConversationView({
   messages, busy = false, pending = false, restoring = false, disabled = false,
-  onSubmit, onStop, stoppable, agents = [], commands, channelId, notice, stopped,
+  onSubmit, onStop, stoppable, agents = [], channelId, notice, stopped,
   inShell = false, placeholder, lead, autoFocus = false, speakerNames,
 }: {
   messages: readonly Message[]; busy?: boolean; pending?: boolean; restoring?: boolean; disabled?: boolean;
   onSubmit(draft: ComposerDraft): void | Promise<void>; onStop?(): void; stoppable?: boolean;
-  agents?: readonly AgentOption[]; commands?: readonly CommandOption[]; channelId?: string;
+  agents?: readonly AgentOption[]; channelId?: string;
   notice?: ReactNode; stopped?: string; inShell?: boolean; placeholder?: string; lead?: ReactNode;
   autoFocus?: boolean;
   speakerNames?: ReadonlyMap<string, string>;
@@ -32,11 +32,11 @@ export function ConversationView({
     <ConversationSendContext.Provider value={send}>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1">
-          <ChatTranscript messages={messages} busy={busy} restoring={restoring} stopped={stopped} lead={lead} speakerNames={speakerNames} commandNames={(commands ?? []).map((command) => command.name).join(",")} contentClassName={inShell ? "gap-4 px-4 pt-[100px] pb-6" : undefined} />
+          <ChatTranscript messages={messages} busy={busy} restoring={restoring} stopped={stopped} lead={lead} speakerNames={speakerNames} contentClassName={inShell ? "gap-4 px-4 pt-[100px] pb-6" : undefined} />
         </div>
         <div className="shrink-0 border-t bg-background px-4 py-3">
           {notice}
-          <Composer agents={agents} commands={commands} channelId={channelId} autoFocus={autoFocus} className="w-full" compact disabled={disabled || restoring} pending={busy || pending} stoppable={stoppable ?? busy} onStop={onStop} onSubmit={onSubmit} placeholder={placeholder} />
+          <Composer agents={agents} channelId={channelId} autoFocus={autoFocus} className="w-full" compact disabled={disabled || restoring} pending={busy || pending} stoppable={stoppable ?? busy} onStop={onStop} onSubmit={onSubmit} placeholder={placeholder} />
         </div>
         <PageSheetHost />
       </div>

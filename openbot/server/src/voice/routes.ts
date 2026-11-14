@@ -10,10 +10,6 @@ import {
   VoiceError,
   type VoiceProvider,
 } from "./provider";
-import {
-  createVoiceSessionRoutes,
-  type VoiceSessionServices,
-} from "./session-routes";
 
 const VOICE_HANDSHAKE_TIMEOUT_MS = 20_000;
 const ATTEMPT_WINDOW_MS = 60_000;
@@ -25,13 +21,11 @@ export function createVoiceRoutes(
   provider: VoiceProvider | undefined,
   channels: Pick<ChannelStore, "get"> | undefined,
   profiles?: Pick<AgentProfileStore, "get">,
-  sessions?: VoiceSessionServices,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
   const active = new Set<string>();
   const attempts = new Map<string, { count: number; expires: number }>();
   app.use("*", requireUser);
-  app.route("/sessions", createVoiceSessionRoutes(sessions));
   app.get("/config", (context) => {
     context.header("Cache-Control", "no-store");
     if (!provider || !channels || !profiles)

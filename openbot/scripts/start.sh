@@ -28,6 +28,4 @@ done
 printf '%s\n' "$!" > "$LOGS/pds-api.pid"
 (cd app && exec bun --env-file=../.env serve.ts) >>"$LOGS/app.log" 2>&1 &
 printf '%s\n' "$!" > "$LOGS/pds-app.pid"
-bun --env-file=.env worker/src/index.ts >>"$LOGS/worker.log" 2>&1 &
-printf '%s\n' "$!" > "$LOGS/pds-worker.pid"
 printf 'OpenBot started. Logs: %s\n' "$LOGS"

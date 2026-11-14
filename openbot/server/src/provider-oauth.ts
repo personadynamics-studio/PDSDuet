@@ -4,7 +4,7 @@ import { lstat, open, rename, unlink } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Env, Hono } from "hono";
 import { z } from "zod";
-import { sameToken } from "./agents/callback-token";
+import { sameToken } from "./auth/same-token";
 import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,

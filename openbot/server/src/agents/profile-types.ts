@@ -23,13 +23,8 @@ export type AgentProfile = {
   endpoint: string | null;
   /** Whether a key is set for it. Never the key. */
   hasAuth: boolean;
-  /**
-   * Whether this agent holds a credential for calling tools back.
-   *
-   * A boolean, never the token: the token exists in a readable form once, in the response that issued
-   * it. A surface only needs to know whether to offer "generate" or "rotate".
-   */
-  hasCallbackToken: boolean;
+  /** Whether the stored agent runs through the Native factory. */
+  builtIn: boolean;
 };
 
 export type CreateAgentInput = Pick<
@@ -37,10 +32,7 @@ export type CreateAgentInput = Pick<
   "name" | "title" | "roleDescription" | "visibility"
 > & {
   /**
-   * The AG-UI endpoint this Bot runs on, or undefined for the one in the box.
-   *
-   * This field is the AG-UI endpoint for a customer-provided agent. Without it the Bot runs on the
-   * built-in endpoint.
+   * The Bot's explicit remote endpoint. Without one, its non-empty roleDescription is the Native prompt.
    */
   endpoint?: string;
   /**

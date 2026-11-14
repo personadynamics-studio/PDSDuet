@@ -32,7 +32,7 @@ export function useThread(threadId: string, agentId?: string) {
     source.current?.close();
     source.current = null;
     try {
-      const response = await client(`${base}/messages${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`, {
+      const response = await client(`${base}/messages`, {
         signal: AbortSignal.any([lifetime.signal, request.signal]),
         fallback: "無法載入對話，請稍後重試。",
       });
@@ -51,7 +51,7 @@ export function useThread(threadId: string, agentId?: string) {
         setRestoring(false);
       }
     }
-  }, [base, agentId]);
+  }, [base]);
 
   useEffect(() => {
     requests.current = new AbortController();
@@ -121,7 +121,7 @@ export function useThread(threadId: string, agentId?: string) {
     };
   }, [base, refresh]);
 
-  const submit = useCallback(async (incoming: Message[], context: { description: string; value: string }[] = []) => {
+  const submit = useCallback(async (incoming: Message[]) => {
     const lifetime = requests.current;
     if (!lifetime || lifetime.signal.aborted || !navigator.onLine) {
       const failure = new Error("目前離線，請連線後再傳送。");
@@ -132,7 +132,7 @@ export function useThread(threadId: string, agentId?: string) {
     setRequestError(null);
     try {
       const response = await client(`${base}/runs`, {
-        method: "POST", body: { ...(agentId && incoming.some((message) => message.role === "user") ? { agentId } : {}), messages: incoming, context }, signal: lifetime.signal,
+        method: "POST", body: { ...(agentId && incoming.some((message) => message.role === "user") ? { agentId } : {}), messages: incoming }, signal: lifetime.signal,
         fallback: "未能傳送訊息，請重試。",
       });
       const data = await response.json() as { runId: string };

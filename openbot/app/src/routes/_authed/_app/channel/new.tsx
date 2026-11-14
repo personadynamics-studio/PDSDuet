@@ -30,7 +30,6 @@ import {
 } from "@/lib/agents/queries";
 import { useStartChannel } from "@/lib/channels/start";
 import { useSelectedBot } from "@/lib/agents/selected-bot";
-import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { searchTextEntry } from "@/lib/search-text";
 import { newId } from "../../../../lib/new-id";
 
@@ -112,11 +111,6 @@ function RouteComponent() {
     name: profile.name,
   }));
   const group = startsGroup(recipients);
-  // A group's first message goes to all of its Bots, so no one Bot's commands are offered.
-  const skillCommands = useSkillCommands(
-    group ? "" : (recipients[0]?.id ?? ""),
-  );
-
   /*
    * A page pushed over the app, in Chat's column (parity-spec 2.9): the back disc, "新增對話"
    * in the title pill, the To field at the head of the thread and Chat's own docked glass reply box.
@@ -205,8 +199,6 @@ function RouteComponent() {
       // Choosing a coworker answers the "To:" field, so the message is what remains: the caret
       // lands in the composer the moment a recipient exists, whether picked here or in the URL.
       autoFocus
-      // Commands must be loaded before the first channel message is sent.
-      commands={skillCommands}
       disabled={
         Boolean(loadError) || waitingForUrlAgent || recipients.length === 0
       }

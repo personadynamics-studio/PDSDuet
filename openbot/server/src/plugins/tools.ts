@@ -1,4 +1,3 @@
-import { ApprovalRefusedError } from "../approvals/types";
 import type { AuditInitiator } from "../audit";
 import { type GrantedTool, parametersFor } from "@openbot/toolkit/granted-tool";
 import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
@@ -316,8 +315,7 @@ export async function grantedTools(options: {
         context?.signal?.throwIfAborted();
         if (error instanceof HeadlessToolSuspension) throw error;
         if (
-          error instanceof PluginRefusedError ||
-          error instanceof ApprovalRefusedError
+            error instanceof PluginRefusedError
         ) {
           /*
            * A refusal that carries an app card names the Bot here, the one place both are known:

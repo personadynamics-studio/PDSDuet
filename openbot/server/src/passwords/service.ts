@@ -53,10 +53,6 @@ export type SignInServiceDependencies = {
    * login once.
    */
   passwordManagerEnabled?: (ownerUserId: string) => Promise<boolean>;
-  /** Tell the owner there is a sign-in waiting, on their delivery channels. */
-  notify?: (request: SignInRequestRecord) => Promise<void>;
-  /** A request reached a final state. Resumes an unattended turn that was waiting on it. */
-  onResolved?: (request: SignInRequestRecord) => Promise<void>;
   /** How long a request stays open. */
   ttlMs?: number;
 };
@@ -187,28 +183,11 @@ export function createSignInService(deps: SignInServiceDependencies) {
         resolvedAt: new Date(),
       });
       if (expired) {
-        await resolved(expired);
         return expired;
       }
       return (await store.request(owner, id)) ?? request;
     }
     return request;
-  }
-
-  async function resolved(request: SignInRequestRecord) {
-    if (!deps.onResolved) return;
-    try {
-      await deps.onResolved(request);
-    } catch (error) {
-      // The outcome is recorded either way; a turn that could not be resumed is reported, not hidden.
-      console.error(
-        JSON.stringify({
-          type: "sign-in-resume-failed",
-          request: request.id,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
   }
 
   async function view(
@@ -219,7 +198,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
       ? await store.logins(request.ownerUserId, request.origin)
       : [];
     const {
-      continuation: _continuation,
       ownerUserId: _owner,
       ...rest
     } = request;
@@ -365,7 +343,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
       ...(done.method ? { method: done.method } : {}),
       verificationCode: true,
     });
-    await resolved(done);
     return done;
   }
 
@@ -518,7 +495,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
       method,
       ...(extra.loginId ? { savedLogin: extra.loginId } : {}),
     });
-    await resolved(done);
     if (saving && credential.username)
       await saveTyped(
         actor,
@@ -542,9 +518,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
       actor: ActionActor;
       threadId?: string;
       toolCallId?: string;
-      continuation?: Record<string, unknown>;
-      /** Send it to the owner's delivery channels. Unattended turns do; the open chat need not. */
-      notify?: boolean;
     }): Promise<SignInRequestRecord> {
       const origin = originOf(input.site);
       const request = await store.createRequest({
@@ -555,7 +528,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
         reason: input.reason?.trim().slice(0, 500) || null,
         threadId: input.threadId ?? null,
         toolCallId: input.toolCallId ?? null,
-        continuation: input.continuation ?? null,
         expiresAt: new Date(Date.now() + ttlMs),
       });
       await audit(
@@ -570,19 +542,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
           ...(request.reason ? { reason: request.reason } : {}),
         },
       );
-      if (input.notify && deps.notify) {
-        try {
-          await deps.notify(request);
-        } catch (error) {
-          console.error(
-            JSON.stringify({
-              type: "sign-in-notify-failed",
-              request: request.id,
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          );
-        }
-      }
       return request;
     },
 
@@ -590,8 +549,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
       return view(await load(owner, id));
     },
 
-    /** The raw record, for the resume path. Never returned by a route. */
-    record: load,
 
     async pending(owner: string) {
       return Promise.all((await store.pendingRequests(owner)).map(view));
@@ -714,7 +671,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
         site: done.origin,
         method: "takeover",
       });
-      await resolved(done);
       return view(done);
     },
 
@@ -735,7 +691,6 @@ export function createSignInService(deps: SignInServiceDependencies) {
         request: id,
         site: done.origin,
       });
-      await resolved(done);
       return view(done);
     },
 

@@ -2,7 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { recordAuditEvent, type AuditStore } from "../audit";
 import type { AppVariables } from "../auth/guards";
-import { sameToken } from "../agents/callback-token";
+import { sameToken } from "../auth/same-token";
 import { HostAccessRefusedError, type HostAccessBroker } from "./broker";
 import {
   asHostAccessDesktopResult,

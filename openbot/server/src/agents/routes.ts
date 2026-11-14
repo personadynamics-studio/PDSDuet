@@ -9,7 +9,7 @@ import { testAgentConnection } from "./connection-test";
 import {
   AgentNotFoundError,
   type AgentProfileStore,
-  ManagedAgentUnavailableError,
+  AgentDefinitionError,
 } from "./profile-store";
 import type {
   AgentActor,
@@ -49,12 +49,10 @@ export function parseAgentInput(input: unknown): AgentInputParseResult {
   );
   if (typeof title !== "string") return title;
 
-  const roleDescription = boundedText(
-    input.roleDescription,
-    4000,
-    "What it does must be text between 1 and 4000 characters.",
-  );
-  if (typeof roleDescription !== "string") return roleDescription;
+  if (input.roleDescription !== undefined && typeof input.roleDescription !== "string")
+    return { ok: false, error: "The role description must be text." };
+  const roleDescription = (input.roleDescription ?? "").trim();
+  if (roleDescription.length > 4000) return { ok: false, error: "The role description must be at most 4000 characters." };
 
   if (typeof input.visibility !== "string") {
     return { ok: false, error: "Visibility must be public or private." };
@@ -64,7 +62,9 @@ export function parseAgentInput(input: unknown): AgentInputParseResult {
     return { ok: false, error: "Visibility must be public or private." };
   }
 
-  const endpoint = typeof input.endpoint === "string" && input.endpoint.trim() ? input.endpoint.trim() : undefined;
+  if (input.endpoint !== undefined && typeof input.endpoint !== "string")
+    return { ok: false, error: "The endpoint must be text." };
+  const endpoint = input.endpoint?.trim();
 
   // The key is optional and write-only. An absent field leaves an existing key alone; sending one
   // replaces it. There is no way to read one back, here or anywhere.
@@ -213,23 +213,6 @@ export function createAgentRoutes(
   /** Where a Bot's own refusal is recorded. Absent in tests that do not care about the trail. */
   auditStore?: AuditStore,
   /**
-   * Whether a coworker can run on this deployment's own Bot, i.e. be created with no endpoint.
-   *
-   * The store already refuses such a create on a deployment with no managed Bot; this exists so a
-   * screen can say so before somebody fills in three steps of a form that was always going to fail.
-   */
-  builtInAvailable = false,
-  /**
-   * The managed Bot's own address, so a coworker created without an endpoint can be told apart.
-   *
-   * Creation bakes this address into the coworker's stored configuration, and afterwards nothing in
-   * the row says whether a person supplied it. The difference matters to exactly one screen: a
-   * coworker running here calls tools back with the deployment's own credential and needs no setup,
-   * while one a person hosts needs a callback token put into their process. Without this flag the
-   * dialog nagged built-in coworkers about a credential they never needed.
-   */
-  managedEndpoint?: string,
-  /**
    * Where a Bot's shared accounts live, so making a Bot public can say what that means for them.
    *
    * Absent in a deployment with no plugin store, which is a deployment where `afterExposureChange`
@@ -237,13 +220,6 @@ export function createAgentRoutes(
    */
   sharedUse?: SharedUseStore,
 ) {
-  /** The dto with the one fact only this closure knows: whether the coworker runs on our own Bot. */
-  const dto = (actor: AgentActor, agent: AgentProfile) => ({
-    ...agentDto(actor, agent),
-    // A string comparison on purpose: two absent values must not read as "runs on our Bot".
-    builtIn:
-      typeof agent.endpoint === "string" && agent.endpoint === managedEndpoint,
-  });
   const routes = new Hono<{ Variables: AppVariables }>();
 
   /**
@@ -314,7 +290,7 @@ export function createAgentRoutes(
       const hidden = context.req.query("hidden") === "true";
       const agents = await store.list(context.var.actor, hidden);
       return context.json({
-        agents: agents.map((agent) => dto(context.var.actor, agent)),
+        agents: agents.map((agent) => agentDto(context.var.actor, agent)),
       });
     } catch (error) {
       return mapStoreError(context, error);
@@ -324,11 +300,11 @@ export function createAgentRoutes(
   /**
    * What kinds of coworker this deployment can create, for the screen that asks.
    *
-   * Static per process: whether a managed Bot exists is deployment configuration, not data. Above
-   * the parameterised route on purpose, so "capabilities" can never be read as an agent id.
+   * The core provides the Native factory. Creating a Bot does not require a managed remote endpoint
+   * or a model key. Keep this above the parameterised route.
    */
   routes.get("/capabilities", requireUser, (context) =>
-    context.json({ capabilities: { builtInAvailable } }),
+    context.json({ capabilities: { builtInAvailable: true } }),
   );
 
   routes.get("/:agentId", requireUser, async (context) => {
@@ -345,7 +321,7 @@ export function createAgentRoutes(
       if (!agent) {
         return context.json({ error: "Couldn't find that Bot." }, 404);
       }
-      return context.json({ agent: dto(context.var.actor, agent) });
+      return context.json({ agent: agentDto(context.var.actor, agent) });
     } catch (error) {
       return mapStoreError(context, error);
     }
@@ -422,22 +398,7 @@ export function createAgentRoutes(
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
     try {
-      /*
-       * A coworker with no address runs here, on the text this form already requires.
-       *
-       * "Agent endpoint (optional)" was not optional on the recommended one-container image: with
-       * nothing to bind to, `create` refused with "This deployment has no managed Bot", so a person
-       * could not make a coworker at all on the image the README tells them to deploy. The role
-       * description is what such a coworker runs on — the same field a `built_in` Bot in the tenant
-       * package carries, for the same purpose — and passing it only when no endpoint was given keeps
-       * every other path exactly as it was: give an address and it is a remote Bot, as before.
-       */
-      const agent = await store.create(context.var.actor, {
-        ...parsed.value,
-        ...(parsed.value.endpoint
-          ? {}
-          : { systemPrompt: parsed.value.roleDescription }),
-      });
+      const agent = await store.create(context.var.actor, parsed.value);
       /*
        * The endpoint, because that is where conversation content will be sent, and whether a key was
        * attached, because "this Bot authenticates" is a fact and the key itself never is.
@@ -453,7 +414,7 @@ export function createAgentRoutes(
         ...(parsed.value.endpoint ? { endpoint: parsed.value.endpoint } : {}),
         hasKey: Boolean(parsed.value.auth),
       });
-      return context.json({ agent: dto(context.var.actor, agent) }, 201);
+      return context.json({ agent: agentDto(context.var.actor, agent) }, 201);
     } catch (error) {
       return mapStoreError(context, error);
     }
@@ -498,7 +459,7 @@ export function createAgentRoutes(
        * finds out.
        */
       return context.json({
-        agent: dto(context.var.actor, agent),
+        agent: agentDto(context.var.actor, agent),
         ...(parsed.value.visibility === "public"
           ? {
               sharedApps: await afterExposureChange(
@@ -528,7 +489,7 @@ export function createAgentRoutes(
       await record(context, "bot.duplicated", agent.id, {
         copiedFrom: context.req.param("agentId"),
       });
-      return context.json({ agent: dto(context.var.actor, agent) }, 201);
+      return context.json({ agent: agentDto(context.var.actor, agent) }, 201);
     } catch (error) {
       return mapStoreError(context, error);
     }
@@ -590,51 +551,6 @@ export function createAgentRoutes(
     }
   });
 
-  /*
-   * Issue this agent its callback credential, and show it once.
-   *
-   * A POST because it writes and because it replaces: calling it again rotates, which is how a leaked
-   * token is retired. The token is in the response and nowhere else, ever again, and it is not written
-   * to the audit payload either: a trail that records credentials is a credential store with worse
-   * access control.
-   */
-  routes.post("/:agentId/callback-token", requireUser, async (context) => {
-    try {
-      const token = await store.issueCallbackToken(
-        context.var.actor,
-        context.req.param("agentId"),
-      );
-      // That one was issued, never what it is. A trail that records credentials is a credential
-      // store with worse access control.
-      await record(
-        context,
-        "bot.callback_token_issued",
-        context.req.param("agentId"),
-      );
-      return context.json({ token }, 201);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
-  /** Take it away. The agent may still hold a conversation; it may not reach anything outside one. */
-  routes.delete("/:agentId/callback-token", requireUser, async (context) => {
-    try {
-      await store.revokeCallbackToken(
-        context.var.actor,
-        context.req.param("agentId"),
-      );
-      await record(
-        context,
-        "bot.callback_token_revoked",
-        context.req.param("agentId"),
-      );
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
   routes.delete("/:agentId", requireUser, async (context) => {
     if (!context.req.param("agentId").trim()) {
       return context.json({ error: "A Bot id is required." }, 400);
@@ -679,8 +595,8 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     // and any credential for it lives in the vault, never in this row.
     endpoint: agent.endpoint,
     hasAuth: agent.hasAuth,
+    builtIn: agent.builtIn,
     // Whether one exists, never what it is.
-    hasCallbackToken: agent.hasCallbackToken,
     mine: agent.ownerUserId === actor.id,
     assignedToMe: agent.assignedToMe ?? false,
   };
@@ -690,7 +606,7 @@ function mapStoreError(context: Context, error: unknown): Response {
   if (error instanceof AgentNotFoundError) {
     return context.json({ error: "Couldn't find that Bot." }, 404);
   }
-  if (error instanceof ManagedAgentUnavailableError) {
+  if (error instanceof AgentDefinitionError) {
     return context.json({ error: error.message }, 400);
   }
   throw error;

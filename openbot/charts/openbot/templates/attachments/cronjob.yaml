@@ -3,8 +3,8 @@
 {{/*
 Deleting attachments somebody staged and then never sent.
 
-A CronJob rather than a timer in the API, for the same reason the routines sweep and the computer
-culler beside it are: an interval in the server fires in every replica, so five replicas would each
+A CronJob rather than a timer in the API, for the same reason the computer
+culler beside it is: an interval in the server fires in every replica, so five replicas would each
 run the same delete. Unlike the computer culler this needs no lease and no claimed-by-this-pod
 bookkeeping — deleting a staged attachment twice is harmless, because the second sweep finds nothing
 left to delete. `attachedAt` is set the moment an attachment is actually sent, so a null attachment
@@ -158,8 +158,8 @@ spec:
                 NOT `openbot.commonEnv`, WHICH IS THE API SERVER'S ENVIRONMENT.
 
                 This pod deletes rows from one table. Through the shared helper it also carried the
-                licence token, the model API key, the computer token, the managed-Bot token and the
-                worker's shared secret — five credentials for a workload that opens a database
+                licence token, the model API key, the computer token and the managed-Bot token —
+                credentials for a workload that opens a database
                 connection and closes it, in the pod with the least reason of any to hold them.
 
                 AND THEN, FOR A WHILE, IT CARRIED FIVE OTHERS. What replaced the helper was not the

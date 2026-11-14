@@ -1,5 +1,7 @@
 import {
   AbstractAgent,
+  defaultApplyEvents,
+  type AGUIEvent,
   type BaseEvent,
   EventType,
   type Message,
@@ -9,7 +11,7 @@ import {
   type Tool,
   type ToolCall,
 } from "@ag-ui/client";
-import { finalize, Observable, type Subscription } from "rxjs";
+import { finalize, Observable, tap, type Subscription } from "rxjs";
 import { mergeContinuationHistory } from "./history-sanitize";
 
 export type HeadlessTool = {
@@ -34,15 +36,19 @@ export class HeadlessToolSuspension extends Error {
 
 /** One owner executes the deployment's tools between model segments. */
 export class HeadlessToolsMiddleware extends Middleware {
-  constructor(private readonly tools: HeadlessTool[]) {
+  private work: Promise<void> | undefined;
+  constructor(private readonly tools: HeadlessTool[], private readonly executionSignal?: AbortSignal) {
     super();
     if (new Set(tools.map(tool => tool.definition.name)).size !== tools.length)
       throw new Error("Headless tool names must be unique.");
   }
 
+  settled(): Promise<void> { return this.work ?? Promise.resolve(); }
+
   run(originalInput: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     return new Observable(subscriber => {
       const controller = new AbortController();
+      const signal = this.executionSignal ? AbortSignal.any([this.executionSignal, controller.signal]) : controller.signal;
       const tools = new Map(this.tools.map(tool => [tool.definition.name, tool]));
       let subscription: Subscription | undefined;
       const work = async () => {
@@ -72,7 +78,7 @@ export class HeadlessToolsMiddleware extends Middleware {
 
         for (;;) {
           if (subscriber.closed) return;
-          controller.signal.throwIfAborted();
+          signal.throwIfAborted();
           if (pending.length === 0) {
             const historical = new Set(request.messages.flatMap(message =>
               message.role === "assistant" ? (message.toolCalls ?? []).map(call => call.id) : [],
@@ -80,12 +86,9 @@ export class HeadlessToolsMiddleware extends Middleware {
             const emitted = new Set<string>();
             let finished: RunFinishedEvent | undefined;
             await new Promise<void>((resolve, reject) => {
-              subscription = this.runNextWithState(request, new InvocationTransport(next, request))
-                .pipe(finalize(resolve))
-                .subscribe({
-                  next: ({ event, messages: updatedMessages, state: updatedState }) => {
-                    messages = updatedMessages;
-                    state = updatedState;
+              const transport = new InvocationTransport(next, request);
+              subscription = defaultApplyEvents(request, this.runNext(request, transport).pipe(tap(raw => {
+                    const event = raw as AGUIEvent;
                     if (event.type === EventType.RUN_STARTED) return;
                     if (event.type === EventType.RUN_ERROR) {
                       reject(new Error(event.message));
@@ -93,7 +96,7 @@ export class HeadlessToolsMiddleware extends Middleware {
                     }
                     if (event.type === EventType.TOOL_CALL_START) emitted.add(event.toolCallId);
                     if (event.type === EventType.MESSAGES_SNAPSHOT) {
-                      for (const message of messages) {
+                      for (const message of event.messages) {
                         if (message.role !== "assistant") continue;
                         for (const call of message.toolCalls ?? []) if (!historical.has(call.id)) emitted.add(call.id);
                       }
@@ -103,11 +106,17 @@ export class HeadlessToolsMiddleware extends Middleware {
                       return;
                     }
                     subscriber.next(event);
+                  })), transport, [])
+                .pipe(finalize(resolve))
+                .subscribe({
+                  next: mutation => {
+                    if (mutation.messages !== undefined) messages = mutation.messages;
+                    if (mutation.state !== undefined) state = mutation.state;
                   },
                   error: reject,
                 });
             });
-            controller.signal.throwIfAborted();
+            signal.throwIfAborted();
             request = { ...request, resume: undefined };
             if (!finished) throw new Error("The agent ended without a terminal event.");
             terminal = finished;
@@ -131,18 +140,18 @@ export class HeadlessToolsMiddleware extends Middleware {
           for (const call of pending) {
             const tool = tools.get(call.function.name);
             if (!tool) continue; // Its explicit harness interrupt remains waiting below.
-            controller.signal.throwIfAborted();
+            signal.throwIfAborted();
             let content: string;
             let error: string | undefined;
             try {
               const args: unknown = JSON.parse(call.function.arguments || "{}");
-              const result = await tool.execute(args, { toolCallId: call.id, signal: controller.signal });
-              controller.signal.throwIfAborted();
+              const result = await tool.execute(args, { toolCallId: call.id, signal });
+              signal.throwIfAborted();
               const serialized = typeof result === "string" ? result : JSON.stringify(result);
               if (serialized === undefined) throw new Error(`The tool ${call.function.name} returned no result.`);
               content = serialized;
             } catch (failure) {
-              controller.signal.throwIfAborted();
+              signal.throwIfAborted();
               if (failure instanceof HeadlessToolSuspension) {
                 const waiting: HeadlessWaiting = {
                   ...failure.waiting,
@@ -195,7 +204,9 @@ export class HeadlessToolsMiddleware extends Middleware {
           pending = [];
         }
       };
-      void work().then(
+      const completion = work();
+      this.work = completion;
+      void completion.then(
         () => subscriber.complete(),
         error => { if (!subscriber.closed) subscriber.error(error); },
       );

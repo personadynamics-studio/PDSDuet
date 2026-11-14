@@ -8,12 +8,6 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type {
-  ApprovalAction,
-  ApprovalDecision,
-  HostCommandPolicy,
-  RuleBehaviour,
-} from "../../approvals/types";
 import { users } from "./core";
 import { jsonb } from "./json";
 export const approvalPreferences = pgTable(
@@ -27,7 +21,7 @@ export const approvalPreferences = pgTable(
     autoReview: boolean("auto_review").notNull().default(false),
     /** Commands on this person's own computer: ask every time, always allow, or never. */
     hostCommands: text("host_commands")
-      .$type<HostCommandPolicy>()
+      .$type<"ask" | "allow" | "never">()
       .notNull()
       .default("ask"),
   },
@@ -53,7 +47,7 @@ export const approvalTeamSettings = pgTable(
     enforceAutoReview: boolean("enforce_auto_review").notNull().default(false),
     customRulesEnabled: boolean("custom_rules_enabled").notNull().default(true),
     hostCommandsCap: text("host_commands_cap")
-      .$type<HostCommandPolicy>()
+      .$type<"ask" | "allow" | "never">()
       .notNull()
       .default("allow"),
     updatedBy: text("updated_by").references(() => users.id, {
@@ -80,12 +74,12 @@ export const approvalRequests = pgTable(
     runId: text("run_id").notNull(),
     toolCallId: text("tool_call_id").notNull(),
     actionDigest: text("action_digest").notNull(),
-    action: jsonb("action").$type<ApprovalAction>().notNull(),
+    action: jsonb("action").$type<Record<string, unknown>>().notNull(),
     status: text("status")
       .$type<"pending" | "approved" | "denied" | "consumed" | "completed">()
       .notNull()
       .default("pending"),
-    decision: text("decision").$type<ApprovalDecision>(),
+    decision: text("decision").$type<"allow_once" | "allow_always" | "deny" | "handled">(),
     result: jsonb("result").$type<{ content: string; error?: string }>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -124,7 +118,7 @@ export const approvalRules = pgTable(
     scope: text("scope").notNull(),
     /** What happens to a matching action. `allow` is what "Always allow here" has always saved. */
     behaviour: text("behaviour")
-      .$type<RuleBehaviour>()
+      .$type<"allow" | "pre_approved" | "ask" | "hand_off">()
       .notNull()
       .default("allow"),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -154,7 +148,7 @@ export const approvalTeamRules = pgTable(
     toolRef: text("tool_ref").notNull(),
     effect: text("effect").notNull(),
     scope: text("scope").notNull(),
-    behaviour: text("behaviour").$type<RuleBehaviour>().notNull(),
+    behaviour: text("behaviour").$type<"allow" | "pre_approved" | "ask" | "hand_off">().notNull(),
     createdBy: text("created_by").references(() => users.id, {
       onDelete: "set null",
     }),

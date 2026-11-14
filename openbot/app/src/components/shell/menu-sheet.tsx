@@ -42,7 +42,6 @@ export function MenuSheet({ open, onOpenChange }: { open: boolean; onOpenChange(
           </section>
           <section aria-label="工具與設定" className="border-t pt-3">
             <Link className={ROW} to="/connections" onClick={close}>應用程式連接</Link>
-            <Link className={ROW} to="/routines" onClick={close}>日程</Link>
             <Link className={ROW} to="/make" onClick={close}>已保存頁面</Link>
             <Link className={ROW} to="/bots" onClick={close}>管理機械人</Link>
             <Link className={ROW} to="/settings" onClick={close}>設定</Link>

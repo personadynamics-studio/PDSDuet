@@ -73,20 +73,6 @@ export function signInRequestQueryOptions(id: string) {
 }
 
 /** This person's open sign-in requests, newest first. */
-export function pendingSignInRequestsQueryOptions() {
-  return queryOptions({
-    queryKey: passwordKeys.pending(),
-    queryFn: async (): Promise<SignInRequest[]> =>
-      (
-        (await (
-          await client("/api/sign-in-requests", {
-            fallback: "Could not load your sign-in requests",
-          })
-        ).json()) as { requests: SignInRequest[] }
-      ).requests,
-  });
-}
-
 export function savedLoginsQueryOptions() {
   return queryOptions({
     queryKey: passwordKeys.logins(),

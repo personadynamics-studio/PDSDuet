@@ -18,10 +18,10 @@ export function createRuntimeAgentLoader(
   /** Resolves a customer agent's key at load time. Absent means no agent can carry one. */
   vault?: { reader: CredentialSecretReader; encryptionKey: string },
 ) {
-  return async (actor: AgentActor): Promise<RegisteredAgent[]> => {
+  return async (actor: AgentActor, selectedBotId?: string): Promise<RegisteredAgent[]> => {
     const [active, tombstones] = await Promise.all([
-      selectActiveAgents(database),
-      selectTombstoneAgents(database, actor),
+      selectActiveAgents(database, selectedBotId),
+      selectTombstoneAgents(database, actor, selectedBotId),
     ]);
 
     // A row whose configuration cannot be understood is skipped rather than mounted as a broken
@@ -58,7 +58,7 @@ export function createRuntimeAgentLoader(
   };
 }
 
-function selectActiveAgents(database: Database) {
+function selectActiveAgents(database: Database, selectedBotId?: string) {
   return database
     .select({
       id: agents.id,
@@ -70,11 +70,11 @@ function selectActiveAgents(database: Database) {
     })
     .from(agents)
     .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-    .where(isNull(agentProfiles.deletedAt));
+    .where(and(isNull(agentProfiles.deletedAt), selectedBotId === undefined ? undefined : eq(agents.id, selectedBotId)));
 }
 
 
-function selectTombstoneAgents(database: Database, actor: AgentActor) {
+function selectTombstoneAgents(database: Database, actor: AgentActor, selectedBotId?: string) {
   return database
     .selectDistinct({ id: agents.id, name: agents.name })
     .from(agents)
@@ -91,5 +91,5 @@ function selectTombstoneAgents(database: Database, actor: AgentActor) {
         eq(channelMemberships.userId, actor.id),
       ),
     )
-    .where(isNotNull(agentProfiles.deletedAt));
+    .where(and(isNotNull(agentProfiles.deletedAt), selectedBotId === undefined ? undefined : eq(agents.id, selectedBotId)));
 }

@@ -1,24 +1,19 @@
-import type { Hono as HonoApp, MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
 import { MAX_ATTACHMENT_BYTES } from "@openbot/shared/attachments";
-import {
-  authoriseAgentCall,
-  parseAgentToolCallInput,
-  sameToken,
-} from "./agents/callback-token";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
-import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
-import type { LocalThreadStore } from "./runtime/thread-store";
+import type { Execution } from "./runtime/execution";
+import type { Settlement } from "./runtime/settlement";
+import { createExecutionRoutes } from "./runtime/routes";
 import {
   auditEventsToCsv,
   AuditQueryError,
   type AuditReader,
   type AuditStore,
   auditQueryFromUrl,
-  DEPLOYMENT_INITIATOR,
   readAuditExportRows,
   recordAuditEvent,
 } from "./audit";
@@ -36,7 +31,6 @@ import {
 import type { ChannelEventHub } from "./channels/events";
 import { createGroupRoutes, type GroupConversations } from "./channels/group";
 import { type ChannelStore, createChannelRoutes } from "./channels/routes";
-import type { ThreadIdentity } from "./channels/thread-identity";
 import { createComponentRoutes } from "./components/routes";
 import type { SandboxedStore } from "./components/sandboxed";
 import { createSandboxedRoutes } from "./components/sandboxed-routes";
@@ -50,7 +44,6 @@ import {
   CredentialRefusedError,
 } from "./credentials";
 import type { Database } from "./db/client";
-import { withoutStatement } from "./db/query-failure";
 import { mountDesktopConnectionFailure } from "./desktop-connection-failure";
 import { createTranscriptionProvider } from "./dictation/provider";
 import { createDictationRoutes } from "./dictation/routes";
@@ -68,24 +61,13 @@ import type { BrokerProvider } from "./plugins/access";
 import { createPluginRoutes } from "./plugins/routes";
 import { createSharedUseRoutes } from "./plugins/shared-use-routes";
 import type { SharedUseStore } from "./plugins/shared-use-store";
-import {
-  isDeploymentFault,
-  PluginRefusedError,
-  type PluginStore,
-} from "./plugins/store";
-import { REFUSAL_MARKER, vendorAnswer } from "./plugins/tools";
-import {
-  createDuetChannelRoutes,
-  type DuetChannelStore,
-} from "./openduet/channels";
+import type { PluginStore } from "./plugins/store";
 import { createPageRoutes, type PageStore } from "./openduet/pages";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
 import {
   type ModelProviderProxy,
   mountProviderOAuthProxy,
 } from "./provider-oauth";
-import { createRoutineRoutes, type RoutineStore } from "./routines/routes";
-import type { RoutineRunner } from "./routines/runner";
 import { createTeamBotRoutes } from "./team-bots/routes";
 import type { TeamBots } from "./team-bots/team-bots";
 import type { PackageStatusReader } from "./tenant-package";
@@ -98,7 +80,6 @@ import type { UserPreferencesStore } from "./user-preferences";
 import { userPreferencesRoutes } from "./user-preferences-routes";
 import { createVoiceProvider } from "./voice/provider";
 import { createVoiceRoutes } from "./voice/routes";
-import type { VoiceSessionServices } from "./voice/session-routes";
 
 /**
  * How much of a multipart body is boundary, headers and other fields rather than file.
@@ -163,7 +144,8 @@ export function createApp(
   auditReader?: AuditReader,
   credentialService?: CredentialAdminService,
   packageStatusReader?: PackageStatusReader,
-  runtimeHandler?: HonoApp,
+  execution?: Execution,
+  settlement?: Settlement,
   computerGateway?: ComputerGateway,
   agentProfileStore?: AgentProfileStore,
   channelStore?: ChannelStore,
@@ -172,11 +154,8 @@ export function createApp(
   componentStore?: ComponentStore,
   pluginStore?: PluginStore,
   sandboxedStore?: SandboxedStore,
-  threadIdentity?: ThreadIdentity,
   peopleStore?: PeopleStore,
   identityProviders?: IdentityProviderStore,
-  routineRunner?: RoutineRunner,
-  routineStore?: RoutineStore,
   userInstructions?: UserInstructionsStore,
   attachmentDatabase?: Database,
   hostAccessBroker?: HostAccessBroker,
@@ -184,9 +163,7 @@ export function createApp(
   composio?: { broker: ComposioBroker; provider: BrokerProvider },
   modelProviderProxy?: ModelProviderProxy,
   userPreferences?: UserPreferencesStore,
-  voiceSessions?: VoiceSessionServices,
   coworker?: {
-    runtimeThreads?: Pick<LocalThreadStore, "run" | "onStop">;
     shared?: { modes: AccountModeSwitch; use: SharedUseStore };
     passwords?: SignInService;
     groups?: GroupConversations;
@@ -194,7 +171,6 @@ export function createApp(
     openduet?: {
       pages: PageStore;
       setup?: SetupSources;
-      channels?: DuetChannelStore;
     };
   },
   
@@ -203,7 +179,7 @@ export function createApp(
   identityGithubCallback?: Hono<{ Variables: AppVariables }>,
   },
 ) {
-  const {auth,auditReader,credentialService,packageStatusReader,runtimeHandler,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,sandboxedStore,threadIdentity,peopleStore,identityProviders,routineRunner,routineStore,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,voiceSessions,coworker,identity,identityGithubCallback} = services;
+  const {auth,auditReader,credentialService,packageStatusReader,execution,settlement,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,sandboxedStore,peopleStore,identityProviders,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,coworker,identity,identityGithubCallback} = services;
   const app = new Hono<{ Variables: AppVariables }>();
   mountDesktopConnectionFailure(app, desktopHostToken);
   mountProviderOAuthProxy(app, modelProviderProxy);
@@ -286,7 +262,6 @@ export function createApp(
       config.voice ? createVoiceProvider(config.voice) : undefined,
       channelStore,
       agentProfileStore,
-      voiceSessions,
     ),
   );
 
@@ -803,85 +778,7 @@ export function createApp(
     }
     return context.json({ package: await packageStatusReader.active() });
   });
-  /*
-   * Where the worker hands a routine run back. Not under /api and not behind requireUser: the
-   * worker is not a person with a session, it is another process on this deployment's own network,
-   * and the shared secret below is its whole credential.
-   *
-   * Mounted only when a runner was built, so a deployment that never stood up a worker has no door
-   * for this at all, rather than one that is mounted and permanently refuses.
-   */
-  if (routineRunner) {
-    app.post("/internal/routines/run", async (context) => {
-      const offered = context.req.header("authorization");
-      const expected = config.workerSharedSecret
-        ? `Bearer ${config.workerSharedSecret}`
-        : null;
-      /*
-       * The no-secret-configured case is refused here, before any comparison, and with the exact
-       * same response as a wrong secret. A deployment with no worker must not answer a guess any
-       * differently than a deployment with a worker and a wrong key would.
-       */
-      if (!expected || !offered || !sameToken(offered, expected)) {
-        /*
-         * Recorded, because this is a boundary being held and every other one here leaves a row. A
-         * worker with a stale or missing secret used to fail here in total silence: every routine
-         * stopped firing and nothing anywhere said why, the same false negative `mcp.callback_refused`
-         * exists to catch on the sibling unauthenticated boundary above.
-         *
-         * The reason is short and lives only in the row, never on the wire: the response below stays
-         * byte-identical across all three causes on purpose (see the comment above), so this is the
-         * one place the distinction is allowed to exist. The offered credential itself is never
-         * recorded, not even a fragment of it.
-         */
-        if (auditStore) {
-          try {
-            await recordAuditEvent(auditStore, {
-              eventType: "routines.dispatch_refused",
-              targetType: "worker",
-              initiator: DEPLOYMENT_INITIATOR,
-              payload: {
-                reason: !expected
-                  ? "unconfigured"
-                  : !offered
-                    ? "missing-header"
-                    : "mismatch",
-                note: "A worker's bearer secret did not check out, so no routine run was dispatched.",
-              },
-            });
-          } catch (error) {
-            // Never fatal: the 401 above is already decided and sent. A trail that is briefly
-            // unavailable is not a reason to turn a refusal into a 500.
-            console.error(
-              JSON.stringify({
-                type: "routine-dispatch-audit-write-failed",
-                error: String(error),
-              }),
-            );
-          }
-        }
-        return context.json({ error: "This endpoint is the worker's." }, 401);
-      }
-      const body = await context.req.json().catch(() => null);
-      const routineRunId = (body as { routineRunId?: unknown } | null)
-        ?.routineRunId;
-      // An empty id is a string and used to answer 202 Accepted while the worker swallows the
-      // failure. Only a non-empty id is accepted for dispatch.
-      if (typeof routineRunId !== "string" || !routineRunId.trim()) {
-        return context.json({ error: "A routineRunId is required." }, 400);
-      }
-      /*
-       * Fire and answer: the consumer needs "accepted", not the outcome. The run row in
-       * `routine_runs` carries the outcome, and the consumer finishes the work item on this 202.
-       * Queue retries exist for DISPATCH failures only — a failed turn is final for this firing, and
-       * the fatigue rule owns it. `run()` never throws by contract; this swallow only guards against
-       * that contract being wrong without turning a bug there into an unhandled rejection here.
-       */
-      void routineRunner.run(routineRunId).catch(() => {});
-      return context.json({ accepted: true }, 202);
-    });
-  }
-  if (runtimeHandler) app.route("/", runtimeHandler);
+  if (execution && settlement) app.route("/api/threads", createExecutionRoutes({ execution, settlement, requireUser }));
 
   if (computerGateway) {
     app.route("/api/computers", createComputerRoutes(computerGateway, requireComputer,
@@ -912,12 +809,6 @@ export function createApp(
         requireUser,
         // A Bot's own refusal goes in the same trail as everything else it does.
         auditStore,
-        // Whether "built-in" is a kind of coworker this deployment can actually make: the create
-        // path falls back to the managed Bot's endpoint, so without one it can only refuse.
-        config.managedAgent?.endpoint !== undefined,
-        // The managed Bot's address, so a coworker created without an endpoint — which creation
-        // stores as running at this address — can be told apart from one a person hosts.
-        config.managedAgent?.endpoint?.toString(),
         coworker?.shared?.use,
       ),
     );
@@ -952,16 +843,6 @@ export function createApp(
     app.route(
       "/api/attachments",
       createAttachmentRoutes(attachmentDatabase, requireUser),
-    );
-  }
-
-  if (routineStore) {
-    app.route(
-      "/api/routines",
-      createRoutineRoutes(routineStore, requireUser, {
-        runner: routineRunner,
-        auditStore,
-      }),
     );
   }
 
@@ -1010,11 +891,6 @@ export function createApp(
       "/api/openduet/setup",
       createSetupRoutes(coworker.openduet.setup, requireUser),
     );
-  if (coworker?.openduet?.channels)
-    app.route(
-      "/api/openduet/channels",
-      createDuetChannelRoutes(coworker.openduet.channels, requireUser),
-    );
   if (componentStore) {
     app.route(
       "/api/components",
@@ -1053,10 +929,6 @@ export function createApp(
             const person = await peopleStore.find(userId);
             return person !== undefined && !person.revoked;
           },
-          // The deployment-wide fallback a Bot may present, as a yes or no. The secret itself stays
-          // in config and is checked in `/api/agent-tools/call`; the surface only needs to know
-          // whether a Bot without its own credential has any way to call back.
-          botsMayCallBack: Boolean(config.agentToolToken),
           publicUrl: config.publicUrl,
           appUrl: config.appUrl,
         },
@@ -1066,181 +938,10 @@ export function createApp(
     );
   }
 
-  /*
-   * Where a framework Bot runs a tool.
-   *
-   * A Bot that runs its own loop, in its own process, is the honest shape: the run does not need a
-   * browser and does not stop when one closes. What it must not have is a route to a vendor that
-   * goes around this deployment, so it calls here and this calls the plugin store, which asks the
-   * same two questions it asks of everything else and writes the same audit row.
-   *
-   * Authenticated by a shared secret rather than a session, because the caller is a service and has
-   * no person behind it. Absent secret means the route does not exist: a deployment that has not
-   * configured this refuses rather than accepting anybody who can reach the port.
-   */
-  if (pluginStore) {
-    const legacyToken = config.agentToolToken ?? "";
-    app.post("/api/agent-tools/call", async (context) => {
-      /*
-       * Who is calling, and on whose behalf. Two questions, two credentials.
-       *
-       * The header says which agent: its own token, issued to it, stored here only as a hash. The
-       * body's `run` says which Bot and which person, signed by this deployment for this run.
-       *
-       * Both are required, and they are checked against each other. This used to be one
-       * deployment-wide token with the Bot and the actor read straight out of the body, which meant
-       * anything holding that token could spend any Bot's grants and write any name into the audit
-       * trail. A forgeable trail is worse than no trail, because it is believed.
-       */
-      const body = (await context.req.json().catch(() => null)) as {
-        name?: string;
-        args?: Record<string, unknown>;
-        run?: unknown;
-        toolCallId?: unknown;
-      } | null;
-
-      const verdict = await authoriseAgentCall({
-        presented: context.req.header("x-openbot-agent-token") ?? "",
-        run: body?.run,
-        encryptionKey: config.keyEncryptionKey,
-        legacyToken,
-        lookup: async (hash) =>
-          (await agentProfileStore?.agentForCallbackToken(hash)) ?? null,
-      });
-      if (!verdict.ok) {
-        /*
-         * Recorded, because this is a boundary being held and every other one here leaves a row.
-         *
-         * The three outcomes inside `callTool` are all written after the caller has proved which Bot
-         * it is. A caller that fails to prove it never reaches them, so this refusal used to leave
-         * nothing at all — and it is the refusal behind the product's most confusing failure: a Bot
-         * whose token no longer matches the deployment's has every call rejected here, returns
-         * nothing to its own model, and the model tells the person there were no results. A false
-         * negative delivered as an answer, with the trail agreeing nothing had happened.
-         *
-         * No Bot id and no actor. Both live in the credential that just failed to verify, so writing
-         * them down would put an unproven claim in the record. The tool name comes from the body and
-         * is capped for the same reason: it is untrusted input, kept because "which tool was being
-         * reached for" is the useful half of the question.
-         */
-        if (auditStore) {
-          await recordAuditEvent(auditStore, {
-            eventType: "mcp.callback_refused",
-            targetType: "mcp_tool",
-            initiator: DEPLOYMENT_INITIATOR,
-            targetId:
-              typeof body?.name === "string"
-                ? body.name.slice(0, 120)
-                : "unknown",
-            payload: {
-              refusal: verdict.reason,
-              status: verdict.status,
-              note: "A caller could not prove which Bot it was, so no grant was consulted.",
-            },
-          });
-        }
-        return context.json({ error: verdict.reason }, verdict.status);
-      }
-
-      const parsedCall = parseAgentToolCallInput(body);
-      if (!parsedCall.ok) {
-        return context.json({ error: parsedCall.error }, 400);
-      }
-
-      const callbackAbort=new AbortController();
-      const stopListening=coworker?.runtimeThreads?.onStop(runId=>{if(runId===verdict.run.runId)callbackAbort.abort();});
-      const toolSignal=AbortSignal.any([context.req.raw.signal,callbackAbort.signal]);
-      try {
-      const execution=await coworker?.runtimeThreads?.run(verdict.run.runId);
-      if(!execution||execution.status!=="running"||execution.stopRequested||execution.userId!==verdict.actorId||execution.agentId!==verdict.botId||execution.threadId!==verdict.run.threadId)
-        return context.json({error:"This execution is no longer running."},409);
-
-      try {
-        const result = await pluginStore.callTool({
-          signal: toolSignal,
-          ref: parsedCall.value.ref,
-          args: parsedCall.value.args,
-          botId: verdict.botId,
-          // From the assertion, never the body: this is the name the audit row will carry.
-          actorId: verdict.actorId,
-          ...(verdict.initiator ? { initiator: verdict.initiator } : {}),
-        });
-        // Worded by the helper the in-process door uses, so a framework Bot's model reads a vendor's
-        // error as the vendor's and not as a result. Neither Bot words it on its way through.
-        return context.json({
-          text: vendorAnswer(result),
-          isError: result.isError,
-        });
-
-      } catch (error) {
-        if (error instanceof HeadlessToolSuspension) {
-          return context.json({ waiting: {
-            ...error.waiting,
-            toolCallId: body?.toolCallId,
-            toolName: parsedCall.value.ref,
-            message: error.message,
-          } });
-        }
-        /*
-         * A refusal is an answer, not a failure: the Bot says what was blocked and carries on. The
-         * marker leads it so a transcript can draw a refusal without reading the wording.
-         *
-         * AND THE SAME QUESTION THE IN-PROCESS DOOR ASKS, which this one asked of nothing at all.
-         *
-         * CRITERION. Nothing on the `isDeploymentFault` shelf has its message relayed from here,
-         * and nothing leaving here carries a statement or a value bound to one.
-         *
-         * WHAT THIS SURFACE IS. The answer goes into the calling Bot's model as the tool result, so
-         * it is the widest audience an error message in this deployment reaches: a model repeats
-         * what it is handed — to the person asking, into whatever it writes next, and to the next
-         * tool it calls. `plugins/tools.ts` wraps the identical `callTool` for a Bot running in
-         * this process and has refused that shelf for exactly this reason since the
-         * `ServerRowAmbiguousError` finding; the two doors to one store disagreeing meant a query
-         * failure came back as `Failed query: … params: linear, usr_…` through one of them and as a
-         * fixed sentence through the other. Which door a Bot arrives at is a deployment topology
-         * decision and was never a disclosure decision.
-         *
-         * AND THROUGH {@link withoutStatement} AS WELL, because the two answer different questions
-         * and `isDeploymentFault` says so itself: it "settles who may be told, not what". The shelf
-         * decides whether this audience may hear a sentence at all; the door decides what any
-         * sentence is allowed to contain. Today the two overlap on a query failure and this arm can
-         * only be reached by something neither recognises — which is exactly the state the last two
-         * findings in this area were found in, one predicate apart from a leak.
-         *
-         * AND ONLY A REFUSAL CARRIES THE MARKER, which is the in-process door's third question. The
-         * transcript draws an answer that starts with it as a boundary holding, and the model reads
-         * "Refused." as "not allowed". `callTool` throws `PluginRefusedError` for that, and rethrows
-         * a vendor that broke after recording `mcp.call_failed`; marking every throw drew a vendor
-         * outage, or a fault of this deployment's own, as a policy refusing.
-         */
-        if (error instanceof PluginRefusedError) {
-          return context.json({
-            text: `${REFUSAL_MARKER} ${withoutStatement(error)}`,
-            isError: true,
-          });
-        }
-        return context.json({
-          text:
-            error instanceof Error && !isDeploymentFault(error)
-              ? `That tool could not be called: ${withoutStatement(error)}`
-              : "That tool could not be called.",
-          isError: true,
-        });
-      }
-      } finally { stopListening?.(); }
-    });
-  }
-
   if (sandboxedStore) {
     app.route(
       "/api/sandboxed",
       createSandboxedRoutes(sandboxedStore, requireUser),
-    );
-  }
-
-  if (threadIdentity) {
-    app.post("/api/threads/mint", requireUser, (context) =>
-      context.json({ threadId: threadIdentity.mint() }),
     );
   }
 

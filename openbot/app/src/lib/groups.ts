@@ -5,7 +5,6 @@ import {
 } from "@tanstack/react-query";
 import { type AgentChannel, channelKeys } from "@/lib/channels/queries";
 import { client } from "@/lib/client";
-import type { ThreadMessage, ThreadRun } from "@openbot/shared/thread-events";
 
 export type GroupPerson = {
   userId: string;
@@ -19,9 +18,6 @@ export type GroupConversation = {
   threadId: string;
   bots: GroupBot[];
   people: GroupPerson[];
-  messages: ThreadMessage[];
-  activeRun?: ThreadRun;
-  lastRun?: ThreadRun;
 };
 
 export const groupKeys = {
@@ -42,7 +38,6 @@ export function groupQueryOptions(channelId: string) {
 }
 
 export function sendGroupMessageMutationOptions(
-  queryClient: QueryClient,
   channelId: string,
 ) {
   return mutationOptions({
@@ -57,8 +52,6 @@ export function sendGroupMessageMutationOptions(
         fallback: "Your message could not be sent to the group.",
       });
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: groupKeys.detail(channelId) }),
   });
 }
 

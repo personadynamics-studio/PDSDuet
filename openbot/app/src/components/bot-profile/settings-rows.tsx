@@ -5,7 +5,6 @@ import type { AgentProfile } from "@/lib/agents/queries";
 
 const SECTIONS = [
   ["技能與權限", "/bots/$agentId/access"],
-  ["日程", "/bots/$agentId/routines"],
   ["記憶", "/bots/$agentId/memory"],
   ["共用", "/bots/$agentId/sharing"],
   ["設定", "/bots/$agentId/setup"],

@@ -2,7 +2,6 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { AppVariables } from "../auth/guards";
 import type { DemonstrationRecorder } from "./recording";
-import { parseDemonstrationSchedule } from "./schedule";
 import type { DemonstrationStore } from "./store";
 import { DemonstrationNotFoundError, DemonstrationRefusedError } from "./types";
 export function createDemonstrationRoutes(
@@ -87,20 +86,6 @@ export function createDemonstrationRoutes(
         input.slug,
       ),
     });
-  });
-  /** Run the demonstration's saved skill on a schedule, as an ordinary routine. */
-  routes.post("/:id/schedule", async (context) => {
-    const input = parseDemonstrationSchedule(await body(context.req.raw));
-    return context.json(
-      {
-        routine: await recorder.schedule(
-          context.var.actor.id,
-          context.req.param("id"),
-          input,
-        ),
-      },
-      201,
-    );
   });
   routes.delete("/:id", async (context) => {
     await store.remove(context.var.actor.id, context.req.param("id"));

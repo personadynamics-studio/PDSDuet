@@ -8,8 +8,6 @@ import {
   agents,
   mcpServers,
   pluginGrants,
-  responsibilities,
-  responsibilityTriggers,
   sharedUseApprovalMembers,
   sharedUseApprovals,
   sharedUseRequests,
@@ -298,33 +296,6 @@ export function createSharedUseStore(
       .where(inArray(sharedUseApprovals.serverId, ids));
   }
 
-  async function sourcesOf(responsibilityId: string): Promise<string[]> {
-    const [goal] = await database
-      .select({ subscriptions: responsibilities.subscriptions })
-      .from(responsibilities)
-      .where(eq(responsibilities.id, responsibilityId))
-      .limit(1);
-    const triggers = await database
-      .select({ kind: responsibilityTriggers.kind })
-      .from(responsibilityTriggers)
-      .where(eq(responsibilityTriggers.responsibilityId, responsibilityId));
-    return [
-      ...triggers.map((row) => row.kind),
-      ...(goal?.subscriptions ?? []).map((row) => row.source),
-    ];
-  }
-
-  async function botForResponsibility(
-    responsibilityId: string,
-  ): Promise<string | null> {
-    const [goal] = await database
-      .select({ agentId: responsibilities.agentId })
-      .from(responsibilities)
-      .where(eq(responsibilities.id, responsibilityId))
-      .limit(1);
-    return goal?.agentId ?? null;
-  }
-
   async function botFacts(botId: string): Promise<BotFacts> {
     const [profile] = await database
       .select({
@@ -353,13 +324,6 @@ export function createSharedUseStore(
       .select({ group: teamBotAssignments.groupName })
       .from(teamBotAssignments)
       .where(eq(teamBotAssignments.agentId, botId));
-    const goals = await database
-      .select({ id: responsibilities.id })
-      .from(responsibilities)
-      .where(eq(responsibilities.agentId, botId));
-    const sources = (
-      await Promise.all(goals.map((goal) => sourcesOf(goal.id)))
-    ).flat();
     return {
       /* A Bot with no profile is a package Bot: public and ownerless. */
       ownerUserId: profile?.ownerUserId ?? null,
@@ -368,7 +332,6 @@ export function createSharedUseStore(
         ? { audience: published.audience, members: listed as ApprovalMember[] }
         : null,
       assignments: assigned.map((row) => row.group),
-      sources,
     };
   }
 
@@ -708,8 +671,6 @@ export function createSharedUseStore(
     deleteApprovalsFor,
     botFacts,
     actorFacts,
-    sourcesOf,
-    botForResponsibility,
     sharedAppsHeldBy,
     botsHolding,
     shortfall,
@@ -729,7 +690,7 @@ export function createSharedUseGate(
 ): SharedUseGate {
   return async ({ botId, serverId, title, actorId, initiator }) => {
     const message = `This Bot reaches more people than an admin approved for the shared ${title} account. An admin has been asked to approve it.`;
-    const steering = await steeringOf(initiator, store.sourcesOf);
+    const steering = await steeringOf(initiator);
     /*
      * A RUN WHOSE STEERING CANNOT BE TOLD IS REFUSED WITHOUT A REQUEST. No approval an administrator
      * could give would let it through — the question is who is behind the run, not how wide the

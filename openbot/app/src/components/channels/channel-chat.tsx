@@ -13,7 +13,6 @@ import type { Attachment } from "@/lib/chat/attachments";
 import { ConversationProvider } from "@/lib/chat/conversation";
 import { useThread } from "@/lib/chat/use-thread";
 import { newId } from "@/lib/new-id";
-import { useSkillCommands } from "@/lib/plugins/skill-commands";
 
 function uploadedAttachment(attachment: Attachment) {
   const metadata = attachment.source.metadata as { attachmentId?: unknown; filename?: unknown } | undefined;
@@ -36,16 +35,11 @@ function ChannelChatSession({ channel, runtimeAgentId, inShell, lead }: ChannelC
   const thread = useThread(channel.threadId, runtimeAgentId);
   useActiveConversation({ threadId: channel.threadId, botId: runtimeAgentId, messages: thread.messages, activeRun: thread.activeRun, answer: thread.answer });
   const agents = useQuery(agentListQueryOptions());
-  const commands = useSkillCommands(runtimeAgentId);
   const name = agents.data?.find((bot) => bot.id === runtimeAgentId)?.name ?? channel.name;
   const send = useCallback(async (draft: ComposerDraft) => {
-    const context = draft.commandIds.flatMap((id) => {
-      const instruction = commands.find((command) => command.id === id)?.prompt;
-      return instruction ? [{ description: "Granted skill: " + id, value: instruction }] : [];
-    });
     const message: Message = { id: newId(), role: "user", content: toMessageContent(draft.text.trim(), draft.attachments) };
-    await thread.submit([message], context);
-  }, [commands, thread.submit]);
+    await thread.submit([message]);
+  }, [thread.submit]);
   useEffect(() => {
     if (thread.restoring || thread.busy) return;
     const first = takeFirstMessage(channel.id);
@@ -54,7 +48,7 @@ function ChannelChatSession({ channel, runtimeAgentId, inShell, lead }: ChannelC
   }, [channel.id, thread.restoring, thread.busy, thread.messages, thread.submit]);
   return (
       <ConversationProvider ask={(words) => { void thread.submit([{ id: newId(), role: "user", content: words }]).catch(() => {}); }}>
-        <ConversationView messages={thread.messages} busy={thread.busy} restoring={thread.restoring} disabled={!channel.active} stoppable={Boolean(thread.activeRun)} onStop={() => { void thread.stop(); }} onSubmit={send} channelId={channel.id} commands={commands} inShell={inShell} lead={lead} placeholder={"傳送訊息給 " + name} stopped={thread.error ?? undefined} notice={thread.reconnecting ? <p role="status">正在重新連線並取回對話進度…</p> : !channel.active ? <p role="status">這段對話已無法接收新訊息。</p> : null} />
+        <ConversationView messages={thread.messages} busy={thread.busy} restoring={thread.restoring} disabled={!channel.active} stoppable={Boolean(thread.activeRun)} onStop={() => { void thread.stop(); }} onSubmit={send} channelId={channel.id} inShell={inShell} lead={lead} placeholder={"傳送訊息給 " + name} stopped={thread.error ?? undefined} notice={thread.reconnecting ? <p role="status">正在重新連線並取回對話進度…</p> : !channel.active ? <p role="status">這段對話已無法接收新訊息。</p> : null} />
       </ConversationProvider>
   );
 }

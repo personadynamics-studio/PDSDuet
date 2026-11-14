@@ -9,7 +9,6 @@ import {
 } from "drizzle-orm/pg-core";
 import type { SignInMethod, SignInStatus } from "../../passwords/types";
 import { users } from "./core";
-import { jsonb } from "./json";
 
 /**
  * One person's saved logins, for the private sign-in form.
@@ -74,7 +73,6 @@ export const signInRequests = pgTable(
     toolCallId: text("tool_call_id"),
     /** The takeover request, when the person chose to sign in by hand. */
     controlRequestId: text("control_request_id"),
-    continuation: jsonb("continuation"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

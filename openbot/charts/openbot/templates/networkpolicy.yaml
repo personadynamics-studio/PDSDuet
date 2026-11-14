@@ -189,7 +189,7 @@ spec:
 {{- if and .Values.networkPolicy.enabled (eq .Values.computers.mode "sandbox") .Values.computers.sandbox.culler.enabled }}
 ---
 {{- $culler := "culler" -}}
-{{/* A pod no policy selects keeps the cluster default, so this one needs its own, same as the routines sweep below and the attachments culler after it. */}}
+{{/* A pod no policy selects keeps the cluster default, so this one needs its own, same as the attachments culler after it. */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -247,66 +247,17 @@ spec:
     {{- end }}
 {{- end }}
 
-{{- if and .Values.networkPolicy.enabled (.Values.routines).enabled }}
----
-{{- $routines := "routines" -}}
-{{/* Same reason as the culler; this pod holds no token and reaches only the database and the API server. */}}
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ include "openbot.componentName" (dict "root" . "component" $routines) }}
-  labels:
-{{ include "openbot.componentLabels" (dict "root" . "component" $routines) | indent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-{{ include "openbot.componentSelectorLabels" (dict "root" . "component" $routines) | indent 6 }}
-  policyTypes:
-    - Ingress
-    - Egress
-  # No ingress rules, which under an Ingress policyType denies all of it.
-  ingress: []
-  egress:
-    # DNS, or neither the database nor the server resolves and the sweep reads as both being down.
-    - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    {{- if .Values.postgresql.enabled }}
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: postgresql
-      ports:
-        - port: 5432
-          protocol: TCP
-    {{- end }}
-    {{- /* The API server, where SERVER_INTERNAL_URL points and the only thing this pod calls. */}}
-    - to:
-        - podSelector:
-            matchLabels:
-{{ include "openbot.componentSelectorLabels" (dict "root" . "component" "server") | indent 14 }}
-      ports:
-        - port: {{ .Values.server.service.port }}
-          protocol: TCP
-    {{- /* An external database, for the reason given on the culler's policy above. */}}
-    {{- with (default .Values.networkPolicy.extraEgress .Values.networkPolicy.routinesExtraEgress) }}
-{{ toYaml . | indent 4 }}
-    {{- end }}
-{{- end }}
-
 {{- if and .Values.networkPolicy.enabled (eq (include "openbot.attachmentsCullerEnabled" .) "true") }}
 ---
 {{- $attachmentsCuller := "attachments-culler" -}}
 {{/*
 What the attachments culler may reach.
 
-Same shape as the routines sweep and the computer culler above: a CronJob nothing else selects, so
+Same shape as the computer culler above: a CronJob nothing else selects, so
 without its own policy it would keep the cluster default rather than a fence. It holds the database
 credential, which is exactly the shape of pod a NetworkPolicy exists for.
 
-No Kubernetes-API rule, unlike the routines sweep and the computer culler: this pod's spec sets
+No Kubernetes-API rule, unlike the computer culler: this pod's spec sets
 `automountServiceAccountToken: false` and its script only ever opens the database, so there is
 nothing here that would use a token even if one leaked in.
 */}}

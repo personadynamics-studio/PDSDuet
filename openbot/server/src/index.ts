@@ -1,17 +1,14 @@
 import { COMPUTER_GUIDANCE } from "@openbot/shared/bot-prompt";
-import { createTurnExecutor, type TurnExecutor } from "@openbot/toolkit/run-turn";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { createActorAgentResolver } from "./agents/agent-resolver";
-import { mintRunAssertion } from "./agents/callback-token";
 import { createBotTools } from "./agents/bot-tools";
 import { normalizeModelBaseUrls, runtimeModelForEnvironment } from "./agents/build";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
 import { createApp } from "./app";
-import { createApprovalStore } from "./approvals/store";
-import { auditSink, createAuditReader, createAuditStore, PERSON_INITIATOR, type AuditInitiator } from "./audit";
+import { auditSink, createAuditReader, createAuditStore, PERSON_INITIATOR } from "./audit";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import type { OpenBotRole } from "./auth/roles";
@@ -21,7 +18,6 @@ import { loadAttachmentForTurn, markAttachmentsSent } from "./channels/attachmen
 import { createChannelEventHub, startChannelActivityListener } from "./channels/events";
 import { createGroupConversations } from "./channels/group";
 import { createChannelStore } from "./channels/routes";
-import { createThreadIdentity } from "./channels/thread-identity";
 import { headlessComponentCatalog } from "./components/headless";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
@@ -32,7 +28,7 @@ import { createComputerProvider } from "./computer/provider";
 import { loadConfig } from "./config";
 import { createCredentialAdminService, createCredentialStore, resolveModelApiKey } from "./credentials";
 import { createDatabase } from "./db/client";
-import { brokeredConnections, users, threadChannelMappings } from "./db/schema";
+import { brokeredConnections, users } from "./db/schema";
 import { createHostAccessBroker } from "./host-access/broker";
 import { hostAccessTools } from "./host-access/tools";
 import { startHttpServer } from "./http-server";
@@ -41,7 +37,6 @@ import { retireIdentityLinks, retireOwnedAccounts } from "./identity/retire";
 import { createIdentityStore } from "./identity/store";
 import { reportModelAvailability } from "./model-availability-check";
 import { buildMorningBrief, openduetTools } from "./openduet/brief";
-import { createDuetChannelStore } from "./openduet/channels";
 import { createPageStore, pageTools } from "./openduet/pages";
 import { replyTools } from "./openduet/replies";
 import { createSetupSources } from "./openduet/setup";
@@ -50,7 +45,6 @@ import { createPasswordStore } from "./passwords/store";
 import { createPeopleStore } from "./people/store";
 import { createAccountModeSwitch } from "./plugins/account-mode";
 import { providerDecision } from "./plugins/broker";
-import { useRoutineTools } from "./plugins/builtin-routines";
 import { useArcadeClient } from "./plugins/arcade";
 import { createArcadeClient } from "./plugins/arcade-adapter";
 import { useComposioClient } from "./plugins/composio";
@@ -62,11 +56,8 @@ import { createPluginStore } from "./plugins/store";
 import { grantedTools } from "./plugins/tools";
 import { createProviderOAuthProxy } from "./provider-oauth";
 import { createModelCompleter } from "./routing/model";
-import { createRoutineRunner } from "./routines/runner";
-import { createRoutineStore } from "./routines/store";
-import { createLocalRuntime } from "./runtime/local-runtime";
-import { LocalAgentRunner } from "./runtime/local-runner";
-import { createLocalThreadStore } from "./runtime/thread-store";
+import { createExecution, type Execution } from "./runtime/execution";
+import { createSettlement } from "./runtime/settlement";
 import { createTeamBots } from "./team-bots/team-bots";
 import { createPackageStatusReader, loadTenantPackage, synchronizeTenantPackage } from "./tenant-package";
 import { createUserInstructionsStore } from "./user-instructions";
@@ -78,10 +69,9 @@ await initializeDevActorUser(database, config.singleUser);
 const credentials = createCredentialStore(database);
 const identity = createIdentityStore(database, credentials);
 const vault = { store: credentials, reader: credentials, encryptionKey: config.keyEncryptionKey };
-const profiles = createAgentProfileStore(database, config.managedAgent?.endpoint, vault);
+const profiles = createAgentProfileStore(database, vault);
 const tenant = await loadTenantPackage(config.tenantPackageDirectory);
-const threadIdentity = createThreadIdentity(config.deploymentId ?? tenant.tenantId);
-const channels = createChannelStore(database, profiles, threadIdentity);
+const channels = createChannelStore(database, profiles);
 const channelEvents = createChannelEventHub();
 const channelListener = await startChannelActivityListener(config.databaseUrl, channelEvents);
 const loadAgents = createRuntimeAgentLoader(database, vault);
@@ -138,9 +128,8 @@ const plugins = createPluginStore({
   redirectUri: config.publicUrl ? redirectUriFor(config.publicUrl) : undefined,
   broker: composio?.broker, brokerProvider,
 });
-const approvalStore = createApprovalStore(database);
 const accountModes = createAccountModeSwitch({
-  store: plugins, sharedUse, teamRules: approvalStore.policy,
+  store: plugins, sharedUse,
   deploymentId: config.deploymentId ?? tenant.tenantId, audit,
 });
 const teamBots = createTeamBots({
@@ -161,74 +150,51 @@ const modelKey = () => resolveModelApiKey({
 });
 const complete = createModelCompleter({ model, resolveApiKey: modelKey });
 
-function toolsForActor(actorId: string, initiator: AuditInitiator = PERSON_INITIATOR) {
-  return async (botId: string) => [
-    ...openduetTools({
-      actorId, botId, initiator,
-      person: async () => {
-        const [person] = await database.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, actorId));
-        return { name: person?.name ?? null, email: person?.email ?? null };
-      },
-      build: (input, signal) => buildMorningBrief({
-        callTool: request => plugins.callTool({ ...request, signal }),
-        complete: prompt => complete(prompt, signal), model: model.defaultModel,
-      }, input),
-    }),
-    ...replyTools({ initiator }),
-    ...pageTools({ initiator, get: id => pages.get(actorId, id), save: input => pages.save(actorId, botId, input) }),
-    ...(await grantedTools({ store: plugins, botId, actorId, initiator, credentialActorFor: teamBots.credentialActorFor(actorId, botId) })),
-    ...hostAccessTools({ broker: host, botId, actorId, auditStore: audit, initiator }),
-  ];
-}
-
-const threads = createLocalThreadStore(database);
-await threads.initialize();
-await threads.listen(config.databaseUrl);
-const runner = new LocalAgentRunner(threads, {
-  onRunBusy: ({ threadId, busy, runId }) => channels.signalBusy(threadId, busy, runId),
-});
-const botTools = createBotTools({ profiles, actorFor, runTurn: input => executor.run(input) });
+const settlement = createSettlement(database, { actorFor });
+await settlement.initialize();
+await settlement.listen(config.databaseUrl);
 const resolver = createActorAgentResolver({
   loadAgents, model, resolveModelApiKey: modelKey,
   computerGuidance: computer ? COMPUTER_GUIDANCE : undefined,
   loadInstructionsForActor: actorId => () => instructions.read(actorId),
   loadAttachmentForActor: actorId => (id, threadId) => loadAttachmentForTurn(database, { actorId, threadId }, id),
   markAttachmentsSentForActor: actorId => (ids, threadId) => markAttachmentsSent(database, { actorId, threadId }, ids),
-  signRunForActor: (actorId, initiator = PERSON_INITIATOR, depth = 0) => (botId, runId, threadId) =>
-    mintRunAssertion({ actorId, botId, runId, threadId, initiator, depth }, config.keyEncryptionKey),
 });
-const executor: TurnExecutor = createTurnExecutor({
-  threads, runner, components,
-  buildAgentFor: async input => resolver.resolveAgentForActor(await actorFor(input.ownerUserId), input.agentId, { initiator: input.initiator, depth: input.depth }),
-  toolsForTurn: async ({ownerUserId,agentId,initiator,threadId,runId}) => {
-    const tools=[
-      ...(await toolsForActor(ownerUserId,initiator)(agentId)),
-      ...(await botTools({actorId:ownerUserId,botId:agentId,initiator,threadId,runId})),
+const execution: Execution = createExecution({
+  settlement,
+  createAgent: (actor, botId, initiator) => resolver.resolveAgentForActor(actor, botId, { initiator }),
+  toolsForRun: async ({ actor, botId, threadId, runId, initiator = PERSON_INITIATOR }) => {
+    const actorId = actor.id;
+    const tools = [
+      ...openduetTools({
+        actorId, botId, initiator,
+        person: async () => {
+          const [person] = await database.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, actorId));
+          return { name: person?.name ?? null, email: person?.email ?? null };
+        },
+        build: (input, signal) => buildMorningBrief({
+          callTool: request => plugins.callTool({ ...request, signal }),
+          complete: prompt => complete(prompt, signal), model: model.defaultModel,
+        }, input),
+      }),
+      ...replyTools({ initiator }),
+      ...pageTools({ initiator, get: id => pages.get(actorId, id), save: input => pages.save(actorId, botId, input) }),
+      ...(await grantedTools({ store: plugins, botId, actorId, initiator, credentialActorFor: teamBots.credentialActorFor(actorId, botId) })),
+      ...hostAccessTools({ broker: host, botId, actorId, auditStore: audit, initiator }),
+      ...(await botTools({ actor, botId, threadId, runId, initiator })),
     ];
     return [
-      ...(computer?createHeadlessComputerTools({gateway:computer,botId:agentId}):[]),
-      ...tools.map(tool=>({
-        definition:{name:tool.name,description:tool.description,parameters:z.toJSONSchema(tool.parameters)},
-        execute:tool.execute,
+      ...(computer ? createHeadlessComputerTools({ gateway: computer, botId }) : []),
+      ...tools.map(tool => ({
+        definition: { name: tool.name, description: tool.description, parameters: z.toJSONSchema(tool.parameters) },
+        execute: tool.execute,
       })),
+      ...(await components.toolsForTurn({ ownerUserId: actorId, agentId: botId, initiator })),
     ];
   },
 });
-const runtime = createLocalRuntime({
-  threads, runner, executor, identifyActor: resolveRequestActor,
-  onReply: async ({ actor, agentId, threadId, runId, text }) => {
-    const [mapping] = await database.select({ channelId: threadChannelMappings.channelId }).from(threadChannelMappings).where(eq(threadChannelMappings.threadId, threadId)).limit(1);
-    if (mapping) await channels.recordActivity(actor, mapping.channelId, { text, agentId, at: new Date() }, { id: runId });
-  },
-});
-const groups = createGroupConversations({ database, channels, profiles, actorFor, threads, runTurn: executor.run });
-await groups.initialize();
-const duetChannels = createDuetChannelStore({ database, channels });
-
-// A schedule is an independent entry point into the same executor.
-const routines = createRoutineStore(database);
-useRoutineTools(routines);
-const routineRunner = createRoutineRunner({ routineStore: routines, channelStore: channels, runTurn: executor.run });
+const botTools = createBotTools({ profiles, execution });
+const groups = createGroupConversations({ database, channels, profiles, execution });
 const githubCallback = config.githubApp && config.publicUrl ? githubCallbackRoutes({
   clientId: config.githubApp.clientId, clientSecret: config.githubApp.clientSecret,
   publicUrl: config.publicUrl, appUrl: config.appUrl, encryptionKey: config.keyEncryptionKey,
@@ -240,19 +206,19 @@ const app = createApp(config, {
   auth, auditReader: createAuditReader(database),
   credentialService: createCredentialAdminService(config.keyEncryptionKey, credentials, audit),
   packageStatusReader: createPackageStatusReader(database),
-  runtimeHandler: runtime.handler, computerGateway: computer, agentProfileStore: profiles,
+  execution, settlement, computerGateway: computer, agentProfileStore: profiles,
   channelStore: channels, channelEvents, auditStore: audit, componentStore, pluginStore: plugins,
-  sandboxedStore: createSandboxedStore(database, audit), threadIdentity, peopleStore: people,
-  identityProviders, routineRunner, routineStore: routines, userInstructions: instructions,
+  sandboxedStore: createSandboxedStore(database, audit), peopleStore: people,
+  identityProviders, userInstructions: instructions,
   attachmentDatabase: database, hostAccessBroker: host, desktopHostToken: process.env.OPENBOT_DESKTOP_HOST_TOKEN,
   composio,
   modelProviderProxy: process.env.OPENBOT_MODEL_OAUTH_FILE?.trim() ? createProviderOAuthProxy(process.env.OPENBOT_MODEL_OAUTH_FILE.trim()) : undefined,
   userPreferences: createUserPreferencesStore(database),
   coworker: {
-    runtimeThreads: threads, shared: { modes: accountModes, use: sharedUse },
+    shared: { modes: accountModes, use: sharedUse },
     ...(passwords ? { passwords } : {}), groups, teamBots,
     openduet: {
-      pages, channels: duetChannels,
+      pages,
       setup: createSetupSources({
         productName: tenant.productName, config, environment: process.env,
         model: { provider: model.provider, keyId: tenant.model.credentialSecretRef, defaultModel: model.defaultModel, plan: Boolean(model.plan), check: () => reportModelAvailability({ provider: model.provider, model: model.defaultModel, apiKey: modelKey }) },
@@ -270,6 +236,22 @@ const server = startHttpServer({
 });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
   server.stop();
-  void Promise.allSettled([threads.close(), channelListener.stop()]).finally(() => process.exit(0));
+  void (async () => {
+    let exitCode = 0;
+    try {
+      await execution.close();
+    } catch (error) {
+      exitCode = 1;
+      console.error({ type: "execution-shutdown-failed", error: String(error) });
+    } finally {
+      const closed = await Promise.allSettled([settlement.close(), channelListener.stop()]);
+      for (const result of closed) {
+        if (result.status !== "rejected") continue;
+        exitCode = 1;
+        console.error({ type: "listener-shutdown-failed", error: String(result.reason) });
+      }
+      process.exit(exitCode);
+    }
+  })();
 });
 console.info(tenant.productName + " server listening on " + server.addresses.join(" and "));

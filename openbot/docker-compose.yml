@@ -193,10 +193,6 @@ services:
     ports:
       - "${PICKED_HARNESS_HOST_PORT:-${PICKED_HARNESS_PORT:-4202}}:${PICKED_HARNESS_PORT:-4202}"
     environment:
-      # Every harness refuses without this; it is what makes the endpoint the server's alone.
-      # Deployment-owned tools use the same signed callback as agent-langgraph.
-      OPENBOT_TOOL_URL: ${OPENBOT_TOOL_URL:-http://host.docker.internal:3001/api/agent-tools/call}
-      AGENT_TOOL_TOKEN: ${AGENT_TOOL_TOKEN:-}
       # Whichever the model screen chose. A harness reads the one its provider needs and ignores the
       # rest, and the ones the choice did not imply are written empty rather than left stale: see
       # `ModelCredential`.
@@ -254,10 +250,6 @@ services:
       BOT_RESPONSES_API: ${BOT_RESPONSES_API:-false}
       # How hard it thinks, on a model that reasons. Empty leaves the provider's own default.
       BOT_REASONING_EFFORT: ${BOT_REASONING_EFFORT:-}
-      # Where this Bot runs a tool: back through the deployment that granted it, never at the vendor.
-      # `host.docker.internal` because the API server runs on the host, not in this network.
-      OPENBOT_TOOL_URL: ${OPENBOT_TOOL_URL:-http://host.docker.internal:3001/api/agent-tools/call}
-      AGENT_TOOL_TOKEN: ${AGENT_TOOL_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

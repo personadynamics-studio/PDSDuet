@@ -75,8 +75,6 @@ export function startHttpServer(deps: {
         server.timeout(request, DICTATION_HTTP_IDLE_SECONDS);
       }
       if (url.pathname === "/api/voice/calls") server.timeout(request, 30);
-      if (url.pathname === "/api/voice/sessions") server.timeout(request, 30);
-      if (request.method === "POST" && url.pathname.startsWith("/api/groups/")) server.timeout(request, 0);
       const streamBotId = streamPathBotId(url.pathname);
       if (
         streamBotId !== null &&

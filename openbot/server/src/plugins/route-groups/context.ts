@@ -354,15 +354,6 @@ export type PluginConnectOptions = {
    * write a live refresh token nothing will ever revoke.
    */
   personHasAccess: ConnectingPersonCheck;
-  /**
-   * Whether this deployment holds a shared secret a Bot may present when calling a tool back.
-   *
-   * A boolean about configuration, never the secret. Without it, a Bot can only call back if it
-   * holds a credential issued to it alone, and a Bot with neither is refused before the call ever
-   * reaches the grant, the boundary or the trail. The Bots screen needs this to stop promising a
-   * grant the deployment cannot honour.
-   */
-  botsMayCallBack?: boolean;
   publicUrl: string | undefined;
   /**
    * Where the app is, which is not where this API is.

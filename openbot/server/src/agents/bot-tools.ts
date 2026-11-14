@@ -1,6 +1,6 @@
 import type { GrantedTool } from "@openbot/toolkit/granted-tool";
 import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
-import type { TurnRunner } from "@openbot/toolkit/run-turn";
+import type { Execution } from "../runtime/execution";
 import { z } from "zod";
 import type { AuditInitiator } from "../audit";
 import type { AgentProfileStore } from "./profile-store";
@@ -9,17 +9,16 @@ import type { AgentActor } from "./profile-types";
 /** Bot collaboration uses the same visible roster and executor as a person's turn. */
 export function createBotTools(options: {
   profiles: AgentProfileStore;
-  actorFor(actorId: string): Promise<AgentActor>;
-  runTurn: TurnRunner;
+  execution: Execution;
 }) {
   return async (source: {
-    actorId: string;
+    actor: AgentActor;
     botId: string;
     threadId: string;
     runId: string;
     initiator?: AuditInitiator;
   }): Promise<GrantedTool[]> => {
-    const roster = (await options.profiles.list(await options.actorFor(source.actorId)))
+    const roster = (await options.profiles.list(source.actor))
       .filter(bot => bot.id !== source.botId)
       .map(({ id, name, title, roleDescription }) => ({ id, name, title, roleDescription }));
     const questionParameters = z.object({ question: z.string().trim().min(1), why: z.string().optional() });
@@ -64,13 +63,12 @@ export function createBotTools(options: {
         execute: async (args, context) => {
           context?.signal?.throwIfAborted();
           const input = parameters.parse(args);
-          const result = await options.runTurn({
-            ownerUserId: source.actorId,
-            agentId: input.botId,
+          const result = await options.execution.run({
+            actor: source.actor,
+            botIds: [input.botId],
             threadId: source.threadId,
             parentRunId: source.runId,
             instruction: input.message,
-            persistUserMessage: false,
             signal: context?.signal,
             initiator: {
               kind: "handoff",
@@ -78,11 +76,15 @@ export function createBotTools(options: {
               ...(source.initiator ? { origin: source.initiator } : {}),
             },
           });
+          if (result.status === "waiting") throw new HeadlessToolSuspension(
+            "The other Bot is waiting for the person in this conversation.",
+            { kind: "bot_wait", childRunId: result.runId },
+          );
           return JSON.stringify({
             botId: input.botId,
             runId: result.runId,
             status: result.status,
-            ...(result.status === "waiting" ? { message: "The Bot is waiting for the person in this conversation." } : {}),
+            ...(result.error ? { error: result.error } : {}),
             answer: result.replyText,
           });
         },

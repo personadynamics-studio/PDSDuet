@@ -46,20 +46,6 @@ function RouteComponent() {
   const { data: agents } = useQuery(agentListQueryOptions());
   /* The ones this person has hidden, so a grant one of them holds still has its switch here. */
   const { data: hiddenAgents } = useQuery(agentListQueryOptions(true));
-  /*
-   * Whether a call from this Bot could be authenticated at all.
-   *
-   * Its own issued credential, or the deployment's shared one. Separate from the grant: the switch
-   * decides whether the tool is offered to the model, this decides whether the call it makes gets
-   * past the front door. A Bot with the grant and neither credential produced "May call this tool"
-   * beside a tool that refused every call, with no audit row, because the call never arrived.
-   */
-  const sharedCallback = plugins.data?.botsMayCallBack === true;
-  const canCallBack = (bot: { id: string }) =>
-    sharedCallback ||
-    [...(agents ?? []), ...(hiddenAgents ?? [])].find(
-      (one) => one.id === bot.id,
-    )?.hasCallbackToken === true;
   const [error, setError] = useState<string | null>(null);
 
   const setGrant = useMutation({
@@ -200,11 +186,7 @@ function RouteComponent() {
                       <ItemTitle>{bot.name}</ItemTitle>
                       <ItemDescription>
                         {bot.hidden ? "Hidden from your roster. " : ""}
-                        {held
-                          ? canCallBack(bot)
-                            ? "Can call this tool. Every call is still checked against boundaries and logged in Audit."
-                            : "Allowed, but this Bot has no callback token. Every call is refused. Issue one on its page, or set AGENT_TOOL_TOKEN."
-                          : "Can't call this tool. The Bot never sees it."}
+                        {held ? "Can call this tool with the connected account." : "Can't call this tool. The Bot never sees it."}
                       </ItemDescription>
                     </ItemContent>
                     <ItemActions>

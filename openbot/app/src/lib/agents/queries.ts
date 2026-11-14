@@ -17,24 +17,10 @@ export type AgentProfile = {
   visibility: AgentVisibility;
   /** Where this coworker runs. Null for the Bot in the box. */
   endpoint: string | null;
-  /**
-   * Whether it runs on this deployment's own Bot.
-   *
-   * Creating a coworker with no endpoint stores the deployment's managed address, so `endpoint`
-   * alone cannot tell "built-in" from "hosted by a person" — and the difference decides whether the
-   * Connection screen asks for a callback token. A built-in coworker calls tools back with the
-   * deployment's own credential and needs no setup at all.
-   */
+  /** Whether the stored agent runs through the server's Native factory. */
   builtIn: boolean;
   /** Whether a key is set for it. Never the key itself. */
   hasAuth: boolean;
-  /**
-   * Whether this coworker holds a credential for calling tools back.
-   *
-   * A boolean, because the token is readable exactly once: in the response that issued it. The
-   * surface needs this only to decide between offering "generate" and "rotate".
-   */
-  hasCallbackToken: boolean;
   hidden: boolean;
   /** Whether the signed-in person pinned it to the top of their Bots list. Nobody else's. */
   pinned: boolean;
@@ -69,7 +55,7 @@ export const agentKeys = {
 
 /** What kinds of coworker this deployment can create. */
 export type AgentCapabilities = {
-  /** Whether a coworker can run on the deployment's own Bot, with no endpoint of its own. */
+  /** Whether the server provides its Native factory for creating Bots without an endpoint. */
   builtInAvailable: boolean;
 };
 

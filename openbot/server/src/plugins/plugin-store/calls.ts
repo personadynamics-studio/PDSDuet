@@ -1,6 +1,5 @@
 import { connectAppRefusal } from "@openbot/shared/connect-prompt";
 import { and, eq } from "drizzle-orm";
-import { currentApprovalContext } from "../../approvals/types";
 import { type AuditInitiator, recordAuditEvent } from "../../audit";
 import {
   evaluateActionPolicy,
@@ -17,7 +16,6 @@ import {
 import { classifyTool, tokenHeaderFor } from "../catalogue";
 import { VERSION_ARG } from "../composio";
 import { inspectToolArguments } from "../content-governance";
-import { shareTargetOf } from "../share-target";
 import type { AccountMode } from "../shared-accounts";
 import { transportFor } from "../transport";
 import type { StoreContext } from "./context";
@@ -346,48 +344,6 @@ export function callMethods(context: StoreContext) {
       }
 
       /*
-       * A write that sends content to other people asks the owner first, whatever their general
-       * approvals switch says. Pending throws the check's own wait, which a headless turn and the
-       * open chat both turn into a paused tool call; denied is a refusal like any other.
-       */
-      const share =
-        effect === "write" && options.privateShareCheck
-          ? shareTargetOf(serverId, toolName, vendorArgs)
-          : null;
-      let personAnswered = false;
-      if (share && options.privateShareCheck) {
-        const shareVerdict = await options.privateShareCheck({
-          ownerUserId: input.actorId,
-          botId: input.botId,
-          audience: share.audience,
-          content: share.content,
-          message: share.message,
-          origin: { kind: "unknown" },
-        });
-        if (shareVerdict.status !== "allowed") {
-          await recordAuditEvent(auditStore, {
-            eventType: "mcp.call_rejected",
-            targetType: "mcp_tool",
-            targetId: input.ref,
-            ...(input.initiator ? { initiator: input.initiator } : {}),
-            payload: {
-              ...decided,
-              decision: { ...decided.decision, carriedOut: false },
-              refusal:
-                shareVerdict.status === "pending"
-                  ? "private_share_pending"
-                  : "private_share_denied",
-            },
-          });
-          // A pending share outside any run that can wait says so and sends nothing.
-          if (shareVerdict.status === "pending" && currentApprovalContext())
-            throw shareVerdict.suspension;
-          throw new PluginRefusedError(shareVerdict.message, null);
-        }
-        personAnswered = shareVerdict.byPerson === true;
-      }
-
-      /*
        * A SHARED ACCOUNT ANSWERS TO WHOEVER CAN STEER THE BOT, and that is checked on every call.
        *
        * The grant says this Bot may use the app; it says nothing about who may reach the Bot. A
@@ -438,30 +394,6 @@ export function callMethods(context: StoreContext) {
           throw new PluginRefusedError(verdict.message, null);
         }
       }
-
-      /*
-       * THE APPROVAL GATE IS ASKED UNDER THE APP'S ID TOO, for a brokered row whose app has an
-       * answering row. Rules are written against the app — the Shared default is `${appId}/*`
-       * scoped to the app's id — so a write granted through a duplicate row has to be judged as
-       * the app's, or it matches no rule and walks past the ask an administrator set. `target`
-       * still names the dialled row, which is what the call itself goes to; every other row is
-       * asked about exactly as before.
-       */
-      const gateApp = access.credential === "brokered" ? app : null;
-      const approval = await options.approvalGate?.({
-        actorId: input.actorId,
-        botId: input.botId,
-        toolRef: gateApp ? `${gateApp.id}/${toolName}` : input.ref,
-        effect,
-        scope: gateApp ? gateApp.id : serverId,
-        args: vendorArgs,
-        target: { serverId, toolName, url: row.url, effect },
-        continuation: currentApprovalContext(),
-        // Asked once: the share check just put this exact send in front of the person.
-        ...(personAnswered ? { personAnswered } : {}),
-      }, { signal: input.signal });
-      if (approval && "replay" in approval)
-        return approval.replay as { text: string; isError: boolean };
 
       /*
        * Attempt first, record second.
@@ -538,7 +470,6 @@ export function callMethods(context: StoreContext) {
             : decided,
         });
         const answer = { text: result.text, isError: result.isError };
-        await approval?.complete(answer);
         /*
          * The one answer that leaves this block without returning: see below the catch. Thrown
          * from in here, the catch would write a second `mcp.call_failed` row about the same call.

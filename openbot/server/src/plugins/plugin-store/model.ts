@@ -1,5 +1,4 @@
 import { and, eq, sql } from "drizzle-orm";
-import type { ApprovalGate } from "../../approvals/types";
 import type { AuditStore } from "../../audit";
 import type { ActionPolicy } from "../../computer/policy";
 import type {
@@ -9,7 +8,6 @@ import type {
 import type { Database } from "../../db/client";
 import { isQueryFailure, withoutStatement } from "../../db/query-failure";
 import { pendingAuthorizations } from "../../db/schema";
-import type { CheckPrivateShare } from "../../proactive/private-share";
 import {
   BROKERED_PROFILE,
   type BrokerProvider,
@@ -1210,12 +1208,6 @@ export type AccessToken = {
 };
 
 export type PluginStoreOptions = {
-  approvalGate?: ApprovalGate;
-  /**
-   * The owner's permission before a connector call sends content to other people.
-   * See plugins/share-target.ts and proactive/private-share.ts. Absent asks nothing.
-   */
-  privateShareCheck?: CheckPrivateShare;
   /** Who may steer a run that uses a Shared app's account. Absent, every shared call is refused. */
   sharedUse?: SharedUseGate;
   database: Database;

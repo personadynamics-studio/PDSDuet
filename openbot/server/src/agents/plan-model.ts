@@ -74,13 +74,13 @@ export function planMessages(prompt: Options["prompt"]): Message[] {
         role: "user",
         content: message.content.map((part) => {
           if (part.type === "text") return { type: "text", text: part.text };
-          if (!part.mediaType.startsWith("image/"))
+          if (!part.mediaType.startsWith("image/") && part.mediaType !== "application/pdf")
             throw new Error(
               `Plan models cannot receive ${part.mediaType} attachments.`,
             );
           const data = part.data;
           return {
-            type: "image",
+            type: part.mediaType.startsWith("image/") ? "image" as const : "document" as const,
             source:
               data instanceof URL
                 ? { type: "url", value: data.href, mimeType: part.mediaType }

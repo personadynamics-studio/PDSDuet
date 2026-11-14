@@ -250,7 +250,7 @@ config:
   extraEnv: []
   extraEnvFrom: []
   # Volumes, and where to mount them, on every pod that loads this deployment's configuration: the
-  # server and the routines and computer-culler CronJobs, the same pods `extraEnv` reaches. The usual
+  # server and computer-culler CronJob, the same pods `extraEnv` reaches. The usual
   # reason is a tenant package of your own, from a ConfigMap, with `tenantPackageDir` pointed at its
   # mount; every one of those pods reads the package, so mounting it on the server alone is not enough.
   #
@@ -413,15 +413,6 @@ computers:
       enabled: true
       schedule: "*/5 * * * *"
 
-# Standing instructions a Bot runs on a schedule. The sweep offers due routines to the shared work
-# queue and hands each firing to the API server, which runs the turn as the person who scheduled it.
-routines:
-  # Off by default, because it needs a secret. Without `secrets.workerSharedSecret` the API server
-  # refuses every handoff, and a CronJob whose every run is a 401 is worse than no CronJob at all.
-  enabled: false
-  # Inside the 15-minute floor the tools enforce, so a firing waits at most one tick.
-  schedule: "*/5 * * * *"
-
 # Deleting attachments somebody staged and then never sent. `attachedAt` stays null until an
 # attachment is actually sent, and the upload endpoint counts exactly those null rows against two
 # separate caps: eight per composer session, which is the per-message limit the composer's own screen
@@ -437,7 +428,7 @@ routines:
 # anybody who reaches 32 can attach nothing, in any channel, for good.
 attachments:
   culler:
-    # On by default, unlike `routines` above: this needs nothing but the database, which every
+    # On by default: this needs nothing but the database, which every
     # deployment already has, so there is no failure mode where enabling it does more harm than the
     # rows it was written to remove. Nothing but the database is meant literally — the script reads
     # `DATABASE_URL` and no other variable, which is why this CronJob carries no secret at all.
@@ -544,9 +535,6 @@ secrets:
   composioApiKey: ""
   # Sent to `config.managedAgent.url` on every call. Required when that url is set.
   managedAgentToken: ""
-  # Required when `routines.enabled`: what the CronJob presents to the API server to be recognised
-  # as the worker rather than as an unauthenticated caller.
-  workerSharedSecret: ""
   # The client secret for whichever provider is configured above.
   googleClientSecret: ""
   microsoftClientSecret: ""
@@ -627,8 +615,6 @@ networkPolicy:
   # Extra egress for the culler. Empty falls back to `extraEgress`, where an external database is
   # already named; set it to give the culler a narrower list.
   cullerExtraEgress: []
-  # The same, for the routines sweep.
-  routinesExtraEgress: []
   # The same, for the attachments culler.
   attachmentsCullerExtraEgress: []
 

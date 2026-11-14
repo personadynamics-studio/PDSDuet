@@ -13,7 +13,6 @@ function requestRow(
 ): SignInRequestRecord {
   return {
     ...row,
-    continuation: (row.continuation as Record<string, unknown> | null) ?? null,
   };
 }
 
@@ -25,7 +24,6 @@ export function createPasswordStore(database: Database): PasswordStore {
         .insert(signInRequests)
         .values({
           ...input,
-          continuation: input.continuation ?? null,
           status: "pending",
         })
         .returning();

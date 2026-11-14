@@ -68,11 +68,10 @@ the right limit for every other object this chart writes and the wrong one here,
 not a truncated name, it is `helm install` rejected outright.
 
 Reached at a 43-character release name, which is an ordinary length for a name that says the
-environment and the region. All three of this chart's CronJobs were built on the 63-character helper
-and all three were rejected together.
+environment and the region. A CronJob name must leave room for Kubernetes' generated job suffix.
 
 THE RELEASE NAME IS TRUNCATED, NOT THE WHOLE STRING, so the component survives. Cutting the joined
-name at 52 would give a long release two CronJobs called the same thing — `...-routines` and
+name at 52 would give a long release two CronJobs called the same thing — `...-attachments-culler` and
 `...-culler` both ending as the first 52 characters of the release name — which is a release that
 cannot install for a second, stranger reason. Trimming the prefix instead keeps the suffix that says
 which sweep this is, which is the part a person reads.
@@ -102,16 +101,6 @@ which fails the install rather than the feature.
 `kindIs "invalid"` rather than `| default true`, for the reason `commonEnv` gives above: sprig's
 `default` substitutes on EMPTY, and `false` is empty, so `| default true` would switch the sweep back
 on for the deployment that had deliberately switched it off.
-
-IT ANSWERS THE SAME QUESTION ITS SIBLINGS DO, WHICH IT USED NOT TO. This used to hand the value back
-untouched for its callers to compare against the string `"true"`, and a string comparison is not what
-`if .Values.routines.enabled` next door does. `--set attachments.culler.enabled=1` reaches a template
-as the integer 1, and `=yes` reaches it as the string "yes". Go's templating calls both of those
-true, so the routines CronJob renders for either — while this returned "1" or "yes", matched neither
-caller, and rendered NEITHER the CronJob NOR the NetworkPolicy that fences it. No error, no resource,
-and an operator with every reason to believe the sweep was on. Both spellings were driven through
-`helm template` before this changed and after. The answer is now the template engine's own notion of
-truth, which is the one the rest of the chart was already using.
 
 THE ONE VALUE IT REFUSES RATHER THAN HONOURS, because agreeing with the siblings here would have been
 a regression rather than a fix. That same notion of truth calls the non-empty string "false" TRUE, so
@@ -540,25 +529,6 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
       name: {{ include "openbot.secretName" . }}
       key: otel-headers
       optional: true
-{{- end }}
-{{- /*
-  One definition, for the same reason `openbot.databaseUrlEnv` is one (see its comment above): the
-  API server needs this value to RECOGNISE the worker, and the routines CronJob needs the same value
-  to BE the worker. Two definitions could drift; this can't. Gated on `routines.enabled` so a
-  deployment that never turns routines on gets no env var pointing at a key its secret store may not
-  hold.
-
-  Above `config.extraEnv`, not below it: Kubernetes takes the last of a duplicate name, and this must
-  lose to an operator's own value, not win over it. Below it, this chart's own secretKeyRef would
-  override whatever `extraEnv` set, which turns the escape hatch into a trap for the one variable
-  someone would need it for.
-*/}}
-{{- if (.Values.routines).enabled }}
-- name: WORKER_SHARED_SECRET
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "openbot.secretName" . }}
-      key: worker-shared-secret
 {{- end }}
 {{- with .Values.config.extraEnv }}
 {{ toYaml . }}

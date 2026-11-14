@@ -8,16 +8,6 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type {
-  TriggerConfig,
-  TriggerKind,
-} from "../../responsibilities/triggers";
-import type {
-  ResponsibilityContinuation,
-  ResponsibilitySource,
-  ResponsibilitySubscription,
-} from "../../responsibilities/types";
-import type { HeadlessWaiting } from "@openbot/toolkit/headless-tools";
 import { agents, credentials, users } from "./core";
 import { jsonb } from "./json";
 
@@ -53,7 +43,7 @@ export const responsibilities = pgTable(
     progress: text("progress").notNull().default(""),
     lastResult: text("last_result"),
     subscriptions: jsonb("subscriptions")
-      .$type<ResponsibilitySubscription[]>()
+      
       .notNull()
       .default([]),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -79,7 +69,7 @@ export const responsibilityEvents = pgTable(
     ownerUserId: text("owner_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    source: text("source").$type<ResponsibilitySource>().notNull(),
+    source: text("source").notNull(),
     externalId: text("external_id").notNull(),
     type: text("type").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
@@ -109,8 +99,8 @@ export const responsibilityRuns = pgTable(
     status: responsibilityRunStatus("status").notNull().default("queued"),
     replyText: text("reply_text"),
     error: text("error"),
-    waiting: jsonb("waiting").$type<HeadlessWaiting>(),
-    continuation: jsonb("continuation").$type<ResponsibilityContinuation>(),
+    waiting: jsonb("waiting"),
+    continuation: jsonb("continuation"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -166,8 +156,8 @@ export const responsibilityTriggers = pgTable(
     responsibilityId: text("responsibility_id")
       .notNull()
       .references(() => responsibilities.id, { onDelete: "cascade" }),
-    kind: text("kind").$type<TriggerKind>().notNull(),
-    config: jsonb("config").$type<TriggerConfig>().notNull(),
+    kind: text("kind").notNull(),
+    config: jsonb("config").notNull(),
     credentialId: uuid("credential_id").references(() => credentials.id),
     /** Paused triggers acknowledge deliveries but never queue a run. */
     enabled: boolean("enabled").notNull().default(true),

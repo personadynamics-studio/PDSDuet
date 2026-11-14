@@ -6,11 +6,6 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type {
-  BindingTransport,
-  DeliveryScope,
-  DeliveryState,
-} from "../../delivery/types";
 import { agents, channels, users } from "./core";
 
 const at = () =>
@@ -32,7 +27,7 @@ export const deliveryBindings = pgTable(
   {
     id: text("id").primaryKey(),
     ...scope(),
-    transport: text("transport").$type<BindingTransport>().notNull(),
+    transport: text("transport").notNull(),
     identity: text("identity").notNull(),
     realm: text("realm").notNull(),
     address: text("address").notNull(),
@@ -57,7 +52,7 @@ export const deliveryBindings = pgTable(
 export const deliveryChallenges = pgTable("delivery_challenges", {
   id: text("id").primaryKey(),
   ...scope(),
-  transport: text("transport").$type<BindingTransport>().notNull(),
+  transport: text("transport").notNull(),
   address: text("address"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
@@ -84,11 +79,11 @@ export const deliveryInbox = pgTable(
     id: text("id").primaryKey(),
     ...scope(),
     bindingId: text("binding_id"),
-    source: text("source").$type<BindingTransport | "native">().notNull(),
+    source: text("source").notNull(),
     realm: text("realm").notNull(),
     externalId: text("external_id").notNull(),
     text: text("text").notNull(),
-    state: text("state").$type<DeliveryState>().notNull().default("queued"),
+    state: text("state").notNull().default("queued"),
     error: text("error"),
     createdAt: at(),
   },
@@ -109,11 +104,11 @@ export const deliveryOutbox = pgTable(
     dedupeKey: text("dedupe_key").notNull().unique(),
     bindingId: text("binding_id"),
     deviceId: text("device_id"),
-    transport: text("transport").$type<BindingTransport | "push">().notNull(),
+    transport: text("transport").notNull(),
     text: text("text").notNull(),
     kind: text("kind").$type<"reply" | "question" | "approval">().notNull(),
     requestId: text("request_id"),
-    state: text("state").$type<DeliveryState>().notNull().default("queued"),
+    state: text("state").notNull().default("queued"),
     providerId: text("provider_id"),
     error: text("error"),
     createdAt: at(),
@@ -123,9 +118,3 @@ export const deliveryOutbox = pgTable(
     index("delivery_outbox_provider_idx").on(t.transport, t.providerId),
   ],
 );
-// Stored scope is intentionally canonical; requests cannot supply a different thread when confirming.
-export type DeliveryChallenge = DeliveryScope & {
-  id: string;
-  transport: BindingTransport;
-  address: string | null;
-};
