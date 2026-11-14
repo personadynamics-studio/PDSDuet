@@ -149,14 +149,6 @@ spec:
                 secretKeyRef:
                   name: {{ default (include "openbot.secretName" .) .Values.computers.existingTokenSecret }}
                   key: computer-token
-            {{- with .Values.computers.maxBrowsers }}
-            - name: COMPUTER_MAX_BROWSERS
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.computers.browserIdleMs }}
-            - name: COMPUTER_BROWSER_IDLE_MS
-              value: {{ . | quote }}
-            {{- end }}
             {{- with include "openbot.computerEnv" . | fromJsonArray }}
 {{ toYaml . | indent 12 }}
             {{- end }}

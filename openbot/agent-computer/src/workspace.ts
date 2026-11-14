@@ -110,7 +110,9 @@ export function createWorkspace(
   async function resolvePath(
     requested: string,
     forWrite: boolean,
+    signal?: AbortSignal,
   ): Promise<string> {
+    signal?.throwIfAborted();
     if (typeof requested !== "string" || !requested.trim()) {
       throw new WorkspacePathError("A file path is required.");
     }
@@ -145,10 +147,11 @@ export function createWorkspace(
       }
       // The parent directory does not exist yet. Walk up to the nearest one that does and verify it,
       // so a write into a new subdirectory is allowed but cannot be aimed through a symlink.
-      realAnchor = await nearestExistingAncestor(root, anchor);
+      realAnchor = await nearestExistingAncestor(root, anchor, signal);
     }
     assertInside(root, realAnchor, wanted);
 
+    signal?.throwIfAborted();
     if (!forWrite) return realAnchor;
 
     /*
@@ -171,7 +174,7 @@ export function createWorkspace(
      * trail afterwards. A permissive workspace is a decision a deployment can make. A trail that
      * describes a different file from the one on disk is not.
      */
-    const landing = await writeDestination(target, wanted);
+    const landing = await writeDestination(target, wanted, signal);
     if (landing === target) return target;
 
     // A link was followed, so the destination gets the checks the requested path already passed:
@@ -203,18 +206,19 @@ export function createWorkspace(
      * listing that stops at the first level would show a `reports` directory and no way in. Bounded by
      * entry count for the same reason everything else here is bounded.
      */
-    async list(requested = "."): Promise<{
+    async list(requested = ".", signal?: AbortSignal): Promise<{
       path: string;
       entries: WorkspaceEntry[];
       truncated: boolean;
     }> {
+      signal?.throwIfAborted();
       const root = await realpath(rootPath);
       // "." and "" both mean the workspace itself, which `resolvePath` would reject as a bare relative
       // path with nothing in it. Anything else goes through the same confinement as a read.
       const start =
         requested === "." || requested.trim() === ""
           ? root
-          : await resolvePath(requested, false);
+          : await resolvePath(requested, false, signal);
 
       const info = await stat(start).catch(() => null);
       if (!info) {
@@ -228,9 +232,11 @@ export function createWorkspace(
       let truncated = false;
 
       const walk = async (dir: string): Promise<void> => {
+        signal?.throwIfAborted();
         if (truncated) return;
         const found = await readdir(dir, { withFileTypes: true });
         for (const item of found) {
+          signal?.throwIfAborted();
           if (entries.length >= limits.listEntries) {
             truncated = true;
             return;
@@ -258,13 +264,13 @@ export function createWorkspace(
     },
 
     /** Read a text file. Bounded, and it says when it gave you less than the whole thing. */
-    async read(requested: string): Promise<{
+    async read(requested: string, signal?: AbortSignal): Promise<{
       path: string;
       text: string;
       truncated: boolean;
       bytes: number;
     }> {
-      const full = await resolvePath(requested, false);
+      const full = await resolvePath(requested, false, signal);
       const info = await stat(full).catch(() => null);
       if (!info) {
         throw new WorkspaceFileError(`There is no file at ${requested}.`);
@@ -275,7 +281,7 @@ export function createWorkspace(
         );
       }
 
-      const buffer = await readFile(full);
+      const buffer = await readFile(full, { signal });
       const slice = buffer.subarray(0, limits.readBytes);
       return {
         path: requested,
@@ -295,13 +301,13 @@ export function createWorkspace(
      * resolution. The file is streamed from disk rather than read into a string, so PDFs, images and
      * archives are returned byte-for-byte and the text read limit does not apply.
      */
-    async download(requested: string): Promise<{
+    async download(requested: string, signal?: AbortSignal): Promise<{
       path: string;
       name: string;
       bytes: number;
       body: Blob;
     }> {
-      const full = await resolvePath(requested, false);
+      const full = await resolvePath(requested, false, signal);
       const info = await stat(full).catch(() => null);
       if (!info) {
         throw new WorkspaceFileNotFoundError(
@@ -316,6 +322,7 @@ export function createWorkspace(
           `That file is ${info.size} bytes and the download limit is ${limits.downloadBytes}.`,
         );
       }
+      signal?.throwIfAborted();
 
       return {
         path: requested,
@@ -331,7 +338,7 @@ export function createWorkspace(
     async write(
       requested: string,
       contents: string,
-      options: { append?: boolean } = {},
+      options: { append?: boolean; signal?: AbortSignal } = {},
     ): Promise<{ path: string; bytes: number; appended: boolean }> {
       if (typeof contents !== "string") {
         throw new WorkspaceFileError("The contents to write must be text.");
@@ -343,11 +350,12 @@ export function createWorkspace(
         );
       }
 
-      const full = await resolvePath(requested, true);
+      const full = await resolvePath(requested, true, options.signal);
       await mkdir(dirname(full), { recursive: true });
       await writeFile(full, contents, {
         encoding: "utf8",
         flag: options.append ? "a" : "w",
+        signal: options.signal,
       });
       return { path: requested, bytes, appended: options.append === true };
     },
@@ -397,9 +405,11 @@ const MAX_LINK_HOPS = 32;
 async function writeDestination(
   target: string,
   shown: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   let current = target;
   for (let hop = 0; hop <= MAX_LINK_HOPS; hop += 1) {
+    signal?.throwIfAborted();
     const entry = await lstat(current).catch(() => null);
     // Nothing there, or something that is not a link. This is where the write lands.
     if (entry === null || !entry.isSymbolicLink()) return current;
@@ -415,9 +425,11 @@ async function writeDestination(
 async function nearestExistingAncestor(
   root: string,
   target: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   let current = target;
   for (;;) {
+    signal?.throwIfAborted();
     try {
       return await realpath(current);
     } catch {

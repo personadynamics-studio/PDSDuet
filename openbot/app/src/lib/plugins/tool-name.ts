@@ -129,24 +129,9 @@ const OWN_TOOLS: Record<string, { running: string; done: string }> = {
     running: "正在讀取你的電郵和日曆",
     done: "已讀取你的電郵和日曆",
   },
-  // server/src/openduet/tasks.ts. Drawn as a plain line, so without these it read "add_tasks".
-  add_tasks: {
-    running: "正在加入你的任務清單",
-    done: "已加入你的任務清單",
-  },
   make_page: {
     running: "正在製作",
     done: "已製作",
-  },
-  // server/src/openduet/offers.ts. Drawn as the task's card once done; this is the moment before.
-  offer_task: {
-    running: "正在新增任務",
-    done: "已新增任務",
-  },
-  // server/src/openduet/tasks.ts. Drawn as the started task's card once done.
-  start_task: {
-    running: "正在開始任務",
-    done: "已開始任務",
   },
   // server/src/memory. Drawn as plain lines, so without these they read "recall_personal_memory".
   recall_personal_memory: {

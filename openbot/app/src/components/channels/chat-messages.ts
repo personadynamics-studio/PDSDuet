@@ -1,9 +1,7 @@
-import type { ActivityMessage, Message, ToolCall } from "@ag-ui/core";
+import type { Message, ToolCall } from "@ag-ui/core";
 import type { ThreadMessage } from "@openbot/shared/thread-events";
 import { classifyAttachment } from "@/lib/channels/attachments";
 import { asText, REFUSAL_MARKER } from "@/lib/plugins/tool-result";
-import { readChannelHello } from "@/lib/channels/channel-hello";
-import { readTaskFrame } from "@openbot/shared/task-brief";
 
 /**
  * Transcript projection that pairs assistant tool calls with later tool-result messages.
@@ -16,8 +14,7 @@ export type VisibleChatItem =
       role: "user" | "assistant";
       text: string;
       senderBotId?: string;
-      /** One accepted reply may open several executions, each retaining its own row ID. */
-      taskInput?: { id: string; replay: boolean };
+      senderUserId?: string;
     }
   | {
       kind: "tool";
@@ -26,16 +23,6 @@ export type VisibleChatItem =
       /** The result, once there is one. Absent means the call is still in flight. */
       result?: string;
     }
-  /**
-   * Something a Bot is drawing rather than saying.
-   *
-   * Carried whole rather than projected into fields of our own, because what is inside an activity
-   * belongs to whoever renders it: an interface a Bot generated arrives here as partial HTML that
-   * grows on every chunk, and the renderer that paints it is the one that knows what a half-finished
-   * one looks like. Reshaping it on the way past would mean this file had to understand every
-   * activity type anybody registers.
-   */
-  | { kind: "activity"; id: string; message: ActivityMessage }
   /**
    * EVERY file a person attached to one turn, pulled out of the array form of its content.
    *
@@ -342,7 +329,6 @@ export function toVisibleChatItems(
       results.set(message.toolCallId, toolResultText(message.content));
   }
 
-  const acceptedInputs = new Set<string>();
   return messages.flatMap((message): VisibleChatItem[] => {
     if (!isReadableMessage(message)) return [];
     // Every row built below is keyed on `message.id`, including the one that keys on it by string
@@ -397,18 +383,6 @@ export function toVisibleChatItems(
       return items;
     }
 
-    /*
-     * Activities are their own messages, in order, beside the prose.
-     *
-     * Kept rather than dropped, which is what this projection used to do with every role it did not
-     * name. A Bot that draws its own interface says nothing in `content` and calls no tool the
-     * transcript can pair a result with — the whole answer is the activity. Falling through to the
-     * bail below meant the turn rendered as silence.
-     */
-    if (message.role === "activity") {
-      return [{ kind: "activity", id: message.id, message }];
-    }
-
     if (message.role !== "user") return [];
 
     if (
@@ -425,32 +399,20 @@ export function toVisibleChatItems(
             .map((part) => (isReadablePart(part) ? readText(part) : null))
             .filter((part) => part !== null)
             .join("\n");
-    if (typeof message.content === "string") {
-      // A new channel's hello: sent for the person, never by them. The Bot speaks first, so nothing
-      // is drawn where their bubble would be (shared/channel-hello.ts).
-      if (readChannelHello(text) !== null) return [];
-    }
-    const inputId = readTaskFrame(text)?.inputId;
-    const taskInput = inputId
-      ? { id: inputId, replay: acceptedInputs.has(inputId) }
-      : undefined;
-    if (inputId) acceptedInputs.add(inputId);
-    else if (message.id.startsWith("person-response:"))
-      acceptedInputs.add(message.id);
     const words: VisibleChatItem[] = text
       ? [
           {
             kind: "text",
             id: message.id,
             role: "user",
+            senderUserId: message.senderUserId,
             text,
-            ...(taskInput ? { taskInput } : {}),
           },
         ]
       : [];
     // Keep each execution boundary for tool/card grouping, but do not resend its attachments or
     // present it as another human submission. The transcript draws a replay as an event.
-    if (typeof message.content === "string" || taskInput?.replay) return words;
+    if (typeof message.content === "string") return words;
 
     /*
      * ATTACHMENTS FIRST, THEN THE CAPTION, which is the order they are read in and the order every

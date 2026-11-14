@@ -1,7 +1,6 @@
 import type { AuditInitiator } from "../audit";
 import { withUntrustedNotice } from "../untrusted-content";
 import { ComputerUnavailableError, createComputerTransport } from "./client";
-import type { PageFrameStore } from "./page-frames";
 import type { ComputerProvider, ComputerUpdate } from "./provider";
 import type {
   ActionResult, ClickInput, ComputerStatus, ControlState, DownloadFileInput,
@@ -17,19 +16,20 @@ export {
   WorkspaceRequestError, WorkspaceTooLargeError,
 } from "./client";
 export type ActionActor = { id: string; userId?: string; initiator?: AuditInitiator };
-export type ComputerGatewayOptions = { provider: ComputerProvider; pageFrames?: PageFrameStore };
+export type ComputerGatewayOptions = { provider: ComputerProvider };
 
 export interface ComputerGateway {
   readonly provider: ComputerProvider;
-  locate(botId: string): Promise<string>;
+  locate(botId: string, signal?: AbortSignal): Promise<string>;
   status(botId: string): Promise<ComputerStatus>;
-  screenshot(botId: string): Promise<ScreenshotResult>;
-  snapshot(botId: string): Promise<SnapshotResult>;
-  read(botId: string): Promise<ReadResult>;
+  screenshot(botId: string, signal?: AbortSignal): Promise<ScreenshotResult>;
+  snapshot(botId: string, signal?: AbortSignal): Promise<SnapshotResult>;
+  read(botId: string, signal?: AbortSignal): Promise<ReadResult>;
   navigate(
     botId: string,
     url: string,
     toolCallId?: string,
+    signal?: AbortSignal,
   ): Promise<NavigateResult>;
   click(
     botId: string,
@@ -49,10 +49,12 @@ export interface ComputerGateway {
   scroll(
     botId: string,
     input: ScrollInput,
+    signal?: AbortSignal,
   ): Promise<ActionResult>;
   readFile(
     botId: string,
     input: ReadFileInput,
+    signal?: AbortSignal,
   ): Promise<ReadFileResult>;
   downloadFile(
     botId: string,
@@ -66,6 +68,7 @@ export interface ComputerGateway {
   listFiles(
     botId: string,
     input: ListFilesInput,
+    signal?: AbortSignal,
   ): Promise<ListFilesResult>;
   runCommand(
     botId: string,
@@ -75,32 +78,39 @@ export interface ComputerGateway {
   writeFile(
     botId: string,
     input: WriteFileInput,
+    signal?: AbortSignal,
   ): Promise<WriteFileResult>;
-  control(botId: string, requestId?: string): Promise<ControlState>;
+  control(botId: string, requestId?: string, signal?: AbortSignal): Promise<ControlState>;
   requestHelp(
     botId: string,
     reason: string,
     toolCallId?: string,
+    signal?: AbortSignal,
   ): Promise<ControlState>;
   takeControl(
     botId: string,
     requestId?: string,
+    signal?: AbortSignal,
   ): Promise<ControlState>;
   releaseControl(
     botId: string,
     requestId?: string,
+    signal?: AbortSignal,
   ): Promise<ControlState>;
   cancelControl(
     botId: string,
     requestId?: string,
+    signal?: AbortSignal,
   ): Promise<ControlState>;
   requestSecret(
     botId: string,
     input: SecretRequest,
+    signal?: AbortSignal,
   ): Promise<ControlState>;
   supplySecret(
     botId: string,
     text: string,
+    signal?: AbortSignal,
   ): Promise<SecretResult>;
   /** Fill and submit a login form on the Bot's current page. See passwords/service.ts. */
   signIn(
@@ -114,7 +124,7 @@ export interface ComputerGateway {
     input: SignInCodeInput,
     signal?: AbortSignal,
   ): Promise<SignInCodeResult>;
-  humanInput(botId: string, input: HumanInput): Promise<HumanInputResult>;
+  humanInput(botId: string, input: HumanInput, signal?: AbortSignal): Promise<HumanInputResult>;
   computers(): Promise<{
     isolation: "per-bot" | "shared";
     computers: {
@@ -136,52 +146,52 @@ export interface ComputerGateway {
 }
 
 export function createComputerGateway(options: ComputerGatewayOptions): ComputerGateway {
-  const { provider, pageFrames } = options;
+  const { provider } = options;
   const transport = createComputerTransport({});
   return {
     provider,
-    locate: (botId) => provider.locate(botId),
+    locate: (botId, signal) => provider.locate(botId, signal),
     status: (botId) => provider.status(botId),
-    screenshot: async (botId) => transport.call<ScreenshotResult>(await provider.locate(botId), botId, "/screenshot"),
-    async snapshot(botId) {
-      return withUntrustedNotice(await transport.post<SnapshotResult>(await provider.locate(botId), botId, "/snapshot", {}), "web page", ["title", "elements"]);
+    screenshot: async (botId, signal) => transport.call<ScreenshotResult>(await provider.locate(botId, signal), botId, "/screenshot", undefined, signal),
+    async snapshot(botId, signal) {
+      return withUntrustedNotice(await transport.post<SnapshotResult>(await provider.locate(botId, signal), botId, "/snapshot", {}, signal), "web page", ["title", "elements"]);
     },
-    async read(botId) {
-      return withUntrustedNotice(await transport.call<ReadResult>(await provider.locate(botId), botId, "/read"), "web page", ["title", "text"]);
+    async read(botId, signal) {
+      return withUntrustedNotice(await transport.call<ReadResult>(await provider.locate(botId, signal), botId, "/read", undefined, signal), "web page", ["title", "text"]);
     },
-    async navigate(botId, url, toolCallId) {
-      const result = await transport.navigate(await provider.locate(botId), botId, url, toolCallId);
+    async navigate(botId, url, toolCallId, signal) {
+      const result = await transport.navigate(await provider.locate(botId, signal), botId, url, toolCallId, signal);
       return withUntrustedNotice(result, "web page", ["title", "text"]);
     },
-    click: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId), botId, "/click", input, signal),
-    type: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId), botId, "/type", input, signal),
-    key: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId), botId, "/key", input, signal),
-    scroll: async (botId, input) => transport.post<ActionResult>(await provider.locate(botId), botId, "/scroll", input),
-    async readFile(botId, input) {
-      return withUntrustedNotice(await transport.post<ReadFileResult>(await provider.locate(botId), botId, "/files/read", input), "workspace file", ["text"]);
+    click: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/click", input, signal),
+    type: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/type", input, signal),
+    key: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/key", input, signal),
+    scroll: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/scroll", input, signal),
+    async readFile(botId, input, signal) {
+      return withUntrustedNotice(await transport.post<ReadFileResult>(await provider.locate(botId, signal), botId, "/files/read", input, signal), "workspace file", ["text"]);
     },
     async downloadFile(botId, input, signal) {
-      const download = await transport.download(await provider.locate(botId), botId, `/files/download?path=${encodeURIComponent(input.path)}`, signal, 300_000);
+      const download = await transport.download(await provider.locate(botId, signal), botId, `/files/download?path=${encodeURIComponent(input.path)}`, signal, 300_000);
       return { ...download, name: input.path.split(/[\\/]/).pop() || "download" };
     },
-    listFiles: async (botId, input) => transport.post<ListFilesResult>(await provider.locate(botId), botId, "/files/list", input),
+    listFiles: async (botId, input, signal) => transport.post<ListFilesResult>(await provider.locate(botId, signal), botId, "/files/list", input, signal),
     async runCommand(botId, input, signal) {
-      const result = await transport.post<RunCommandResult>(await provider.locate(botId), botId, "/exec", input, signal, 615_000);
+      const result = await transport.post<RunCommandResult>(await provider.locate(botId, signal), botId, "/exec", input, signal, 615_000);
       return withUntrustedNotice(result, "command output", ["stdout", "stderr"]);
     },
-    writeFile: async (botId, input) => transport.post<WriteFileResult>(await provider.locate(botId), botId, "/files/write", input),
-    control: async (botId, requestId) => transport.call<ControlState>(await provider.locate(botId), botId, `/control${requestId ? `?requestId=${encodeURIComponent(requestId)}` : ""}`),
-    requestHelp: async (botId, reason, toolCallId) => transport.post<ControlState>(await provider.locate(botId), botId, "/control/request", { reason, ...(toolCallId ? { toolCallId } : {}) }),
-    takeControl: async (botId, requestId) => transport.post<ControlState>(await provider.locate(botId), botId, "/control/take", { requestId }),
-    releaseControl: async (botId, requestId) => transport.post<ControlState>(await provider.locate(botId), botId, "/control/release", { requestId }),
-    cancelControl: async (botId, requestId) => transport.post<ControlState>(await provider.locate(botId), botId, "/control/cancel", { requestId }),
-    requestSecret: async (botId, input) => transport.post<ControlState>(await provider.locate(botId), botId, "/control/secret", input),
-    supplySecret: async (botId, text) => transport.post<SecretResult>(await provider.locate(botId), botId, "/human/secret", { text }),
-    signIn: async (botId, input, signal) => transport.post<SignInFillResult>(await provider.locate(botId), botId, "/sign-in/fill", input, signal, 75_000),
-    signInCode: async (botId, input, signal) => transport.post<SignInCodeResult>(await provider.locate(botId), botId, "/sign-in/code", input, signal, 75_000),
-    humanInput: async (botId, input) => {
+    writeFile: async (botId, input, signal) => transport.post<WriteFileResult>(await provider.locate(botId, signal), botId, "/files/write", input, signal),
+    control: async (botId, requestId, signal) => transport.call<ControlState>(await provider.locate(botId, signal), botId, `/control${requestId ? `?requestId=${encodeURIComponent(requestId)}` : ""}`, undefined, signal),
+    requestHelp: async (botId, reason, toolCallId, signal) => transport.post<ControlState>(await provider.locate(botId, signal), botId, "/control/request", { reason, ...(toolCallId ? { toolCallId } : {}) }, signal),
+    takeControl: async (botId, requestId, signal) => transport.post<ControlState>(await provider.locate(botId, signal), botId, "/control/take", { requestId }, signal),
+    releaseControl: async (botId, requestId, signal) => transport.post<ControlState>(await provider.locate(botId, signal), botId, "/control/release", { requestId }, signal),
+    cancelControl: async (botId, requestId, signal) => transport.post<ControlState>(await provider.locate(botId, signal), botId, "/control/cancel", { requestId }, signal),
+    requestSecret: async (botId, input, signal) => transport.post<ControlState>(await provider.locate(botId, signal), botId, "/control/secret", input, signal),
+    supplySecret: async (botId, text, signal) => transport.post<SecretResult>(await provider.locate(botId, signal), botId, "/human/secret", { text }, signal),
+    signIn: async (botId, input, signal) => transport.post<SignInFillResult>(await provider.locate(botId, signal), botId, "/sign-in/fill", input, signal, 75_000),
+    signInCode: async (botId, input, signal) => transport.post<SignInCodeResult>(await provider.locate(botId, signal), botId, "/sign-in/code", input, signal, 75_000),
+    humanInput: async (botId, input, signal) => {
       const { kind, ...payload } = input;
-      return transport.post<HumanInputResult>(await provider.locate(botId), botId, `/human/${kind}`, payload);
+      return transport.post<HumanInputResult>(await provider.locate(botId, signal), botId, `/human/${kind}`, payload, signal);
     },
     async computers() {
       const computers = await provider.list();
@@ -190,7 +200,6 @@ export function createComputerGateway(options: ComputerGatewayOptions): Computer
     stopComputer: (botId) => provider.stop(botId),
     async resetComputer(botId) {
       const result = await provider.reset(botId);
-      await pageFrames?.clear(botId);
       return result;
     },
     async updateComputer(botId) {

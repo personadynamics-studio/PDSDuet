@@ -1,45 +1,22 @@
 import { z } from "zod";
-import { currentApprovalContext } from "../approvals/types";
-import { type AuditStore, recordAuditEvent } from "../audit";
 import {
   type HeadlessTool,
   HeadlessToolSuspension,
 } from "@openbot/toolkit/headless-tools";
-import {
-  type ActionActor,
-  type ComputerGateway,
-} from "./gateway";
+import type { ComputerGateway } from "./gateway";
+import { HandoffRequestError } from "./client";
 import type { ControlState } from "./schema";
-
-/** What the headless sign-in tool needs from the passwords module. See passwords/service.ts. */
-export type HeadlessSignInRequester = {
-  request(input: {
-    ownerUserId: string;
-    botId: string;
-    site: string;
-    reason?: string;
-    actor: ActionActor;
-    threadId?: string;
-    toolCallId?: string;
-    continuation?: Record<string, unknown>;
-    notify?: boolean;
-  }): Promise<{ id: string; origin: string }>;
-};
 
 /** Shared by the headless tool and the browser's registration, so both promise the same thing. */
 export const SIGN_IN_TOOL_DESCRIPTION =
-  "Ask the person you work for to sign you in to a website. They get a private sign-in form outside this conversation (or take over the browser), and their login is typed straight into your browser by the computer. You never see the username, password or code, and must never ask for them any other way. Open the site's sign-in page first, then call this with the site's address. This turn pauses until they answer; you are then told only whether it worked.";
+  "Ask the person to take over your browser and sign in to a website. Open its sign-in page first. The person enters their credentials in the browser; never ask them to send a password in chat. This turn waits until they return control.";
 
 /** Shipped browser/file/command tools, with identity bound before the model supplies arguments. */
 export function createHeadlessComputerTools(options: {
   gateway: ComputerGateway;
   botId: string;
-  actor: ActionActor;
-  auditStore?: AuditStore;
-  /** The private sign-in request. Absent leaves the Bot with help and secret requests only. */
-  signIn?: HeadlessSignInRequester;
 }): HeadlessTool[] {
-  const { gateway, botId, actor, auditStore, signIn } = options;
+  const { gateway, botId } = options;
   const ref = z.string().min(1);
   const text = z.string().min(1);
   const noArgs = z.strictObject({});
@@ -58,7 +35,15 @@ export function createHeadlessComputerTools(options: {
         const input = schema.parse(args);
         if (context.signal.aborted)
           throw new Error("The computer action was stopped.");
-        return execute(input, context);
+        try {
+          return await execute(input, context);
+        } catch (error) {
+          if (!(error instanceof HandoffRequestError) || error.code !== "HUMAN_CONTROL") throw error;
+          const state = await gateway.control(botId, undefined, context.signal);
+          if (state.holder !== "human") return { ok: false, interrupted: true, reason: "The person took over this action and has returned control. Read the current page before continuing." };
+          const handoff = state.request?.toolCallId === context.toolCallId ? state : await gateway.requestHelp(botId, "Return browser control when you have finished helping.", context.toolCallId, context.signal);
+          waiting(handoff, "Waiting for the person to return browser control.");
+        }
       },
     };
   }
@@ -70,6 +55,7 @@ export function createHeadlessComputerTools(options: {
     throw new HeadlessToolSuspension(reason, {
       kind,
       botId,
+      ...(state.request?.toolCallId ? { toolCallId: state.request.toolCallId } : {}),
       ...(state.request
         ? { requestId: state.request.id, handoff: state.request }
         : {}),
@@ -80,15 +66,8 @@ export function createHeadlessComputerTools(options: {
       "computer_navigate",
       "Open a web page and return its title and readable text. Use the returned content to answer.",
       z.strictObject({ url: text }),
-      async ({ url }, { toolCallId }) => {
-        const result = await gateway.navigate(botId, url, toolCallId);
-        if (result.challenge)
-          throw new HeadlessToolSuspension(result.challenge.reason, {
-            kind: "computer_handoff",
-            botId,
-            requestId: result.challenge.requestId,
-            source: result.challenge.kind,
-          });
+      async ({ url }, { toolCallId, signal }) => {
+        const result = await gateway.navigate(botId, url, toolCallId, signal);
         return { ok: true, ...result };
       },
     ),
@@ -96,19 +75,19 @@ export function createHeadlessComputerTools(options: {
       "computer_read",
       "Read the currently open browser page without navigating.",
       noArgs,
-      async () => ({ ok: true, ...(await gateway.read(botId)) }),
+      async (_, { signal }) => ({ ok: true, ...(await gateway.read(botId, signal)) }),
     ),
     tool(
       "computer_snapshot",
       "List fields, buttons and links with refs. Call before clicking or typing to read the current element refs.",
       noArgs,
-      async () => ({ ok: true, ...(await gateway.snapshot(botId)) }),
+      async (_, { signal }) => ({ ok: true, ...(await gateway.snapshot(botId, signal)) }),
     ),
     tool(
       "computer_screenshot",
       "Return an image of the browser currently open on your computer.",
       noArgs,
-      async () => ({ ok: true, ...(await gateway.screenshot(botId)) }),
+      async (_, { signal }) => ({ ok: true, ...(await gateway.screenshot(botId, signal)) }),
     ),
     tool(
       "computer_click",
@@ -149,27 +128,27 @@ export function createHeadlessComputerTools(options: {
       "computer_scroll",
       "Scroll down by pixels, or up with a negative deltaY. Defaults to 600.",
       z.strictObject({ deltaY: z.number().optional() }),
-      async (input) => ({
+      async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.scroll(botId, input)),
+        ...(await gateway.scroll(botId, input, signal)),
       }),
     ),
     tool(
       "computer_list_files",
       "List files and folders in your workspace. Call first before reading an uncertain filename.",
       z.strictObject({ path: z.string().optional() }),
-      async (input) => ({
+      async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.listFiles(botId, input)),
+        ...(await gateway.listFiles(botId, input, signal)),
       }),
     ),
     tool(
       "computer_read_file",
       "Read a saved file relative to your persistent workspace, such as notes.md.",
       z.strictObject({ path: text }),
-      async (input) => ({
+      async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.readFile(botId, input)),
+        ...(await gateway.readFile(botId, input, signal)),
       }),
     ),
     tool(
@@ -180,9 +159,9 @@ export function createHeadlessComputerTools(options: {
         contents: z.string(),
         append: z.boolean().optional(),
       }),
-      async (input) => ({
+      async (input, { signal }) => ({
         ok: true,
-        ...(await gateway.writeFile(botId, input)),
+        ...(await gateway.writeFile(botId, input, signal)),
       }),
     ),
     tool(
@@ -198,9 +177,9 @@ export function createHeadlessComputerTools(options: {
       "computer_request_help",
       "Create a durable request for the person to take the browser and sign in or clear a challenge. This unattended turn pauses until a person helps; never ask them to send you a password.",
       z.strictObject({ reason: text }),
-      async ({ reason }, { toolCallId }) =>
+      async ({ reason }, { toolCallId, signal }) =>
         waiting(
-          await gateway.requestHelp(botId, reason, toolCallId),
+          await gateway.requestHelp(botId, reason, toolCallId, signal),
           reason,
         ),
     ),
@@ -208,79 +187,22 @@ export function createHeadlessComputerTools(options: {
       "computer_request_secret",
       "Ask the person to enter one secret directly into the focused field. Click the field first. You must never receive the secret; this unattended turn pauses for the person.",
       z.strictObject({ label: text, ref }),
-      async (input) =>
+      async (input, { signal, toolCallId }) =>
         waiting(
-          await gateway.requestSecret(botId, input),
+          await gateway.requestSecret(botId, { ...input, toolCallId }, signal),
           `The person must enter ${input.label} directly into the page.`,
           "computer_secret",
         ),
     ),
   ];
-  if (signIn)
-    tools.push(
-      tool(
-        "computer_request_sign_in",
-        SIGN_IN_TOOL_DESCRIPTION,
-        z.strictObject({ site: text, reason: z.string().optional() }),
-        async ({ site, reason }, { toolCallId }) => {
-          const continuation = currentApprovalContext();
-          const request = await signIn.request({
-            ownerUserId: actor.userId ?? actor.id,
-            botId,
-            site,
-            ...(reason ? { reason } : {}),
-            actor,
-            ...(continuation?.threadId
-              ? { threadId: continuation.threadId }
-              : {}),
-            toolCallId,
-            ...(continuation
-              ? {
-                  continuation: continuation as unknown as Record<
-                    string,
-                    unknown
-                  >,
-                }
-              : {}),
-            notify: true,
-          });
-          throw new HeadlessToolSuspension(
-            `Waiting for the person to sign in to ${request.origin} in a private form.`,
-            {
-              kind: "computer_sign_in",
-              botId,
-              requestId: request.id,
-              signInRequestId: request.id,
-              site: request.origin,
-            },
-          );
-        },
-      ),
-    );
-  if (auditStore)
-    tools.push(
-      tool(
-        "report_refusal",
-        "Record a request you chose to decline, and why. This records evidence and does not enforce a policy.",
-        z.strictObject({ reason: text, request: z.string().optional() }),
-        async ({ reason, request }) => {
-          await recordAuditEvent(auditStore, {
-            eventType: "bot.declined",
-            targetType: "agent",
-            targetId: botId,
-            ...(actor.userId ? { actorUserId: actor.userId } : {}),
-            initiator: actor.initiator,
-            payload: {
-              bot: botId,
-              actor: actor.id,
-              reason: reason.slice(0, 500),
-              ...(request ? { request: request.slice(0, 500) } : {}),
-              reportedBy: "the Bot itself",
-            },
-          });
-          return { ok: true, recorded: true };
-        },
-      ),
-    );
+  tools.push(tool(
+    "computer_request_sign_in",
+    SIGN_IN_TOOL_DESCRIPTION,
+    z.strictObject({ site: text, reason: z.string().optional() }),
+    async ({ site, reason }, { toolCallId, signal }) => {
+      const explanation = reason ?? `Please sign in to ${site} in the browser, then return control.`;
+      waiting(await gateway.requestHelp(botId, explanation, toolCallId, signal), explanation);
+    },
+  ));
   return tools;
 }

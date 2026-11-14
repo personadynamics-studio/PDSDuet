@@ -1,81 +1,9 @@
-import type {
-  BrowserChallenge,
-  ComputerControlState,
-} from "@openbot/shared/computer-control";
-/**
- * The computer-use contract.
- *
- * One place that says what a tool call looks like, so neither the surface nor the computer has to
- * read the other's code to find out. Changing a name or a parameter here is a breaking change for
- * both sides: add, do not repurpose.
- *
- * The read-only tools sit alongside the acting ones, and every acting tool goes through the gateway,
- * so each is policy checked and written to the audit trail before it runs. Names are never
- * repurposed: this file only ever grows.
- */
-
-/**
- * Every tool the computer exposes.
- *
- * Ordered read-only first, then acting. `COMPUTER_ACTING_TOOLS` below is what the gateway uses to
- * decide which calls need a policy decision, so add acting tools to both lists.
- */
-export const COMPUTER_TOOLS = [
-  "computer_navigate",
-  "computer_screenshot",
-  "computer_read",
-  "computer_snapshot",
-  "computer_click",
-  "computer_type",
-  "computer_key",
-  "computer_scroll",
-  "computer_read_file",
-  "computer_download_file",
-  "computer_write_file",
-  "computer_list_files",
-] as const;
-
-/**
- * The tools that change something, or reach something that needs deciding on.
- *
- * These are the calls the gateway must decide on. Reading a PAGE a Bot has already been allowed to
- * open is not a new decision; clicking "Confirm payment" on it is.
- *
- * Every workspace file tool is here, including the read and the download. That differs from
- * `computer_read`, which is ungoverned, and it is deliberate: a page was already permitted when it
- * was opened, whereas the workspace accumulates whatever a Bot has put in it across every task it
- * has ever run, so "which files may this Bot read, list, download or write" is a question a
- * deployment genuinely needs to be able to answer.
- */
-export const COMPUTER_ACTING_TOOLS = [
-  // Navigation is governed too, and not only guarded. The client's target guard refuses a forbidden
-  // address on its own, which stops the request and writes nothing. That leaves the trail silent
-  // about an attempt to reach the cloud metadata endpoint, the single most security-relevant thing a
-  // Bot can try, while ticking a radio button is recorded. Governing it puts both in the trail.
-  "computer_navigate",
-  "computer_click",
-  "computer_type",
-  "computer_key",
-  "computer_scroll",
-  "computer_read_file",
-  "computer_download_file",
-  "computer_write_file",
-  "computer_list_files",
-] as const;
-
-export type ComputerActingToolName = (typeof COMPUTER_ACTING_TOOLS)[number];
-
-export function isActingTool(name: string): name is ComputerActingToolName {
-  return (COMPUTER_ACTING_TOOLS as readonly string[]).includes(name);
-}
-
-export type ComputerToolName = (typeof COMPUTER_TOOLS)[number];
+import type { ComputerControlState } from "@openbot/shared/computer-control";
 
 export type NavigateInput = { url: string; toolCallId?: string };
 export type NavigateResult = {
   /** The untrusted-content notice for the page's own fields. See untrusted-content.ts. */
   untrusted?: string;
-  challenge?: BrowserChallenge;
   url: string;
   title: string;
   /**
@@ -137,7 +65,6 @@ export type SnapshotElement = {
 
 export type SnapshotResult = {
   untrusted?: string;
-  challenge?: BrowserChallenge;
   url: string;
   title: string;
   elements: SnapshotElement[];
@@ -281,7 +208,7 @@ export type ControlState = ComputerControlState;
  * recorded. `ref` names the field it goes in, because a secret typed into whatever happens to have
  * focus goes nowhere when nothing does, and reports success while doing it.
  */
-export type SecretRequest = { label: string; ref: string };
+export type SecretRequest = { label: string; ref: string; toolCallId?: string };
 
 /**
  * What supplying a secret reports back.
@@ -391,3 +318,4 @@ export type ComputerStatus = {
   /** Set when state is "unreachable", in words a person can act on. */
   reason?: string;
 };
+

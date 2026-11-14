@@ -39,7 +39,10 @@ export function SharedUseRequests() {
   const isAdmin = me?.role === "admin";
   const requests = useQuery(sharedUseRequestsQueryOptions(isAdmin));
   const decide = useMutation(decideSharedUseMutationOptions(queryClient));
-  if (!isAdmin || !requests.data?.length) return null;
+  if (!isAdmin) return null;
+  if (requests.isPending) return <p role="status" className="mt-6">正在載入共用帳戶申請…</p>;
+  if (requests.error) return <p role="alert" className="mt-6 text-destructive">{requests.error.message}</p>;
+  if (!requests.data?.length) return <p className="mt-6 text-muted-foreground">目前沒有待處理的共用帳戶申請。</p>;
 
   return (
     <PageSection title="Shared account requests">

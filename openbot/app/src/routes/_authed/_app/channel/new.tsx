@@ -121,7 +121,7 @@ function RouteComponent() {
    * A page pushed over the app, in Chat's column (parity-spec 2.9): the back disc, "新增對話"
    * in the title pill, the To field at the head of the thread and Chat's own docked glass reply box.
    */
-  usePageChrome({ title: "新增對話", column: "phone" });
+  usePageChrome({ title: "新增對話" });
 
   if (profiles === undefined && !rosterError) return null;
 

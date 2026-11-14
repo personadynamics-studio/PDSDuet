@@ -85,7 +85,7 @@ export interface ComputerProvider {
   /** How the provider separates computers between Bots. */
   readonly isolation: "per-bot" | "shared";
   /** Return the base address of the computer for this Bot. */
-  locate(botId: string): Promise<string>;
+  locate(botId: string, signal?: AbortSignal): Promise<string>;
   /** Return the lifecycle state of the computer for this Bot. */
   status(botId: string): Promise<ComputerStatus>;
   /** Stop the computer for this Bot if it exists. */
@@ -171,7 +171,8 @@ export function createSharedComputerProvider(
     name: "shared",
     isolation: "shared",
 
-    async locate(_botId: string): Promise<string> {
+    async locate(_botId: string, signal?: AbortSignal): Promise<string> {
+      signal?.throwIfAborted();
       return options.baseUrl;
     },
 
@@ -300,7 +301,12 @@ function createLazySandboxProvider(
   return {
     name: "sandbox",
     isolation: "per-bot",
-    locate: async (botId) => (await provider()).locate(botId),
+    locate: async (botId, signal) => {
+      signal?.throwIfAborted();
+      const ready = await provider();
+      signal?.throwIfAborted();
+      return ready.locate(botId, signal);
+    },
     status: async (botId) => (await provider()).status(botId),
     stop: async (botId) => (await provider()).stop(botId),
     reset: async (botId) => (await provider()).reset(botId),

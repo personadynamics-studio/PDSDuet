@@ -14,8 +14,6 @@ export type SetupRowId =
   | "model"
   | "google"
   | "gmail"
-  /** The one row the browser adds itself: only it knows whether it may notify. */
-  | "notifications"
   | "computer"
   | "apps"
   | "chat";
@@ -28,9 +26,7 @@ export type SetupFix =
       page?: { label: string; path: string };
     }
   | { kind: "page"; label: string; path: string; docsUrl?: string }
-  | { kind: "connect"; serverId: string }
-  /** Turn on this browser's notifications. Never sent by the server: see the notifications row. */
-  | { kind: "notify" };
+  | { kind: "connect"; serverId: string };
 
 /**
  * `ready` works, as far as the server can tell. `needs_setup` does not, and the row says why.

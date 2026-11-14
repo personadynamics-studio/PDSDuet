@@ -2,7 +2,6 @@ import { IconApps, IconBox, IconChevronRight } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Fragment } from "react";
-import { HandoffPanel } from "@/components/agents/handoff-panel";
 import {
   AppAccessAction,
   appAccessSentence,
@@ -83,7 +82,6 @@ export function AccessSections({ agent }: { agent: AgentProfile }) {
     <>
       {agent.mine ? <YourSkills agentId={agent.id} /> : null}
       <Granted agentId={agent.id} />
-      <HandoffPanel agentId={agent.id} />
     </>
   );
 }

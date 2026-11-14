@@ -88,6 +88,7 @@ export function markElementSecret(element: Element, attribute: string): void {
 export async function sensitiveRefs(
   target: Page,
   elements: SnapshotElement[],
+  signal?: AbortSignal,
 ): Promise<Set<string>> {
   const sensitive = new Set<string>();
   await Promise.all(
@@ -96,8 +97,9 @@ export async function sensitiveRefs(
         .locator(`aria-ref=${element.ref}`)
         .evaluate(isSensitiveElement, SENSITIVE_FIELD_SELECTOR, {
           timeout: 1_000,
+          signal,
         })
-        .catch(() => true);
+        .catch((error) => { signal?.throwIfAborted(); return true; });
       if (matches) sensitive.add(element.ref);
     }),
   );

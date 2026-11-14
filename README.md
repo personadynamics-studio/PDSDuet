@@ -10,6 +10,8 @@ Development continues in [personadynamics-studio/PDSDuet](https://github.com/per
 
 **Project status:** Personal MVP in active development. The web frontend was built and deployed to the self-hosted installation on 13 November 2026, with a 20 MiB upload limit per PDF or Markdown/text file.
 
+**14 November source update:** Browser use, Bot discovery/calls and group authorship now share one server execution/tool loop. Background work, automatic research and generic approval/delivery workers have been removed from that core. This extraction has not been built or applied to the installation; see [the current architecture](openbot/docs/architecture.md).
+
 ## The problem it addresses
 
 Insurance proposals contain long benefit descriptions, payment schedules and illustration tables. A broker needs to turn that material into an understandable customer conversation. PDSDuet focuses on that step: explaining a product's selling points and giving the broker usable wording, with figures tied to the uploaded document.
@@ -27,7 +29,7 @@ The output is prepared **for the broker to use with customers**. The phone provi
 ## Cross-device use and shared access
 
 - **Phone and desktop, one agent:** Open the agent's web interface on either device and continue with the same conversations and uploaded documents.
-- **Synced progress:** Conversation history and task state are managed by the backend, so devices can retrieve progress when they reconnect.
+- **Synced progress:** Conversation history and run state are managed by the backend, so devices can retrieve progress when they reconnect.
 - **Host-managed work:** The phone sends documents and requests; the host manages the agent workflow. Document-processing runs continue independently of the phone's screen or connection.
 - **Google sign-in:** People sign in with their own Google accounts through the same Tailscale-connected deployment. They share the backend and model API. Administrators and ordinary users follow the existing application roles.
 
@@ -43,6 +45,8 @@ The output is prepared **for the broker to use with customers**. The phone provi
 | Cross-device use | Phone and desktop browsers connect to the same agent, conversations and backend-managed progress. |
 | Google sign-in | Google accounts and the existing administrator/user roles on the same host. |
 | Bot selection | The left menu lists available Bots and switches directly to their conversations. Chat starts after the person chooses a Bot and sends a message. |
+| Bot collaboration | Bots see the same visible roster and call each other directly; peer replies retain their real authors in the conversation. |
+| Browser and computer | Persistent browser profiles, page operations, a live screen and human takeover are the core capabilities. |
 
 ## Technical approach
 

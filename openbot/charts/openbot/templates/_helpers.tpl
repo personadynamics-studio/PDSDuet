@@ -304,21 +304,6 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
 - name: BETTER_AUTH_URL
   value: {{ .Values.config.publicUrl | quote }}
 {{- end }}
-{{- /* Guarded: absent on a release upgraded with --reuse-values, which leaves the server's default. */}}
-{{- with (.Values.config).webBotAuth }}
-- name: WEB_BOT_AUTH
-  value: {{ . | quote }}
-{{- end }}
-{{- /*
-  Optional on purpose: the server derives a key from KEY_ENCRYPTION_KEY when this one is absent, so
-  a Secret of your own, or the chart's without `secrets.webBotAuthKey`, simply does not carry it.
-*/}}
-- name: WEB_BOT_AUTH_KEY
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "openbot.secretName" . }}
-      key: web-bot-auth-key
-      optional: true
 {{- if .Values.config.initialAdminEmails }}
 - name: INITIAL_ADMIN_EMAILS
   value: {{ .Values.config.initialAdminEmails | quote }}
@@ -357,34 +342,6 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
 - name: COMPUTER_SANDBOX_TEMPLATE_FILE
   value: /etc/openbot/sandbox-template.json
 {{- end }}
-{{- /*
-  How far one Bot may hand work to another.
-  
-  Always set, so a deployment that has switched this off says so rather than relying on the image's
-  default staying what it is today.
-
-  ABSENT AND ZERO ARE DIFFERENT, which is why this is not `| default`. Sprig's `default` substitutes
-  whenever a value is EMPTY, and zero is empty: `--set config.handoff.maxDepth=0` rendered `"1"` and
-  silently switched the capability back on for a deployment that had switched it off. A guard that
-  defeats the off switch is worse than the nil dereference it was added for. `kindIs "invalid"` asks
-  the question actually being asked, which is whether anybody said anything at all.
-
-  PARENTHESISED, because `config.handoff` is a key this chart did not have before.
-  `helm upgrade --reuse-values` takes the previous release's computed values instead of merging the
-  new chart's defaults, so on every existing deployment this map is simply absent. Reached with a
-  bare `.Values.config.handoff.maxDepth` that is a nil dereference, and it fails the WHOLE render:
-  this helper is included by the server deployment, so the upgrade does not lose the handoff
-  feature, it does not install at all.
-*/}}
-{{- $handoff := .Values.config.handoff | default dict -}}
-{{- $maxDepth := 1 -}}
-{{- if not (kindIs "invalid" $handoff.maxDepth) -}}{{- $maxDepth = $handoff.maxDepth -}}{{- end -}}
-{{- $maxPerRun := 3 -}}
-{{- if not (kindIs "invalid" $handoff.maxPerRun) -}}{{- $maxPerRun = $handoff.maxPerRun -}}{{- end }}
-- name: BOT_HANDOFF_MAX_DEPTH
-  value: {{ $maxDepth | quote }}
-- name: BOT_HANDOFF_MAX_PER_RUN
-  value: {{ $maxPerRun | quote }}
 {{- $memory := .Values.config.memory | default dict }}
 {{- if eq (toString $memory.sourceDefaults) "false" }}
 - name: OPENBOT_MEMORY_SOURCE_DEFAULTS

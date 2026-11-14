@@ -1,156 +1,129 @@
 import type { AbstractAgent, BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
+import type { Observable } from "rxjs";
 import { NOT_SHOWN } from "@openbot/shared/component-markers";
-import { frameFiring } from "@openbot/shared/routine-firing";
-import type { ApprovalContinuation } from "./continuation";
+import type { RunStatus } from "@openbot/shared/thread-events";
 import { HeadlessToolsMiddleware, HeadlessToolSuspension, OPENBOT_WAITING_METADATA, type HeadlessTool, type HeadlessWaiting } from "./headless-tools";
-import { mergeContinuationHistory, sanitizeSeededHistory } from "./history-sanitize";
+import { historyForBot, mergeContinuationHistory } from "./history-sanitize";
 import type { AuditInitiator } from "./initiator";
-import { ThreadLockBusyError } from "./lease";
-import type { ComponentCatalog, TurnAdmission } from "./ports";
-export { frameFiring, sanitizeSeededHistory };
+import type { ComponentCatalog } from "./ports";
 
-export type TurnRunner = (input: {
-  ownerUserId: string; // the actor the run asserts — grants and connections resolve to them
-  routineId: string; // what the trail names as having started this turn, rather than the owner
-  agentId: string;
-  threadId: string; // the owner's thread for the routine's channel
-  instruction: string; // the user message of this turn
-  initiator?: AuditInitiator;
-  signal?: AbortSignal;
-  continuation?: {
-    snapshot: ApprovalContinuation;
-    result: { content: string; error?: string };
-    messageId: string;
-  };
-  userMessage?: Message;
-  /** Trusted server-resolved skills, persisted as rows and included in this turn's model context. */
+export type TurnInput = {
+  ownerUserId: string; agentId: string; threadId: string; instruction: string;
+  initiator?: AuditInitiator; signal?: AbortSignal; runId?: string; parentRunId?: string;
+  depth?: number; routineId?: string; persistUserMessage?: boolean;
+  userMessage?: Message; messages?: Message[];
   systemMessages?: Extract<Message, { role: "system" }>[];
-  /** Durable inbound delivery id; reused by lock, runner and emitted events. */
-  runId?: string;
-  parentRunId?: string;
-  /** How deep in a Bot-to-Bot chain this turn is. Absent is a person's own turn, depth zero. */
-  depth?: number;
-  /** The reply so far, each time more of it arrives, for a surface that shows a turn in progress. */
+  context?: RunAgentInput["context"];
   onText?: (text: string) => void;
-}) => Promise<{
-  replyText: string;
-  components?: DrawnComponent[];
-  replyChips?: boolean;
-}>;
-
-/** A display component the Bot drew in a turn and the server allowed, with the props it drew. */
+};
 export type DrawnComponent = { name: string; args: Record<string, unknown> };
-
-
+export type TurnResult = { runId: string; replyText: string; status: RunStatus; waiting?: HeadlessWaiting; components?: DrawnComponent[]; replyChips?: boolean };
+export type TurnRunner = (input: TurnInput) => Promise<TurnResult>;
 export type ThreadStoreLike = {
-  getOrCreateThread(input:{threadId:string;userId:string;agentId:string}):Promise<unknown>;
-  getThreadMessages(input:{threadId:string;userId:string}):Promise<{messages:Message[]}>;
+  getOrCreateThread(input: { threadId: string; userId: string; agentId: string }): Promise<{ state?: unknown }>;
+  getThreadMessages(input: { threadId: string; userId: string }): Promise<{ messages: Message[] }>;
 };
 export type RunnerLike = {
-  run(input:{threadId:string;agent:AbstractAgent;agentId?:string;input:RunAgentInput;persistedInputMessages?:Message[];parentRunId?:string;signal?:AbortSignal}):{subscribe(observer:{next:(event:BaseEvent)=>void;error:(error:unknown)=>void;complete:()=>void}):unknown};
-  stop(input:{threadId:string;runId:string}):Promise<boolean|undefined>;
+  start(input: { threadId: string; userId?: string; agent: AbstractAgent; agentId?: string; input: RunAgentInput; persistedInputMessages?: Message[]; parentRunId?: string; signal?: AbortSignal }): Promise<Observable<BaseEvent>>;
+  stop(input: { threadId: string; runId: string }): Promise<boolean | undefined>;
 };
-export function drawnComponents(
-  messages: Message[],
-  componentNames: ReadonlySet<string>,
-): DrawnComponent[] {
-  const results = new Map<string, string>();
-  for (const message of messages)
-    if (message.role === "tool" && typeof message.content === "string")
-      results.set(message.toolCallId, message.content);
+
+export function drawnComponents(messages: Message[], names: ReadonlySet<string>): DrawnComponent[] {
+  const results = new Map(messages.flatMap(message => message.role === "tool" && typeof message.content === "string" ? [[message.toolCallId, message.content] as const] : []));
   const drawn: DrawnComponent[] = [];
   for (const message of messages) {
     if (message.role !== "assistant") continue;
     for (const call of message.toolCalls ?? []) {
-      if (!componentNames.has(call.function.name)) continue;
       const result = results.get(call.id);
-      if (result === undefined || result.startsWith(NOT_SHOWN)) continue;
+      if (!names.has(call.function.name) || result === undefined || result.startsWith(NOT_SHOWN)) continue;
       try {
         const args = JSON.parse(call.function.arguments || "{}");
-        if (args && typeof args === "object" && !Array.isArray(args))
-          drawn.push({ name: call.function.name, args });
-      } catch {
-        // A call whose arguments are not JSON was refused by the schema check, so nothing was drawn.
-      }
+        if (args && typeof args === "object" && !Array.isArray(args)) drawn.push({ name: call.function.name, args });
+      } catch { /* Invalid arguments were refused by the tool. */ }
     }
   }
   return drawn;
 }
 
-
-/** Browser, schedule, approval and handoff turns all execute through the same server runner. */
-export function createTurnRunner(options:{
-  threads:ThreadStoreLike;runner:RunnerLike;admission:TurnAdmission;
-  buildAgentFor:(input:{ownerUserId:string;agentId:string;initiator:AuditInitiator;depth?:number})=>Promise<AbstractAgent>;
-  toolsForTurn?:(input:{ownerUserId:string;agentId:string;initiator:AuditInitiator;threadId:string;runId:string})=>Promise<HeadlessTool[]>;
-  components?:ComponentCatalog;turnTimeoutMs?:number;
-}):TurnRunner {
-  return async(request)=>{
-    const {ownerUserId,agentId,threadId,continuation,systemMessages=[]}=request;
-    const admitted=await options.admission({ownerUserId,agentId,signal:request.signal});
-    const {signal}=admitted;
-    try {
-    signal.throwIfAborted();
-    if(continuation&&continuation.snapshot.threadId!==threadId)throw new Error('The continuation belongs to another conversation.');
-    const initiator=request.initiator??{kind:'routine' as const,id:request.routineId};
-    const runId=request.runId??crypto.randomUUID();
-    await options.threads.getOrCreateThread({threadId,userId:ownerUserId,agentId});
-    const history=(await options.threads.getThreadMessages({threadId,userId:ownerUserId})).messages;
-    const historicIds=new Set(history.map((message)=>message.id));
-    const messages:Message[]=continuation?sanitizeSeededHistory(mergeContinuationHistory(history, continuation.snapshot.messages, [
-      {id:continuation.messageId,role:'tool',toolCallId:continuation.snapshot.toolCallId,content:continuation.result.content},
-    ])):[
-      ...sanitizeSeededHistory(history),...systemMessages,
-      request.userMessage??{id:crypto.randomUUID(),role:'user',content:frameFiring(request.instruction)},
+/** All callers share Bot construction, tools, persistence and cancellation. */
+export function createTurnExecutor(options: {
+  threads: ThreadStoreLike; runner: RunnerLike;
+  buildAgentFor(input: { ownerUserId: string; agentId: string; initiator: AuditInitiator; depth?: number }): Promise<AbstractAgent>;
+  toolsForTurn?(input: { ownerUserId: string; agentId: string; initiator: AuditInitiator; threadId: string; runId: string }): Promise<HeadlessTool[]>;
+  components?: ComponentCatalog;
+}) {
+  async function start(request: TurnInput) {
+    request.signal?.throwIfAborted();
+    const { ownerUserId, agentId, threadId } = request;
+    const initiator = request.initiator ?? { kind: "person" as const };
+    const runId = request.runId ?? crypto.randomUUID();
+    const thread = await options.threads.getOrCreateThread({ threadId, userId: ownerUserId, agentId });
+    const history = (await options.threads.getThreadMessages({ threadId, userId: ownerUserId })).messages;
+    const historicIds = new Set(history.map(message => message.id));
+    const supplied = request.messages ?? (request.userMessage ? [request.userMessage] : request.instruction ? [{ id: crypto.randomUUID(), role: "user" as const, content: request.instruction }] : []);
+    const answers=supplied.filter(message=>message.role==="tool");
+    const answered=new Set(answers.map(message=>message.toolCallId));
+    const pendingBatch=new Set(history.flatMap(message=>message.role==="assistant"&&message.toolCalls?.some(call=>answered.has(call.id))?message.toolCalls.map(call=>call.id):[]));
+    const messages = historyForBot([
+      ...mergeContinuationHistory(history, [], answers),
+      ...(request.systemMessages ?? []), ...supplied.filter(message=>message.role!=="tool"),
+    ],agentId,pendingBatch);
+    const agent = await options.buildAgentFor({ ownerUserId, agentId, initiator, depth: request.depth });
+    agent.threadId = threadId; agent.setMessages(messages);
+    agent.setState(thread.state ?? null);
+    const tools = [
+      ...(await options.toolsForTurn?.({ ownerUserId, agentId, initiator, threadId, runId }) ?? []),
+      ...(await options.components?.toolsForTurn({ ownerUserId, agentId, initiator }) ?? []),
     ];
-    const agent=await options.buildAgentFor({ownerUserId,agentId,initiator,depth:request.depth});
-    agent.threadId=threadId;agent.setMessages(messages);
-    if(continuation)agent.setState(continuation.snapshot.state);
-    const tools=[...(await options.toolsForTurn?.({ownerUserId,agentId,initiator,threadId,runId})??[]),...(await options.components?.toolsForTurn({ownerUserId,agentId,initiator})??[])];
-    if(tools.length)agent.use(new HeadlessToolsMiddleware(tools,initiator));
-    const input:RunAgentInput={
-      threadId,runId,messages,state:agent.state,
-      tools:tools.filter((tool)=>!tool.hidden).map((tool)=>tool.definition),
-      context:continuation?.snapshot.context??systemMessages.map((message,index)=>({description:`Selected skill ${index+1}`,value:message.content})),
-      forwardedProps:continuation?.snapshot.forwardedProps,
-      ...(continuation?{resume:[{interruptId:continuation.snapshot.toolCallId,status:'resolved' as const,payload:continuation.result.content}]}:{}),
+    if (tools.length) agent.use(new HeadlessToolsMiddleware(tools));
+    const input: RunAgentInput = {
+      threadId, runId, messages, state: agent.state,
+      tools: tools.filter(tool => !tool.hidden).map(tool => tool.definition),
+      context: request.context ?? [],
+      ...(answers.length?{resume:answers.map(message=>({interruptId:message.toolCallId,status:"resolved" as const,payload:message.content}))}:{}),
     };
-    let waiting:HeadlessToolSuspension|undefined;
-    let stopped=false;
-    let terminal:Error|undefined;
-    const text:string[]=[];
-    const stop=()=>{stopped=true;void options.runner.stop({threadId,runId});};
-    const deadline=setTimeout(stop,options.turnTimeoutMs??180_000);deadline.unref?.();
-    try{
-      signal.throwIfAborted();
-      await new Promise<void>((resolve,reject)=>{
-        options.runner.run({threadId,agent,agentId,input,signal,parentRunId:request.parentRunId??continuation?.snapshot.runId,persistedInputMessages:messages.filter((message)=>!historicIds.has(message.id))}).subscribe({
-          next:(event)=>{
-            if(event.type==='TEXT_MESSAGE_CONTENT'){text.push(String(event.delta??''));request.onText?.(text.join(''));}
-            if(event.type==='CUSTOM'&&event.name==='openbot.headless.waiting'){const value=event.value as HeadlessWaiting&{message?:string};waiting=new HeadlessToolSuspension(value.message??'The turn is waiting for human input.',value);}
-            if(event.type==='RUN_FINISHED'&&event.outcome?.type==='interrupt'){
-              const interrupt=event.outcome.interrupts.find((item)=>item.metadata?.[OPENBOT_WAITING_METADATA]);
-              if(interrupt){const value=interrupt.metadata?.[OPENBOT_WAITING_METADATA] as HeadlessWaiting&{message?:string};waiting=new HeadlessToolSuspension(value.message??'The turn is waiting for human input.',value);}
-            }
-            if(event.type==='RUN_ERROR')terminal=new Error(String(event.message??'The turn failed.'));
-            if(event.type==='RUN_FINISHED'&&(event as BaseEvent&{status?:string}).status==='stopped'){
-              terminal=new Error('The work was cancelled.');terminal.name='RunStoppedError';
-            }
-            if(event.type==='RUN_FINISHED'&&['failed','interrupted'].includes((event as BaseEvent&{status?:string}).status??''))
-              terminal=new Error((event as BaseEvent&{error?:string}).error??'The turn did not complete.');
-          },error:reject,complete:resolve,
-        });
-      });
-      if(waiting)throw waiting;
-      if(stopped)throw new Error('The turn was stopped.');
-      if(terminal)throw terminal;
-      const added=agent.messages.filter((message)=>!historicIds.has(message.id));
-      const replyText=added.filter((message)=>message.role==='assistant').map((message)=>typeof message.content==='string'?message.content:'').filter(Boolean).join('\n\n')||text.join('');
-      return {replyText,components:drawnComponents(added,options.components?.names??new Set()),...(added.some((message)=>message.role==='tool'&&String(message.content).startsWith('The buttons are'))?{replyChips:true}:{})};
-    }catch(error){
-      if(error&&typeof error==='object'&&'status' in error&&error.status===409)throw new ThreadLockBusyError(error);
+    const events = await options.runner.start({
+      threadId, userId: ownerUserId, agent, agentId, input, signal: request.signal,
+      parentRunId: request.parentRunId,
+      persistedInputMessages: (request.persistUserMessage===false?[]:supplied).filter(message=>!historicIds.has(message.id)),
+    });
+    return { runId, events, agent, historicIds };
+  }
+
+  const run: TurnRunner = async request => {
+    const { runId, events, agent, historicIds } = await start(request);
+    let terminal: (BaseEvent & { status?: RunStatus; error?: string }) | undefined;
+    let waiting: HeadlessToolSuspension | undefined;
+    let text = "";
+    await new Promise<void>((resolve, reject) => events.subscribe({
+      next: event => {
+        if (event.type === "TEXT_MESSAGE_CONTENT") { text += String(event.delta ?? ""); request.onText?.(text); }
+        if (event.type === "CUSTOM" && event.name === "openbot.headless.waiting") {
+          const value = event.value as HeadlessWaiting & { message?: string };
+          waiting = new HeadlessToolSuspension(value.message ?? "The Bot is waiting for human input.", value);
+        }
+        if (event.type === "RUN_FINISHED") {
+          terminal = event;
+          if (event.outcome?.type === "interrupt") {
+            const interrupt = event.outcome.interrupts.find(item => item.metadata?.[OPENBOT_WAITING_METADATA]);
+            if (interrupt) waiting = new HeadlessToolSuspension("The Bot is waiting for human input.", interrupt.metadata?.[OPENBOT_WAITING_METADATA] as HeadlessWaiting);
+          }
+        }
+      }, error: reject, complete: resolve,
+    }));
+    if (!terminal || (terminal.status !== "completed" && terminal.status !== "waiting")) {
+      const error = new Error(terminal?.error ?? "The Bot did not finish this turn.");
+      if (terminal?.status === "stopped") error.name = "RunStoppedError";
       throw error;
-    }finally{clearTimeout(deadline);}
-    } finally { admitted.dispose(); }
+    }
+    const added = agent.messages.filter(message => !historicIds.has(message.id));
+    return {
+      runId, status: terminal.status, ...(waiting ? { waiting: waiting.waiting } : {}),
+      replyText: added.filter(message => message.role === "assistant").map(message => typeof message.content === "string" ? message.content : "").filter(Boolean).join("\n\n") || text,
+      components: drawnComponents(added, options.components?.names ?? new Set()),
+      ...(added.some(message => message.role === "tool" && String(message.content).startsWith("The buttons are")) ? { replyChips: true } : {}),
+    };
   };
+  return { start, run };
 }
+export type TurnExecutor = ReturnType<typeof createTurnExecutor>;

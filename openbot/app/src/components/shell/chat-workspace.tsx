@@ -10,9 +10,11 @@ const DESKTOP_QUERY = "(min-width: 1024px)";
 export function ChatWorkspace({
   bot,
   children,
+  requestedCallId,
 }: {
   bot?: { id: string; name: string } | null;
   children: (computerAction: ReactNode) => ReactNode;
+  requestedCallId?: string;
 }) {
   const [open, setOpen] = useState(
     () =>
@@ -24,6 +26,7 @@ export function ChatWorkspace({
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
+  useEffect(() => { if (requestedCallId) setOpen(true); }, [requestedCallId]);
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col">

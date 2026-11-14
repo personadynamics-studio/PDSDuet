@@ -63,8 +63,8 @@ const SECTIONS: {
         linkOptions: { to: "/admin/credentials" },
       },
       {
-        title: "審批",
-        description: "What members' Bots must ask before they act.",
+        title: "共用帳戶申請",
+        description: "處理機械人使用團隊共用帳戶的申請。",
         icon: IconChecks,
         linkOptions: { to: "/admin/approvals" },
       },

@@ -1,6 +1,5 @@
 import { drawsTool } from "@/lib/chat/tool-cards";
 import { Streamdown } from "streamdown";
-import { PendingApprovals } from "@/components/approvals/inline-approval";
 import { DuetIcon, type DuetIconName } from "@/components/duet/icons";
 import { markdownComponents } from "@/lib/markdown";
 import {
@@ -525,9 +524,6 @@ export function ToolActivity({
           ))}
         </ol>
       </ToolLine>
-      <PendingApprovals
-        toolCallIds={group.steps.map((step) => step.toolCall.id)}
-      />
     </>
   );
 }

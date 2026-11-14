@@ -124,14 +124,6 @@ initialization:
 config:
   # Where people reach this deployment. Sets the OAuth callback and the trusted origin.
   publicUrl: ""
-  # Web Bot Auth: every request a Bot's browser makes is signed as coming from this deployment, and
-  # the public key is published at `<publicUrl>/.well-known/http-message-signatures-directory`, so a
-  # site behind Cloudflare that allows signed agents lets the Bot through instead of challenging it.
-  # Off unless "on": signing announces the deployment's URL to every site a Bot visits. "on" needs an
-  # https `publicUrl` (verifiers fetch the key from it) and earns nothing until the deployment is
-  # registered with Cloudflare, a manual step described in the chart README. The key is derived from
-  # `secrets.keyEncryptionKey` unless `secrets.webBotAuthKey` gives one.
-  webBotAuth: ""
   # Administrators by email address, comma-separated. Required unless singleUser is on.
   initialAdminEmails: ""
   # Email domains admitted at sign-in, comma-separated. Empty admits everybody, which is what the
@@ -172,19 +164,6 @@ config:
   memory:
     sourceDefaults: true
     researchDefaults: true
-  # How far one Bot may hand work to another.
-  #
-  # A Bot addressing another is a grant an administrator makes, and these are the ceilings on what
-  # that grant can cost. Both are deliberately mean: a hop is a whole agent turn at the other end,
-  # several Bots asked in one turn cost several full runs rather than a fraction each, and with
-  # `computers.mode: sandbox` a hop to a Bot whose browser is asleep also pays a pod resume. A chatty
-  # Bot fanning out to four others wakes four machines.
-  #
-  # `maxDepth: 0` switches the capability off entirely: no Bot is offered the tool and the delivery
-  # loop does not run.
-  handoff:
-    maxDepth: 1
-    maxPerRun: 3
   # Your own Bot, over AG-UI.
   #
   # OpenBot is a shell for somebody else's agent, so this is the seam that matters: point it at a
@@ -356,11 +335,6 @@ computers:
     runAsGroup: 1001
     fsGroup: 1001
     fsGroupChangePolicy: OnRootMismatch
-
-  # How many browsers one computer holds at once, and how long an untouched one is kept. Empty means
-  # the process default, which is a handful and thirty minutes.
-  maxBrowsers: ""
-  browserIdleMs: ""
 
   # Which Chromium a Bot's computer runs. `headed` is full Chromium drawing to the pod's own X server
   # (Xvfb, started by the computer), behind the same streamed screen: it is what sites see from a
@@ -591,10 +565,6 @@ secrets:
   # logs ones are unset.
   otelLogsHeaders: ""
   otelHeaders: ""
-  # Optional, with `config.webBotAuth`. An Ed25519 private key as a JSON Web Key, to sign with instead
-  # of the one derived from `keyEncryptionKey`. Read from key `web-bot-auth-key` of whichever Secret
-  # this chart uses, when present.
-  webBotAuthKey: ""
   # Required when `computers.egressProxy.enabled` and no `existingSecret` is named there.
   egressProxyUrl: ""
 

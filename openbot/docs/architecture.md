@@ -1,347 +1,69 @@
-# Architecture
+# Browser and Bot execution core
 
-OpenBot combines a React app, a Hono API server, PostgreSQL, local execution services, AG-UI Bot endpoints, and governed browser computers.
+This describes the source extraction of 2026-11-14. It has not been built, loaded or exercised. Source and Git publication do not establish runtime success.
 
+## One execution owner
 
-Regenerate it with `bun run diagram` after changing anything it shows.
+The signed-in person selects a Bot from the same visible profile roster used by Bot collaboration. Chat, groups and independent schedules enter the same executor.
 
-## Services and ports
+```mermaid
+flowchart LR
+  Chat --> Executor
+  Group --> Executor
+  Routine --> Executor
+  Executor --> Runner[LocalAgentRunner]
+  Executor --> Tools[One server tool loop]
+  Runner --> Store[Canonical messages, events and runs]
+  Tools --> Browser
+  Tools --> Connectors[Granted connectors and manual mail]
+  Tools --> Peer[Another Bot in this conversation]
+  Peer --> Executor
+```
 
-| Component                | Port                       | Responsibility                                                                                                                              |
-| ------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`                    | 3010                       | React/Vite interface for channels, Bot chat, live screen, settings, and admin pages.                                                        |
-| `server`                 | 3001                       | API, local agent runtime, auth, roles, tenant package, coworkers, channels, policy, audit, credentials, plugins, components, and connectors. |
-| `agent-computer`         | 4100                       | Chromium, `/workspace`, browser profile, screenshots, snapshots, and file tools.                                                            |
-| `agent-bot`              | 4200                       | Proof-of-concept AG-UI Bot.                                                                                                                     |
-| `agent-langgraph`        | 4201                       | LangGraph AG-UI Bot.                                                                                                                        |
-| `agent-harness`          | 4202                       | The Bot framework harness chosen during setup, one of the `agent-<framework>` images, behind the `harness` compose profile.                 |
-| `supervisor`             | 4500 host / 4300 container | Creates, stops, resets, and lists per-Bot computer containers.                                                                              |
-| PostgreSQL with pgvector | 5432                       | Product data, audit rows, credentials, policy, grants, channels, and components.                                           |
+`toolkit/src/run-turn.ts` builds the Bot and tools once. `start` returns its run/event source; `run` waits on that same execution. `toolkit/src/headless-tools.ts` executes application tools on the server, including browser, Bot, connector, mail, host and component tools. Mixed calls do not get split between a browser observer and a background worker.
 
-`scripts/start.sh` starts PostgreSQL, `agent-computer`, `agent-langgraph`, `agent-bot` (skipped when `BOT_PROVIDER=anthropic`, since that sample only takes OpenAI keys) and the supervisor (unless `OPENBOT_ONE_COMPUTER_EACH=false`) through Docker Compose, and runs `migrate`. It then starts `server`, the routines worker (`bun worker/src/index.ts`, the local stand-in for the routines CronJob) and `app` on the host.
-
-The compose file also defines optional SPIRE services. `start.sh` does not start them.
+`server/src/runtime/local-runner.ts` owns execution and cleanup. `thread-store.ts` owns messages, events, run state and conversation occupancy. The root holds the conversation once; children use real parent ancestry. Only the occupancy owner renews it. Expired execution is recorded as interrupted.
 
-## Runtime flow
+## Bots and groups
 
-1. The app opens a channel or direct Bot session.
-2. The server resolves the signed-in actor and selected coworker.
-3. The local runtime sends the turn to the configured AG-UI endpoint.
-4. The surface registers available frontend tools: browser tools, MCP tools, and components granted to that Bot.
-5. Acting browser/file/MCP calls return to the server for authorization and audit.
-6. The server streams results back to the app and stores the thread in PostgreSQL.
-
-## Browser action governance
-
-The computer itself does not decide policy. The server gateway is the action boundary:
-
-1. resolve the target from the server-held snapshot or request subject;
-2. evaluate the current action policy;
-3. write an audit row for the decision;
-4. call the computer only when the decision forwards;
-5. write a second audit row if a forwarded action fails.
-
-Policy rules can inspect:
+`agents/bot-tools.ts` supplies `list_bots`, `message_bot` and `ask_person`. Visibility comes from `profiles.list(actor)`. Pairwise Bot grants and numeric handoff depth/fan-out gates have been removed; account visibility and genuine connector grants remain.
 
-- `tool.name`
-- `intent`
-- `bot.id`
-- `actor.id`
-- `page.url`, `page.host`
-- `element.ref`, `element.role`, `element.name`, `element.type`
-- `key`
-- `command`
-- `file.path`, `file.name`, `file.extension`
-- `mcp.server`, `mcp.tool`, `mcp.effect`
-- `initiator.kind`, `initiator.id` — what started the run, as distinct from whose
-  authority it carries. `person`, `deployment`, `routine` or `handoff`, with the
-  routine or Bot id where there is one. `actor.id` is the routine's owner on a
-  scheduled run, so this is the only field that can tell an unattended run from
-  somebody typing.
+`message_bot` directly invokes a child through the same executor and thread. Its output carries its own `senderBotId`; the caller is not asked to generate a relay of an already saved answer. An active ancestor cannot synchronously delegate back into itself.
 
-Rules use CEL expressions plus case-insensitive `contains()` and `matches()`.
-Deny rules are evaluated before allow rules. The policy engine fails closed: a
-missing or empty policy permits nothing, a broken deny rule denies, and a broken
-allow rule does not permit. OpenBot's shipped startup default is explicit:
-`deny: []` and `allow: ["true"]`, unless `AGENT_COMPUTER_POLICY` or a saved
-administrator policy replaces it. A malformed configured policy stops server
-startup.
+`local_messages` is the runtime transcript. `senderBotId`, `senderUserId` and `createdAt` describe real authors and time. Internal delegation instructions are model input, not human messages.
 
-## Computers
+Groups check channel membership and read one canonical thread. Ordinary group replies do not create `group.turn` or `bot.message` work items. The initializer copies historical `group_messages` using original IDs and `ON CONFLICT DO NOTHING`; that table is not a second live transcript. The initializer has not been executed.
 
-`agent-computer` requires `COMPUTER_TOKEN` and permits only `/health` without it. Docker Compose binds it to `127.0.0.1:4100`.
+`historyForBot` is the sole model-input adapter. It pairs a Bot's own calls/results and quotes foreign Bot records as data. It leaves the saved transcript intact. A formal human answer preserves the unanswered siblings of that exact tool batch so the tool owner finishes them before asking the model again.
 
-Compose puts it on a different network from PostgreSQL. A Bot has a shell, and a shell reaches whatever its container reaches, so the database is on a `data` network carrying only itself and `migrate`, and everything else is on `default`. A deployment that runs the API server inside Compose rather than on the host joins it to both, which is the one place the two meet.
+## Stop, waiting and reconnect
 
-With `COMPUTER_SUPERVISOR_URL`, each Bot gets its own computer container, workspace volume, and browser profile. Without it, all Bots share `AGENT_COMPUTER_URL`.
+Stop follows the real parent family, cancels running descendants and closes waiting calls. It leaves stop intent on completed phases so later group replies cannot start in the gap between phases. Completed output retains its actual status.
 
-Each computer also filters its own outbound connections. The browser and shell commands go through a filter proxy that applies the Bot's network policy (`allow_all`, `defaults_plus_allowlist`, `allowlist_only` or `deny_all`, which is what a Bot gets when its owner's Cloud network access is switched off). The server pushes the policy before the computer acts and whenever it wakes, and until one arrives nothing may leave. `EGRESS_POLICY_REQUIRED=0` is for a computer run with no API server. Cloud metadata addresses are refused in every mode. A process that ignores the proxy variables and opens a raw socket is not stopped by this; that is a Kubernetes NetworkPolicy's job.
+Waiting records the actual tool call ID and tool-specific metadata. Person questions, browser takeover and private field input resume through the thread API. The response resolves the saved leaf Bot/run by call ID rather than guessing from the selected Bot. It uses canonical messages and state, not a second continuation snapshot.
 
-A command on the computer inherits PATH, locale and terminal names, and the proxy variables, not the rest of the process environment. Userinfo is stripped from a proxy URL. `COMPUTER_SHELL_ENV` names anything else a deployment wants passed.
+Human inputs and tool answers are saved with transcript events in the same transaction. Output is persisted before completion; terminal run state and its event are committed together. Snapshots return messages, event cursor and real run/waiting state. SSE uses database notifications and `Last-Event-ID`.
 
-The supervisor exposes only ensure, stop, reset, and list operations. It holds the Docker socket, so do not expose it outside the deployment network: Docker Compose binds it to `127.0.0.1:4500`, and a deployment running the server inside the compose network reaches it as `supervisor:4300` and needs no published port at all. Set `COMPUTER_RUNTIME=runsc` to run computers under gVisor on hosts that support it.
+Authenticated remote callbacks must belong to a running, non-stopped run. Callback I/O consumes both HTTP cancellation and that run's stop notification. A signed identity does not authorize a completed run to continue acting.
 
-## What started a run
+Closing a screen or leaving an SSE view does not cancel execution. Explicit Stop does.
 
-Every audit row records on whose authority an action was taken. A routine or a Responsibility asserts
-its owner, and a hop between Bots asserts the person who began the conversation, so that column alone cannot say
-whether anybody was there when it happened. An interactive run has somebody watching who will notice
-a wrong tool call; an unattended one does not, which is the case worth being able to find.
+## Browser and computer
 
-Each row therefore also names what caused it:
+`agent-computer` owns Playwright/Chromium and the native persistent profile. `--restore-last-session` uses browser-owned state; application cookie JSON copies and restore timers have been removed. No user profile, cookie or workspace data was deleted by executing this change.
 
-| `initiator_kind` | `initiator_id`         | What it means                                          |
-| ---------------- | ---------------------- | ------------------------------------------------------ |
-| `person`         | none                   | Somebody was in the room. The default.                  |
-| `deployment`     | none                   | The deployment itself, at start-up or refusing a caller it could not identify. |
-| `routine`        | the routine's id       | A schedule fired it, as its owner, with nobody there.   |
-| `responsibility` | the Responsibility's id | One of a Bot's standing Responsibilities was triggered, as its owner, with nobody there. |
-| `memory`         | the memory source's id | Memory read a connected app to import facts, as the source's owner. |
-| `handoff`        | the Bot that handed on | Another Bot asked for this, on the person's behalf.     |
+The screen is a live WebSocket view bound to an authenticated, visible Bot. Opening it does not wait for demonstration recording or a screenshot database write.
 
-The Audit screen filters on it, and **Nobody watching** is `routine`, `handoff`, `responsibility` and
-`memory` together, which is
-the question of what ran on somebody's authority while they were away. `deployment` is deliberately
-outside that filter: a boundary held at start-up is not work done on anybody's behalf.
+The existing control holder owns input. Taking control cancels the in-flight Bot action and blocks new Bot input. That condition becomes a real waiting tool. Release or private input answers the same saved call, without a Responsibility or approval worker.
 
-`deployment` exists so the column never overclaims. A row that says `person` is a row a person caused,
-and the two places that have no person at all, the start-up rows and the two unauthenticated boundary
-refusals, say so rather than borrowing the default. A deployment that has never run a routine or a hop
-sees `A person` on every row a person made, which is what it was before this existed.
+Cancellation is passed through provider lookup, HTTP and the supported Playwright operations. Already submitted atomic mouse/keyboard input cannot be undone; arbitrary synchronous page JavaScript has no hard cancellation API. The implementation preserves the browser session rather than closing its page to imitate cancellation.
 
-The value travels inside the signed run assertion, beside `depth`, for the reason `depth` does: a hop
-is one run on one pod handing to another run on another, and the process that knows a routine began
-it is the one that claimed the routine, not the one writing the row. Anything holding the assertion
-holds the answer, so a tool call, a hop offered or refused at the desk, a Bot stopping to ask its
-person, and a stream that stalls all say the same thing without each being told separately. A Bot
-cannot relabel its own run, because the assertion is signed by the deployment, and a kind this
-deployment does not write is read as a person rather than kept.
+Profiles and workspace operations keep containment and Bot isolation at the filesystem owner. Fleet listings use the visible profile roster. SPIRE attestation, Web Bot Auth interception, browser eviction quotas and automatic recording have been removed from this path.
 
-Computer actions carry the initiator too. A run with no browser attached (a routine, a Responsibility,
-a group turn) is given the computer tools server-side, with the Bot and the person bound before the
-model supplies any arguments, and the gateway writes that run's initiator on every decision.
+## Independent features and delivery boundary
 
-### Taking the trail out
+Manual mail/calendar, other granted connectors, saved pages, account settings and genuine shared-account consent remain. Ordinary routines use the same executor and consume actual waiting/stopped outcomes.
 
-The Audit screen's **Export CSV** downloads the current filter as
-`GET /api/admin/audit-events?format=csv`: the same filtered query as the table, walked page by
-page up to 5,000 rows and returned as RFC 4180 CSV with the redacted payload as one JSON column.
-An export that hits the cap holds the newest 5,000 and answers with `X-Audit-Export-Truncated`
-(the row count), and the screen says so, so a reviewer narrows `from`/`to` or a filter instead of
-citing a partial trail. A cell that starts with `=`, `+`, `-` or `@` is prefixed with `'`, so a
-name or URL somebody chose opens in a spreadsheet as text, never as a formula. Every export is
-itself recorded as `audit.exported`, with who took it, how many rows, and under which filter. An
-unknown `format` is a 400, like any other malformed audit query.
+Proactive research, Task intake, Responsibility, automatic follow-ups, delivery routing, generic approval review/inbox and their worker loops are not assembled by the core. `createApp(config, services)` names API dependencies instead of passing a long positional list. Optional broker errors are reported for that connector and do not terminate browser startup.
 
-## Human control and secrets
-
-Handovers are audited as control events:
-
-- `computer.help_requested`
-- `computer.control_taken`
-- `computer.control_released`
-
-While a person controls the browser, Bot actions are refused rather than queued. A run with no browser attached pauses instead, waiting on the handover.
-
-The handover is also the designed fallback for a bot check a Bot cannot pass (a "Verify you are human" page, a CAPTCHA). OpenBot reduces how often that happens (headed Chromium, optional Web Bot Auth signatures, an optional residential proxy; see [Getting past bot checks](configuration.md#getting-past-bot-checks)) and never solves one on anyone's behalf: the Bot asks, the person solves it in the live screen, and hands back. A help request records the page it was made on, so a computer that restarted in between reopens that page rather than handing over a blank browser.
-
-Secret entry is separate from chat content. The audit trail records that a secret was requested or supplied and the character count, not the secret value.
-
-## Watching a Bot work
-
-Two surfaces beside the conversation. The screen is the live browser, proxied over a websocket and gated on the same question as every other route about that Bot. The Activity tab is what the Bot did away from the browser: every command with its output and exit code, every file read, write and listing, newest first.
-
-Activity is held in the browser for the open conversation and is gone on reload. It is a window rather than a record; the record is the audit trail, which is server-side, survives restarts, and is what an investigation reads. A saved file contributes its path and size and never its contents, matching the write route, which declines to echo them because a Bot may be saving something it was told in confidence.
-
-## Coworkers and channels
-
-A coworker is a durable Bot profile:
-
-- `agents` stores runtime identity and endpoint/key reference.
-- `agent_profiles` stores name, title, role, owner, visibility, and deletion state.
-- `agent_preferences` stores per-user roster state.
-
-A channel is a conversation with one coworker and a local PostgreSQL thread mapping. Starting a new channel creates a new thread.
-
-A group conversation holds several Bots. Each Bot gets a thread of its own in the group (`group_bot_threads`), and what the people in it read is a shared transcript (`group_messages`) with every reply attributed to its speaker. A Bot that names a peer as `@Name` hands the conversation to it under the same grant, caps and audit rows as any other hop.
-
-Who may reach one is decided by membership: every channel route resolves the caller in
-`channel_memberships` and refuses without a row. `channels.allowed_groups` is declared in the
-tenant package and stored, and is not part of that decision — `users.groups` is never populated by
-any sign-in path, so a group-based rule has nothing to evaluate. Treat it as a declaration waiting
-on group membership from the identity provider, not as a control that is running.
-
-See [coworkers.md](coworkers.md).
-
-## Routines
-
-A routine is a standing instruction, created by asking a Bot in a channel rather than through a form,
-that fires on a schedule and posts its reply into that channel as the person who created it.
-
-The sweep that notices a routine is due sits beside the computer culler on one shared mechanism: both
-write to `work_items`, one PostgreSQL table claimed with `select ... for update skip locked`, leases
-timed on the database's own clock, and an attempt cap. Neither runs as a timer inside the API, because
-a timer fires in every replica and each would decide independently that the same firing or the same
-suspension is due; the queue is what lets exactly one claim it while every other replica's attempt
-collides harmlessly with the same row. See [routines.md](routines.md).
-
-## Components
-
-Components are frontend tools a Bot can call instead of answering only in prose.
-
-Sources:
-
-- compiled React components in `app/src/components/gallery/`;
-- sandboxed components authored and published from `/admin/playground`.
-
-Governance:
-
-- compiled components are published when first seen by the app catalogue sync;
-- sandboxed components are saved as drafts and become usable only after publish;
-- every call asks the server whether the component exists, is published, and is not withheld from the Bot;
-- component data functions require a separate per-component grant.
-
-The shipped component data functions read the audit trail: `botActivity` and `recentRefusals`.
-
-## One Bot handing work to another
-
-`message_bot` is offered only when a run has a granted, visible Bot to ask. Its schema lists formal
-Bot IDs with names and responsibilities. The desk resolves that ID once and applies the grant,
-sharing permission and configured depth/fan-out ceilings. A model never supplies the actor or source
-conversation.
-
-Each hop is durable queue work identified by its source run and actual SDK tool-call ID. The local
-runtime owns its execution, cancellation and thread resource; the queue owns only its work claim.
-An already completed execution is read back rather than run again.
-
-The answer is written directly into the source conversation as a message with `senderBotId`.
-The answer, any shared group transcript row and the completed queue item commit in one database
-transaction. The original Bot does not run another model turn to paraphrase it. A failure produces
-a truthful delivery result; a cancellation terminates the work rather than entering retry.
-
-Model context and public conversation messages are separate inputs to persistence. The provider
-history adapter keeps tool calls beside their results and quotes other Bots' words under their
-actual author identity. Internal task envelopes are not inserted into the person's transcript.
-
-Stopping a run follows its existing parent-run links to delegated executions, pending questions,
-approvals and waiting continuations. The execution owner receives the committed stop notification
-and cancels the same model/tool scope. Viewing the conversation can disconnect independently of
-that execution.
-
-The browser first reads a consistent message snapshot, event cursor and last run outcome, then
-follows persisted events over SSE. Native database notifications wake live viewers; there is no
-250ms database polling loop or three-second full-history refresh. Reconnection resumes from
-`Last-Event-ID`; a stopped or failed outcome remains visible after reopening the conversation.
-
-`BOT_HANDOFF_MAX_DEPTH` and `BOT_HANDOFF_MAX_PER_RUN` remain deployment controls. A zero ceiling
-disables offering the tool. Grants and actor/channel isolation remain enforced at their owning
-boundaries.
-
-### Asking a person
-
-`ask_person` sits beside `message_bot` and competes with it for the same decision. A Bot that needs
-judgement it does not have should stop and ask rather than guess or hand the question sideways to a
-Bot that cannot settle it either; a model with no named way to stop takes one of the two it has.
-
-It is offered to every run this deployment builds, whether or not that Bot has been granted anybody.
-Reaching a second Bot spends a model call, may wake a computer and can fan out; asking the person
-already in the conversation costs nothing and cannot be aimed anywhere they cannot see. A deployment
-able to switch off the safe exit and keep the expensive one would be backwards.
-
-A Bot at its own endpoint runs its own loop. A call it makes back to `message_bot` or `ask_person`
-through the signed callback route is dispatched the same way as one from a Bot running here. Being
-handed work is not the same as being able to hand it on, so the target of a grant may live at
-its own endpoint.
-
-The asking side works the same way. The grant check a hop goes through (`botsReachableFrom`) counts a
-grant whatever the asking Bot's type, so a Bot at its own endpoint hands work on through the signed
-callback, the same grant check, caps and audit rows as a built-in one, to a built-in Bot or to another
-Bot at its own endpoint.
-
-A coworker created through the UI with an endpoint is a remote one. Created without one, it runs at
-the managed Bot's endpoint when the deployment has one, and otherwise runs here as a built-in Bot on
-its role description.
-
-Who "a person" is, is a seam. This template answers the person in the conversation, which is the only
-answer a template can give honestly; a company has an on-call rota or a duty desk, and that is a
-route the deployment hands in rather than a channel post written into the tool. `agent.escalated`
-records the question and why it needed a person; `agent.escalation_failed` records one that reached
-nobody, which is the row worth finding later.
-
-## MCP and skills
-
-MCP servers and skills share the plugin grant table, but they have different ownership rules.
-
-- MCP tools are admin-governed because they can reach external systems with stored credentials.
-- Skills are reusable instructions. A person can create personal skills and attach them only to Bots they own. Administrators create deployment skills.
-
-The curated MCP catalogue contains the public-web research providers Parallel, Exa and Firecrawl (see [web-research.md](web-research.md)), Google Drive, Gmail and Google Calendar (one entry), Notion, and the built-in Routines server. Custom MCP servers must pass URL checks; unknown tools and custom-server tools are treated as writes unless positively classified as reads.
-
-A catalogue entry says whose credential a Bot reaches it with, which is a different question from whether it is reachable at all. A deployment-wide token answers the same for everybody; Google Drive, Gmail and Google Calendar, and Notion are all `user-oauth`, so a Bot reaches them as the person asking and sees only what that person can see. An administrator enabling the connector and a person connecting their own account are two decisions, and neither can be made for the other. See [Google Drive](plugins/google-drive.md), [Gmail and Google Calendar](plugins/google-workspace.md) and [Notion](plugins/notion.md).
-
-Every MCP call checks the grant first, then evaluates the same action policy engine with MCP context, then audits the result.
-
-Whether a person can use an app through a Bot is answered once, on the server, from those same facts — the app's row, the Bot's grants, the person's own connection, a Shared app's team account — as one of six states: `ready`, `not_connected`, `reconnect`, `shared_not_connected`, `disabled` or `not_granted` (`server/src/plugins/app-access.ts`). The last three are an administrator's to fix, so a person can file a request (`app_access_requests`) for exactly what the state is missing, and approving one performs it — switching the app on, granting it to the Bot — through the same code paths the admin screens use. See [Composio](plugins/composio.md#what-an-app-is-for-one-person-on-one-bot).
-
-### Creating and editing skills
-
-Create and edit skills on `/capabilities/skills` through the existing signed-in forms and API.
-A saved skill is granted explicitly to the appropriate Bot. Ownership and tool grants are decided
-by that API; a skill's instructions do not register or grant extra authoring tools.
-
-### Which tools a run is offered
-
-A model picks the right tool reliably out of about ten, and unreliably out of thirty. A deployment that connects two vendors passes that point on its first afternoon, so a Bot holding more than a handful of tools is offered, per run, only the tools of the skills that match the message.
-
-Skills come from two places: a person writes one, or the tenant package ships one in `skills.yaml`. Package skills are seeded on boot as deployment skills, carrying the tool refs they need, which is what lets narrowing work on a fresh clone instead of waiting for somebody to map tools to skills by hand. A slug a person already took stays theirs and the package loses that skill rather than the deployment refusing to start.
-
-A skill declares the tools it needs (`skill_tools`). Before the run starts, the deployment asks its own model which skills the message needs, and the Bot is built with those skills' tools plus every granted tool no skill claims. A declaration grants nothing: the offer is always intersected with what the Bot was already granted, so writing a skill can never hand anybody a tool.
-
-This narrows the offer. It is not a boundary, and it never substitutes for one. The grant, the policy and the audit row decide what may happen; this decides only what the model can see. Every way it can fail — no skills declared, a model that cannot answer, a message that matches nothing, twelve tools or fewer — leaves the whole catalogue offered, because a narrowing that failed closed would remove capability an administrator granted, silently. `mcp.tools_discovered` records what was offered, out of how much, and why.
-
-## Local storage
-
-PostgreSQL holds conversations, messages, tool calls and results, run state, ordered reconnect events, attachments and permissions.
-Runs belong to the backend, so closing a browser view does not cancel them. Clients read the saved transcript and attach to the current run.
-A database lease admits one run per thread; stopping a run addresses its exact run identifier.
-
-Automatic learning, learned-skill delivery and semantic recall have been removed. Removed stock Bots, automatic-opening records and obsolete author metadata are retired explicitly during initialization. Runtime readers use the current message contract without legacy parsers or dual writes.
-
-## Tenant package and knowledge
-
-`TENANT_PACKAGE_DIR` points at the tenant package. The default is `../examples/fintech`.
-
-Required package files:
-
-- `brand.yaml`
-- `agents.yaml`
-- `channels.yaml`
-- `model.yaml`
-- `knowledge.yaml`
-
-Optional: `skills.yaml`, `theme.css`, and an `agents/` directory holding a coworker per file, read
-alongside `agents.yaml`. See [configuration.md](configuration.md#agents).
-
-The server validates the package at startup. Channel agent IDs must match declared agents. Knowledge sources currently support Google Drive and Microsoft OneDrive declarations.
-
-Connector credentials are stored through the credential vault and referenced by id, not stored inline in YAML.
-
-## Security boundaries
-
-- Server routes enforce auth and roles; admin pages are backed by server-side administrator checks.
-- Sign-in is Google, Microsoft or Okta from the environment, plus SAML and OpenID Connect providers registered at runtime and routed by email domain. One resolver answers both questions a run asks about a person, whose threads these are and which Bots they may run, so the two can never disagree.
-- `INITIAL_ADMIN_EMAILS` is a floor: an address it names is made an administrator at every sign-in and cannot be demoted from the People screen. Everybody else's role is decided there, and every change writes an audit row.
-- Registering, changing or removing an identity provider is administrator-only. Better Auth's SSO plugin guards those routes with a session alone, which would let any signed-in person register a provider for a domain.
-- A registered identity provider belongs to the deployment, not to whoever registered it. Better Auth scopes its own listing and removal to the registering user and cascades the row from that user, so two administrators see two different deployments and deleting the one who set sign-in up deletes the company's sign-in. Reads and removals go through OpenBot's own administrator-only routes against the whole table.
-- A provider's client secret and SAML signing material are encrypted at rest with `KEY_ENCRYPTION_KEY`, through a wrapper on the Better Auth storage adapter, since the plugin stores them as plaintext JSON. OAuth access and refresh tokens use Better Auth's own encryption, keyed on `BETTER_AUTH_SECRET`.
-- Signing in, being refused, and being granted the administrator role by configuration each write an audit row. They are the only record that somebody who can edit `INITIAL_ADMIN_EMAILS` promoted themselves, and the only evidence a revoked person was ever here, since revoking them deletes their sessions.
-- Removing somebody deletes their sessions and denies their address, because deleting the user row alone is not removal: the next sign-in through the provider recreates it.
-- With no identity provider configured, the deployment refuses to start unless `OPENBOT_SINGLE_USER=true` says every request may be one fixed administrator. That flag is the only thing that permits it; `NODE_ENV` does not. The flag alone is not enough on a public address: if `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or any `TRUSTED_ORIGINS` entry resolves to an address the public internet routes to, the deployment refuses to start anyway, because no sign-in there means every visitor is the administrator. Loopback is silent, and a private address (a home LAN, a Tailnet, a VPN, a `.local` name) is allowed with a warning naming it, since that is the deployment the flag exists for.
-- `KEY_ENCRYPTION_KEY` must be a base64-encoded 32-byte value. The example key is refused with `NODE_ENV=production`.
-- Credential plaintext is encrypted at rest, never returned by APIs, and redacted from audit events.
-- Browser navigation allows `http` and `https`; cloud metadata addresses are refused under every configuration.
-- `POST /api/model-provider/v1/chat/completions` exists only when `OPENBOT_MODEL_OAUTH_FILE` names a model credential file, which the desktop app sets and nothing else does. It answers a Chat Completions request using a stored Google or xAI OAuth grant. It does not use the session guard: the caller presents a separate local bearer taken from that file and compared in constant time, and the provider's own refresh token never leaves the server. The credential file is refused unless it is a regular file under 64KB with no group or other permission bits, and the upstream host, path and headers are fixed so a caller cannot redirect the request.
-- `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS=true` is for local development only, and a deployment running with `NODE_ENV=production` refuses to start while it is set.
-- Computer tokens and supervisor tokens must be long random values outside local development.
-
-
+No tests, test assets, lint, type checking, builds, services, SQL, browser operations or actual conversations were executed for this extraction. Existing test/checker files remain untouched. Runtime operation count is still 0 of the previously allowed 2 rounds.

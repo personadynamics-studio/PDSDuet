@@ -25,7 +25,6 @@
 import { BOT_PAUSED_REASON, isBotPaused } from "../agents/lifecycle";
 import type { AgentActor } from "../agents/profile-types";
 import type { ChannelStore } from "../channels/routes";
-import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
 import type { TurnRunner } from "@openbot/toolkit/run-turn";
 import type { RoutineStore } from "./store";
 
@@ -142,25 +141,26 @@ export function createRoutineRunner(options: {
     }
     let replyText: string;
     try {
-      ({ replyText } = await runTurn({
+      const result = await runTurn({
         ownerUserId,
         routineId,
         agentId,
         threadId: channel.threadId,
         instruction,
-      }));
-    } catch (error) {
-      if (error instanceof HeadlessToolSuspension) {
-        await routineStore.finishRun(
-          routineRunId,
-          "waiting",
-          error.message,
-          error.waiting,
-        );
-        await say(error.message);
+        initiator: { kind: "routine", id: routineId },
+      });
+      if (result.status === "waiting") {
+        await routineStore.finishRun(routineRunId, "waiting", undefined, result.waiting);
+        if (result.replyText) await say(result.replyText);
         return;
       }
+      replyText = result.replyText;
+    } catch (error) {
       const reason = reasonOf(error);
+      if (error instanceof Error && error.name === "RunStoppedError") {
+        await routineStore.finishRun(routineRunId, "skipped", reason);
+        return;
+      }
       await routineStore.finishRun(routineRunId, "failed", reason);
 
       /*

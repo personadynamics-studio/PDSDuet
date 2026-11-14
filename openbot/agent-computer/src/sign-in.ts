@@ -209,27 +209,23 @@ function markSubmit(
   return "form";
 }
 
-async function submitFrom(page: Page, field: Locator) {
-  const how = await field.evaluate(markSubmit, LOGIN_ATTRIBUTE);
+async function submitFrom(page: Page, field: Locator, signal?: AbortSignal) {
+  const how = await field.evaluate(markSubmit, LOGIN_ATTRIBUTE, { signal });
   if (how === "button")
     await page
       .locator(`[${LOGIN_ATTRIBUTE}="submit"]`)
-      .click({ timeout: STEP_TIMEOUT_MS });
+      .click({ timeout: STEP_TIMEOUT_MS, signal });
   else if (how === "form")
     await field.evaluate((element) =>
       (element as HTMLInputElement).form?.requestSubmit(),
+      undefined,
+      { signal },
     );
-  else await field.press("Enter", { timeout: STEP_TIMEOUT_MS });
+  else await field.press("Enter", { timeout: STEP_TIMEOUT_MS, signal });
 }
 
-async function settle(page: Page) {
-  await page.waitForTimeout(800);
-  await page
-    .waitForLoadState("load", { timeout: STEP_TIMEOUT_MS })
-    .catch(() => undefined);
-  await page
-    .waitForLoadState("networkidle", { timeout: 5_000 })
-    .catch(() => undefined);
+async function settle(page: Page, signal?: AbortSignal) {
+  await page.waitForLoadState("domcontentloaded", { timeout: STEP_TIMEOUT_MS, signal });
 }
 
 /** A password field still showing, other than a one-time-code field a site drew as one. */
@@ -241,14 +237,15 @@ async function passwordVisible(page: Page) {
   );
 }
 
-async function typeSecret(field: Locator, value: string) {
-  await field.fill(value, { timeout: STEP_TIMEOUT_MS });
-  await field.evaluate(markElementSecret, SECRET_ATTRIBUTE);
+async function typeSecret(field: Locator, value: string, signal?: AbortSignal) {
+  await field.fill(value, { timeout: STEP_TIMEOUT_MS, signal });
+  await field.evaluate(markElementSecret, SECRET_ATTRIBUTE, { signal });
 }
 
 export async function fillSignIn(
   page: Page,
   input: SignInFillInput,
+  signal?: AbortSignal,
 ): Promise<SignInFillResult> {
   const answer = (error: string, submitted = false): SignInFillResult => ({
     submitted,
@@ -262,24 +259,24 @@ export async function fillSignIn(
       `The Bot's browser is not on ${input.origin}. Ask it to open that site's sign-in page and try again.`,
     );
   try {
+    signal?.throwIfAborted();
     let found = await page.evaluate(markLoginFields, LOGIN_ATTRIBUTE);
     if (!found.password && !found.username)
       return answer("There is no sign-in form on the page the Bot has open.");
     const usernameField = page.locator(`[${LOGIN_ATTRIBUTE}="username"]`);
     if (found.username && input.username)
-      await usernameField.fill(input.username, { timeout: STEP_TIMEOUT_MS });
+      await usernameField.fill(input.username, { timeout: STEP_TIMEOUT_MS, signal });
     if (!found.password) {
       // Two steps: username first, then the site shows the password field.
       if (!input.username)
         return answer(
           "This site asks for a username first. Enter one and try again.",
         );
-      await submitFrom(page, usernameField);
+      await submitFrom(page, usernameField, signal);
       await page
         .locator("input[type=password]:visible")
         .first()
-        .waitFor({ timeout: STEP_TIMEOUT_MS })
-        .catch(() => undefined);
+        .waitFor({ timeout: STEP_TIMEOUT_MS, signal });
       if (originOfUrl(page.url()) !== input.origin)
         return answer(
           `The sign-in moved to ${originOfUrl(page.url()) || "another page"}. Take over the browser to finish signing in there.`,
@@ -293,19 +290,16 @@ export async function fillSignIn(
         );
     }
     const passwordField = page.locator(`[${LOGIN_ATTRIBUTE}="password"]`);
-    await typeSecret(passwordField, input.password);
-    await submitFrom(page, passwordField);
-    await settle(page);
+    await typeSecret(passwordField, input.password, signal);
+    await submitFrom(page, passwordField, signal);
+    await settle(page, signal);
     // A password field still showing is a refused login; the server says so. Only past that is a
     // code field the site asking for a second step. The code field is looked for first, so one a
     // site draws as a password input is not mistaken for the login's own, and is then given a
     // moment to appear.
-    let codeRequested = await page.evaluate(markCodeField, LOGIN_ATTRIBUTE);
+    const codeRequested = await page.evaluate(markCodeField, LOGIN_ATTRIBUTE);
     const refused = await passwordVisible(page);
-    if (!codeRequested && !refused) {
-      await page.waitForTimeout(2_000);
-      codeRequested = await page.evaluate(markCodeField, LOGIN_ATTRIBUTE);
-    }
+    signal?.throwIfAborted();
     if (codeRequested && originOfUrl(page.url()) !== input.origin)
       return answer(
         `The sign-in moved to ${originOfUrl(page.url()) || "another page"} to ask for a verification code. Take over the browser to finish signing in there.`,
@@ -318,6 +312,7 @@ export async function fillSignIn(
       url: page.url(),
     };
   } catch {
+    signal?.throwIfAborted();
     return answer("The login could not be typed into the page.");
   }
 }
@@ -331,6 +326,7 @@ export async function fillSignIn(
 export async function fillSignInCode(
   page: Page,
   input: SignInCodeInput,
+  signal?: AbortSignal,
 ): Promise<SignInCodeResult> {
   const answer = (error: string, submitted = false): SignInCodeResult => ({
     submitted,
@@ -344,12 +340,13 @@ export async function fillSignInCode(
       `The Bot's browser is not on ${input.origin} any more. Take over the browser to finish signing in.`,
     );
   try {
+    signal?.throwIfAborted();
     if (!(await page.evaluate(markCodeField, LOGIN_ATTRIBUTE)))
       return answer("The site is not asking for a verification code any more.");
     const codeField = page.locator(`[${LOGIN_ATTRIBUTE}="code"]`);
-    await typeSecret(codeField, input.code);
-    await submitFrom(page, codeField);
-    await settle(page);
+    await typeSecret(codeField, input.code, signal);
+    await submitFrom(page, codeField, signal);
+    await settle(page, signal);
     const codeFieldVisible =
       originOfUrl(page.url()) === input.origin &&
       (await page.evaluate(markCodeField, LOGIN_ATTRIBUTE));
@@ -360,6 +357,7 @@ export async function fillSignInCode(
       url: page.url(),
     };
   } catch {
+    signal?.throwIfAborted();
     return answer("The verification code could not be typed into the page.");
   }
 }

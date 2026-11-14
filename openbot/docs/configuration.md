@@ -1,6 +1,6 @@
 # Configuration
 
-OpenBot is configured with environment variables and a tenant package. The API server validates both at startup.
+The active Browser/Bot core is configured with environment variables and a tenant package. See architecture.md for the source extraction of 2026-11-14. Inherited sections about proactive work, Responsibility, generic approvals and delivery describe services no longer assembled by the core; ordinary routines and manual mail/calendar connectors remain.
 
 ## Environment setup
 
@@ -451,25 +451,9 @@ deny-lists the address, retires the connector credentials they granted and their
 (see Linked accounts), and stops their Bots' computers. Reactivating them lifts a deny-list entry
 SCIM wrote, never one an administrator wrote.
 
-## One Bot handing work to another
+## Bot discovery and calls
 
-| Variable                   | Meaning                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------- |
-| `BOT_HANDOFF_MAX_DEPTH`    | How many Bots deep a chain may go. `0` switches the capability off entirely. Default `1`.    |
-| `BOT_HANDOFF_MAX_PER_RUN`  | How many other Bots one run may address. Default `3`.                                        |
-
-Both refuse rather than truncate, and both are refused at start-up if they are not whole numbers of
-zero or more: a deployment that typed `two` and silently got the default would believe it had set a
-cap.
-
-Which Bots may address which is a grant, not a variable, and no Bot may address any other until one
-is made. It is made on the Bot's own page: open it from **Bots**, choose **Skills and access**, and switch on each Bot under
-**Bots it may ask**. The pair is directional: that list is who this Bot may ask, not who may ask it,
-so letting them ask each other is two switches. Only an administrator may change it; anyone who can
-see the Bot can read it.
-
-With both caps above at zero the screen says the capability is switched off, because a grant made
-then is a row nothing will read.
+Bots use the signed-in person's visible profile roster. `list_bots` lists their exact IDs and roles; `message_bot` calls a peer through the same executor and conversation. No pairwise Bot grant, depth cap, fan-out cap, queue or relay worker is required. Real connector grants and shared-account consent remain.
 
 ## Slack and Microsoft Teams (OpenTag pairing)
 
@@ -618,12 +602,8 @@ is still the record.
 | ------------------------------------ | ----------------------------------------------------------------------------------------- |
 | `AGENT_COMPUTER_URL`                 | Shared computer URL. If absent, computer routes are not mounted.                          |
 | `COMPUTER_TOKEN`                     | Secret every computer request must present. The computer refuses to start without it.     |
-| `COMPUTER_MAX_BROWSERS`              | How many Bots may hold a running browser at once. `8` by default; the least recently used is closed past it. |
-| `COMPUTER_BROWSER_IDLE_MS`           | How long an untouched browser is kept. 30 minutes by default; `0` keeps them resident.    |
 | `COMPUTER_BROWSER_BACKEND`           | `managed` by default (full bundled Chromium); `local-chrome` opts into installed Chrome with dedicated profiles and a loopback API. |
 | `COMPUTER_BROWSER_MODE`              | Managed defaults to `headed` on Linux, which is every hosted computer (a container, a pod, the desktop app's engine): full Chromium on the computer's own Xvfb display. A computer run directly on macOS or Windows defaults to `headless`, where headed would open windows on the desktop. `headless` is full Chromium's new headless mode. Local Chrome requires `headed`. See [Getting past bot checks](#getting-past-bot-checks). |
-| `WEB_BOT_AUTH`                       | `on` or `off`. Unset means off. `on` needs an https public URL. See [Web Bot Auth](#web-bot-auth). |
-| `WEB_BOT_AUTH_KEY`                   | The Web Bot Auth signing key, an Ed25519 private JWK. Unset derives one from `KEY_ENCRYPTION_KEY`. Never logged. |
 | `OPENBOT_LOCAL_COMPUTER_DIR`         | Local startup helper's absolute data root. Defaults to the platform's OpenBot user-data directory; contains `profiles/` and `workspace/`. |
 | `COMPUTER_SUPERVISOR_URL`            | Supervisor URL for per-Bot computers. If absent, Bots share `AGENT_COMPUTER_URL`.         |
 | `SUPERVISOR_TOKEN`                   | Bearer token required by the supervisor.                                                  |
@@ -819,80 +799,9 @@ docker volume ls -q --filter "label=openbot.namespace=openbot" | xargs -r docker
 
 Proxy credentials may appear in proxy URLs, but the computer strips them before reporting proxy status.
 
-### Getting past bot checks
+### Site challenges and sign-in
 
-Sites behind Cloudflare and similar services (ChatGPT, Canva and many more) decide on every request
-whether it comes from a person, a known good bot, or something to challenge. A Bot's browser gives
-them three answers, in order of how much each one is in the operator's hands, and then a fallback
-for when none of them is enough.
-
-1. **A real browser.** Headed Chromium, the default for hosted computers (see above). Headless
-   Chromium is what bot checks are best at spotting, and is challenged even from a residential
-   address.
-2. **Web Bot Auth, off unless you switch it on.** The browser signs every request as coming from
-   this deployment, the way OpenAI's agent does. A site that allows signed agents lets it through.
-   See below.
-3. **Where the traffic leaves from.** A datacenter address is the other thing bot checks key on. A
-   residential or ISP proxy changes it. See [Residential or ISP proxy](#residential-or-isp-proxy).
-4. **The handoff, which is the designed fallback.** When a site still challenges (a "Verify you are
-   human" check, a CAPTCHA, a sign-in), the Bot asks for help, the person takes control in the live
-   screen, solves it, and hands back. OpenBot never solves a challenge on anyone's behalf. The page
-   survives a computer restart: the handoff reopens it rather than showing a blank browser.
-
-#### Web Bot Auth
-
-[Web Bot Auth](https://developers.cloudflare.com/bots/reference/bot-verification/web-bot-auth/) is
-Cloudflare's signed-agent scheme, built on HTTP Message Signatures (RFC 9421). With it on:
-
-- The server holds one Ed25519 key and publishes its public half, signed, at
-  `<public URL>/.well-known/http-message-signatures-directory` (content type
-  `application/http-message-signatures-directory+json`).
-- Every request a Bot's browser sends carries `Signature-Agent: "<public URL>"`, plus `Signature-Input`
-  and `Signature` over `@authority` and `signature-agent`, with `created`, a 60 second `expires`, a
-  nonce, `tag="web-bot-auth"` and the key's JWK thumbprint as `keyid`. The headers are added inside
-  the browser as each request leaves it, so the egress filter still judges every connection, TLS is
-  still Chromium's own, cookies are unchanged, and no CORS preflight is added.
-
-**When it is on.** Only when `WEB_BOT_AUTH=on` (on Helm, `config.webBotAuth: "on"`). Unset or `off`
-means off, whatever the address. An OpenBot deployment is private by design, and signing announces
-it: every site a Bot visits sees the deployment's URL, and Cloudflare will only register a key
-directory it can fetch from the internet. So it is a deliberate choice, made by an operator whose
-public URL is reachable and who wants sites to know their Bots. `on` needs `OPENBOT_PUBLIC_URL` (or
-`BETTER_AUTH_URL`) to be https and not this machine, and is refused at start-up otherwise. A private
-https address (`10.x`, `192.168.x`, `*.internal`, a single-label name) is accepted, because only the
-operator knows whether their verifier reaches it.
-
-**The key.** Derived from `KEY_ENCRYPTION_KEY` (one way, with HKDF), so every replica and restart
-signs with the same key and nothing new is needed to start. `WEB_BOT_AUTH_KEY` names one instead, an
-Ed25519 private JWK (on Helm, `secrets.webBotAuthKey`). The server hands it to each computer with
-the network policy it already pushes, because the browser is what signs: a Bot's computer can sign as
-this deployment, which is what it is for, and nothing else the deployment holds can be recovered from
-it. Rotate by setting a new `WEB_BOT_AUTH_KEY` and registering again.
-
-**Registering with Cloudflare (manual, once).** Signing earns nothing until Cloudflare knows the key:
-
-1. Check the directory answers from the internet:
-   `curl -i https://openbot.example.com/.well-known/http-message-signatures-directory` shows `200`,
-   the content type above, `Signature` and `Signature-Input` headers, and one key.
-2. In the [Cloudflare dashboard](https://dash.cloudflare.com/), choose your account, then
-   **Manage Account** > **Configurations** > **Bot Submission Form**.
-3. For **Verification Method**, choose **Request Signature**. For **Validation Instructions**, give
-   the key directory URL from step 1. Submit.
-4. Follow the request under **BotBase** > **Submission history**.
-
-Until it is approved, signed requests are treated like any others. Other services that verify Web
-Bot Auth read the same directory.
-
-**What it tells sites.** Every site a Bot visits, Cloudflare-fronted or not, sees this deployment's
-public URL in `Signature-Agent`. That is the point (an honest agent says who it is), and it is why
-it is off unless switched on.
-
-**What is signed.** Every request the browser sends, whatever sent it: pages, redirects,
-subresources, cross-site frames running in processes of their own, dedicated workers, and service
-workers, including their script fetches. The signing happens in one browser-level DevTools session,
-so no kind of target can be missed by not being attached. The identity is per deployment, not per
-Bot. The local Chrome backend never signs: it is the person's own browser.
-
+Use the real persistent browser session. A site's challenge or sign-in requirement is reported from the page, not inferred from a missing connector. `computer_request_help` or `computer_request_sign_in` creates a genuine waiting tool: the person takes the live browser, completes that step and releases it. The tool resumes in the same session. This does not promise that any particular website will accept automation.
 #### Residential or ISP proxy
 
 `EGRESS_PROXY_DEFAULT` (and `EGRESS_PROXY_<BOT_ID>`, see [Per-Bot egress](#per-bot-egress)) takes a
@@ -924,15 +833,8 @@ credentials are split out before Chromium or any status report sees them.
 **This is the operator's choice, and it is off by default.** Through a residential proxy, a Bot's
 traffic leaves from an address a consumer ISP owns, so a site sees what looks like a person at home
 rather than a datacenter. That is why it works, and it is a choice to make knowingly: it changes
-what the Bot appears to be, where Web Bot Auth says what it is. They can be used together.
+the network route. It does not remove the need for a person when a site requires human input.
 
-## Attested identity
-
-When optional SPIRE services are used:
-
-- the supervisor reads `SPIRE_SOCKET`, `SPIRE_AGENT_ID`, `SPIRE_TRUST_DOMAIN`, and `SPIRE_AGENT_SOCKET_VOLUME`;
-- computers read `SPIFFE_ENDPOINT_SOCKET`;
-- Compose also uses `SPIRE_JOIN_TOKEN` and `COMPOSE_PROJECT_NAME`.
 
 ## Images
 

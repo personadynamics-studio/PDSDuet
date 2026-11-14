@@ -30,7 +30,6 @@ import {
 } from "react";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { DuetIcon } from "@/components/duet/icons";
-import { IconWaveform } from "@/components/icons/waveform";
 import {
   attachmentUrl,
   classifyAttachment,
@@ -73,31 +72,6 @@ type UploadFailure = Parameters<
 >[0];
 
 /**
- * WHY A STAGED ATTACHMENT LEFT THE COMPOSER WITHOUT BEING SENT.
- *
- * Two different things push files down this channel and they want different words. The composer
- * used to build ONE sentence for both — "dropped when queued messages were merged into one: a
- * message can carry at most 8" — which was true of the first and false of the second: nothing is
- * merged when somebody removes a parked message, and no cap is hit. Telling them about a limit they
- * never reached is worse than saying nothing, because it sends them looking for a limit to work
- * around.
- *
- * `reduceQueue` reports the same `Attachment[]` either way, so the cause cannot be recovered from
- * the files. It is read off the queue ACTION instead, by `conversation-view.tsx`, which is the one
- * place that has both halves in hand.
- */
-export type DroppedAttachmentCause =
-  /** Several parked messages became one turn, and the joined message overran the per-message cap. */
-  | "merged-over-cap"
-  /** A parked message was taken back out of the queue, and it was carrying these. */
-  | "queued-message-removed";
-
-export type DroppedAttachments = {
-  cause: DroppedAttachmentCause;
-  attachments: readonly Attachment[];
-};
-
-/**
  * WHAT A STAGED ATTACHMENT ACTUALLY IS, rather than what the browser called it when it was picked
  * up. See the `images` memo for the whole account, and `attachmentModality` in `chat-messages.ts`
  * for the rule itself — the send path and the parked tiles ask this same question the same way, and
@@ -137,7 +111,6 @@ export type ComposerProps = {
    * under it (Chat). Anywhere the composer sits below the conversation instead, white reads better.
    */
   glass?: boolean;
-  voiceCall?: { active: boolean; supported: boolean; onStart(): void };
   /** Agents that `@` can address. Empty means the mention menu reports an empty channel. */
   agents?: readonly AgentOption[];
   commands?: readonly CommandOption[];
@@ -146,20 +119,6 @@ export type ComposerProps = {
    * structured data instead of something it would have to re-parse out of the text.
    */
   onSubmit?: (draft: ComposerDraft) => void | Promise<void>;
-  /**
-   * Park this message until the turn in flight is over, instead of refusing the keystroke.
-   *
-   * Its presence is what lets a person type at a Bot that is already working. Without it the
-   * composer goes on refusing mid-turn sends, which is still the right answer for a screen that has
-   * nowhere to put a parked message — the compose screen creates the channel on send and then
-   * navigates away, so anything parked there would be dropped on unmount, and a message that
-   * silently disappears is worse than a send button that visibly will not go.
-   *
-   * Called instead of `onSubmit`, not as well as it, and it does not return a promise: parking is
-   * a state change, and awaiting one would hold the composer's send lock for the length of somebody
-   * else's turn and block the next correction.
-   */
-  onQueue?: (draft: ComposerDraft) => void;
   /** 停止機械人 mid-answer; while pending, the send button becomes a stop button. */
   onStop?: () => void;
   /**
@@ -200,47 +159,6 @@ export type ComposerProps = {
    */
   stoppable?: boolean;
   initialValue?: string;
-  /**
-   * Files a caller's queue left behind, and WHY, reported so they read as a refusal rather than
-   * vanishing.
-   *
-   * Two causes reach here and they are not interchangeable — see `DroppedAttachments` above.
-   * Joining several parked messages into one drained turn can overflow
-   * `MAX_ATTACHMENTS_PER_MESSAGE` in a way no per-draft check ever saw coming (see `reduceQueue`'s
-   * `droppedAttachments` in `queue.ts`), and removing a parked message takes whatever it was
-   * carrying with it. Either way those files are still staged server-side, so saying nothing is not
-   * neutral: it is a person finding out from a 409 on their next upload, with nothing connecting
-   * that refusal to the files that silently disappeared.
-   *
-   * A FRESH OBJECT EACH TIME SOMETHING IS DROPPED is what this relies on — see the effect below.
-   * The caller builds one per event, which it has to do anyway to say which cause it was.
-   */
-  droppedAttachments?: DroppedAttachments;
-  /**
-   * HOW MANY ATTACHMENTS ARE SITTING IN THE CALLER'S QUEUE, BECAUSE THE SERVER IS STILL COUNTING
-   * THEM AND THIS COMPOSER CANNOT SEE THEM.
-   *
-   * Parking a message takes its chips off the strip — the queue owns them now — but nothing about
-   * the rows behind them changes: `attachedAt` is written only when the message is really sent, so
-   * they stay `attached_at IS NULL` in this composer's `uploadGroup` for the whole life of the
-   * in-flight turn, and the server's upload cap counts exactly that set. The strip is empty,
-   * `screenPickedFiles` is told `alreadyStaged: 0`, the pick is accepted, the upload round-trips,
-   * and the server answers 409 for a file the client had already said yes to. Park eight files
-   * during a turn — or three messages carrying three each — and the next one is refused.
-   *
-   * A per-draft cap that ignores the queue cannot agree with a per-group cap that does not, so the
-   * one number the client screens against has to include both halves.
-   *
-   * NOT THE CLOSED-TAB LOCKOUT, and worth saying so because the sentence is the same: parked files
-   * are drawn in the transcript, come back if the message is taken out of the queue, and their rows
-   * are stamped the moment the turn drains. The cost is a refusal that should have been instant and
-   * in our words arriving after a round trip in the server's.
-   *
-   * The count rather than the attachments, because that is all the screen needs and the queue's
-   * shape is the caller's business. `conversation-view.tsx` owns the queue and is the only thing
-   * that can sum this; a caller with no queue leaves it out and nothing changes.
-   */
-  queuedAttachmentCount?: number;
   /** What the empty box says. "Message OpenDuet" in the app shell; "你想問甚麼？" elsewhere. */
   placeholder?: string;
   /**
@@ -268,20 +186,6 @@ function tooManyStagedReason(count: number): string {
     `請移除 ${count - MAX_ATTACHMENTS_PER_MESSAGE} 個附件後再傳送。`
   );
 }
-
-/**
- * One sentence per cause, and they say different things because different things happened.
- *
- * A merge names the cap, because that is the limit the person can work around — send fewer at once.
- * A removal names the removal and nothing else: there is no limit to explain, and inventing one
- * would send somebody hunting for a rule they never hit.
- */
-const DROPPED_REASON: Record<DroppedAttachmentCause, string> = {
-  "merged-over-cap":
-    "合併等候傳送的訊息時已移除，" +
-    `每則訊息最多可附加 ${MAX_ATTACHMENTS_PER_MESSAGE} 個附件。`,
-  "queued-message-removed": "已連同等候傳送的訊息一併移除。",
-};
 
 /**
  * WHAT A FILE DROPPED ON A COMPOSER THAT CANNOT TAKE IT IS TOLD, AND WHY IT IS TOLD ANYTHING.
@@ -319,11 +223,9 @@ export function Composer({
   editorClassName,
   compact = false,
   glass = false,
-  voiceCall,
   agents = [],
   commands = PLACEHOLDER_COMMANDS,
   onSubmit,
-  onQueue,
   onStop,
   disabled = false,
   pending = false,
@@ -331,9 +233,6 @@ export function Composer({
   channelId,
   stoppable,
   initialValue,
-  droppedAttachments,
-  // Nothing parked is the right answer for every caller without a queue, which is most of them.
-  queuedAttachmentCount = 0,
   placeholder = "你想問甚麼？",
   onTextChange,
 }: ComposerProps) {
@@ -363,7 +262,7 @@ export function Composer({
       wantsFocus.current = true;
       if (voiceSheet && intent === "draft") editAfterSheet.current = true;
     },
-    disabled || voiceCall?.active === true,
+    disabled,
   );
   if (voiceSheet && !dictation.busy) setVoiceSheet(false);
   /** `autoFocus` has been honoured once, and is not owed again for the life of this composer. */
@@ -473,34 +372,6 @@ export function Composer({
         : undefined,
     [channelId, uploadGroup, recordRejection, recordUpload],
   );
-
-  /**
-   * The queue just left these behind, and they need the same rejection treatment a pick-time
-   * refusal gets — see `droppedAttachments` above for why staying quiet is not an option.
-   *
-   * Keyed on the object itself rather than on something derived from it, because the caller is
-   * expected to hand over a fresh one only when a new drop actually happened; an empty one on
-   * mount, or between drops, runs this once for nothing and then not again until the next real
-   * drop.
-   */
-  useEffect(() => {
-    if (!droppedAttachments || droppedAttachments.attachments.length === 0) {
-      return;
-    }
-    const reason = DROPPED_REASON[droppedAttachments.cause];
-    setRejected((current) => [
-      ...current,
-      ...droppedAttachments.attachments.map((attachment) => ({
-        // `newId()` again, and this is the least survivable of the three sites: an effect body
-        // that throws propagates out of React's commit, so on a deployment served over plain
-        // `http://` a queue drop would answer by tearing down the tree that was about to explain
-        // it — a blank conversation instead of a list of the files it just lost.
-        id: newId(),
-        name: attachment.filename ?? "附件",
-        reason,
-      })),
-    ]);
-  }, [droppedAttachments]);
 
   /**
    * Called unconditionally, with a config only when there is a channel to upload to. The hook
@@ -704,10 +575,7 @@ export function Composer({
         // over the cap however carefully this counted. `tooManyStaged` is what catches that,
         // because it asks about the strip as it actually is rather than predicting it.
         //
-        // PLUS WHAT IS PARKED, which is on nobody's strip and is still counted by the server —
-        // see `queuedAttachmentCount`. Without the second half the client accepts a pick the
-        // server then refuses with a 409 the person was given no chance to avoid.
-        alreadyStaged: stagedCount.current + queuedAttachmentCount,
+        alreadyStaged: stagedCount.current,
       });
       if (screened.rejected.length > 0) {
         setRejected((current) => [...current, ...screened.rejected]);
@@ -725,7 +593,7 @@ export function Composer({
         staging.current -= screened.accepted.length;
       }
     },
-    [disabled, processFiles, queuedAttachmentCount],
+    [disabled, processFiles],
   );
 
   /**
@@ -1079,43 +947,7 @@ export function Composer({
         return;
       }
 
-      /*
-       * A TURN IS IN FLIGHT, AND THIS IS THE FORK THE WHOLE AFFORDANCE HANGS ON.
-       *
-       * With somewhere to park it the message goes there and the box empties, so the person sees
-       * their words land. Without, we are back to refusing, which is what every caller that does
-       * not queue still gets.
-       *
-       * It returns before `submitInFlight` and `isSubmitting` are touched on purpose. Those guard
-       * one send from starting twice; a send here is held open for the length of the whole run, so
-       * borrowing them for a parked message would let the first turn lock out every correction
-       * typed while it worked — the exact thing this exists to allow.
-       */
-      if (isBusy) {
-        if (!onQueue) {
-          return;
-        }
-        setValue([]);
-        dismissRejections();
-        // Taken off the composer as the message is parked, so the strip empties with the words
-        // rather than leaving the files looking like they are still to be sent. Only these —
-        // `consumeAttachments()` takes every `ready` attachment, including ones a send already
-        // in flight is riding, and that send's own `finally` still needs them to hand back if it
-        // fails. `submitted.attachments` is `staged`, which already excludes those.
-        //
-        // Released BEFORE the chips go, and this order is not cosmetic: the parked message owns
-        // these rows now and will send them later, so the reconciler must be told before it sees
-        // the chips disappear — otherwise it reads a queued message's attachments as abandoned and
-        // deletes the rows out from under it.
-        releaseStagedRows(submitted.attachments);
-        for (const attachment of submitted.attachments) {
-          removeAttachment(attachment.id);
-        }
-        onQueue(submitted);
-        return;
-      }
-
-      if (submitInFlight.current || !onSubmit) {
+      if (isBusy || submitInFlight.current || !onSubmit) {
         return;
       }
 
@@ -1140,7 +972,7 @@ export function Composer({
         // `consumeAttachments()` would also swallow anything attached while the run was in
         // flight, which belongs to the next message and has never been sent.
         //
-        // Released first, for the reason the queue branch above gives: the message carries these
+        // Release staged ownership before removing chips: the accepted message carries these
         // rows now, and a reconciler that saw the chips go without being told would delete
         // attachments that have just been sent.
         releaseStagedRows(submitted.attachments);
@@ -1206,7 +1038,6 @@ export function Composer({
       dictation.session,
       dismissRejections,
       isBusy,
-      onQueue,
       onSubmit,
       releaseStagedRows,
       removeAttachment,
@@ -1268,56 +1099,12 @@ export function Composer({
     void submitDraft(value);
   };
 
-  /**
-   * There is a turn in flight and somewhere to park what is being typed.
-   *
-   * Not the same question as "is anything typed" — an empty composer mid-turn can queue nothing,
-   * and the button it wants is Stop.
-   */
-  const canQueue = Boolean(onQueue) && isBusy && !disabled;
-  /**
-   * There is a message here to send or to park.
-   *
-   * `canSendDraft` rather than a local "is anything typed": it is the half of this answer that
-   * knows about attachments — an image on its own is a message, and one still uploading is not
-   * one yet. Both buttons read it, so Send and Queue can never disagree about whether there is
-   * anything to do.
-   */
   const sendable = canSendDraft(draft) && !tooManyStaged;
-  /** Something to send, mid-turn, with a queue to put it in. */
-  const parking = canQueue && sendable;
-  const canSend =
-    !disabled && !dictation.busy && sendable && (!isBusy || canQueue);
-  const canSendRecording =
-    !disabled &&
-    !tooManyStaged &&
-    !draft.attachments.some(
-      (attachment) => attachment.status === "uploading",
-    ) &&
-    (!isBusy || canQueue) &&
-    Boolean(onSubmit || onQueue);
-  /**
-   * Stop is available only once there is a run for it to reach, and it gives way to Send the moment
-   * there is something typed to park.
-   *
-   * `stoppable` rather than `pending`, because a turn is in flight before its run is, and a button
-   * that cannot do the thing it names is worse than no button at all.
-   *
-   * One button, so one of the two has to yield. Send wins because the correction is the thing that
-   * cannot wait: park it and the box empties, which brings Stop straight back — so stopping is
-   * never more than one press away, and the press before it is the one that saves the sentence.
-   * Showing both would be honest and would also put two round buttons in a row on a compact
-   * composer that has room for one.
-   */
-  const canStop = Boolean(onStop) && (stoppable ?? pending) && !parking;
-  /**
-   * The same arrow either way, because it is the same gesture, but a screen reader is told which of
-   * the two it is about to do. "傳送" on a button that will not send for another minute is a small
-   * lie told to exactly the people who cannot see the queue it lands in.
-   */
-  const sendLabel = parking ? "加入等候傳送" : "傳送訊息";
+  const canSend = !disabled && !dictation.busy && sendable && !isBusy;
+  const canSendRecording = !disabled && !tooManyStaged && !draft.attachments.some((attachment) => attachment.status === "uploading") && !isBusy && Boolean(onSubmit);
+  const canStop = Boolean(onStop) && (stoppable ?? pending);
+  const sendLabel = "傳送訊息";
   const draftEmpty = draft.isEmpty && draft.attachments.length === 0;
-  const callAction = draftEmpty ? voiceCall : undefined;
   /**
    * Chat's composer, with nothing written yet, dictates into the voice sheet rather than inline:
    * from an empty box a person is starting a brain dump, not adding to a sentence. With words in
@@ -1329,7 +1116,7 @@ export function Composer({
    * that place: Stop while the Bot answers, and a voice call where there is one, both come first,
    * and the mic beside them opens the sheet instead.
    */
-  const voiceAction = sheetDictation && !canStop && !callAction;
+  const voiceAction = sheetDictation && !canStop;
   const openVoiceSheet = () => {
     setVoiceSheet(true);
     void dictation.session.start();
@@ -1351,30 +1138,6 @@ export function Composer({
     >
       <SwapGlyph name="stop">
         <IconPlayerStopFilled className={compact ? "size-3.5" : "size-3"} />
-      </SwapGlyph>
-    </Button>
-  ) : callAction ? (
-    <Button
-      aria-label={callAction.active ? "顯示語音通話" : "開始語音通話"}
-      title={
-        callAction.supported
-          ? callAction.active
-            ? "顯示語音通話"
-            : "致電這個機械人"
-          : "語音通話需要咪高峰及安全連線（HTTPS）"
-      }
-      className={actionClassName}
-      disabled={disabled || dictation.busy || !callAction.supported}
-      onClick={callAction.onStart}
-      size="icon"
-      type="button"
-    >
-      <SwapGlyph name="call">
-        {compact ? (
-          <DuetIcon name="waveform" size={19} stroke={2.2} />
-        ) : (
-          <IconWaveform className="size-4" />
-        )}
       </SwapGlyph>
     </Button>
   ) : voiceAction ? (
@@ -1590,7 +1353,7 @@ export function Composer({
                 {voiceAction ? null : (
                   <DictationButton
                     dictation={dictation}
-                    disabled={disabled || voiceCall?.active === true}
+                    disabled={disabled}
                     {...(sheetDictation ? { onStart: openVoiceSheet } : {})}
                   />
                 )}
@@ -1676,7 +1439,7 @@ export function Composer({
             <div className="flex items-center gap-1">
               <DictationButton
                 dictation={dictation}
-                disabled={disabled || voiceCall?.active === true}
+                disabled={disabled}
               />
               {primaryAction}
             </div>

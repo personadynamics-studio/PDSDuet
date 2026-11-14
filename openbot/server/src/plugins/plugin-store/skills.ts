@@ -13,7 +13,7 @@ import {
 import type { StoreContext } from "./context";
 import { PluginRefusedError, type SkillActor, type SkillRecord } from "./model";
 
-/** Skills, and what the store answers about Bots and servers for the routes and the desk. */
+/** Skills, and the Bot and server facts their grant routes need. */
 export function skillMethods(context: StoreContext) {
   const { database, auditStore, grantsFor, toolsDeclaredBy, knownToolRefs } =
     context;
@@ -63,39 +63,7 @@ export function skillMethods(context: StoreContext) {
       return row ? row.ownerUserId : undefined;
     },
 
-    /**
-     * Whose a Bot is, or `undefined` if there is no such Bot.
-     *
-     * Read here rather than through the coworker store because the only question this file asks is
-     * "may this person put their skill on that Bot", and a whole profile is more than that needs.
-     */
-    /**
-     * Whether this Bot can be granted handing work on, or `undefined` if there is no such Bot.
-     *
-     * Any Bot that exists can: a built-in Bot runs `message_bot` in this process, and a Bot at its
-     * own endpoint calls back for it through the signed tool callback, which reaches the same desk.
-     */
-    async agentCanHandOn(agentId: string): Promise<boolean | undefined> {
-      const [row] = await database
-        .select({ id: agents.id })
-        .from(agents)
-        .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-        // A deleted Bot is not one anybody may be given, and answering about it at all would say it
-        // had existed.
-        .where(and(eq(agents.id, agentId), isNull(agentProfiles.deletedAt)))
-        .limit(1);
-      return row ? true : undefined;
-    },
-
-    /**
-     * Whether this Bot is one somebody could be handed work by, at all.
-     *
-     * The TARGET of a bot grant, unlike the grantee, may perfectly well run at its own endpoint —
-     * being handed work is not the same as being able to hand it on. What it may not be is absent:
-     * `ref` is bare text with no foreign key, so a typo stored happily, `message_bot` was offered,
-     * and every hop refused as not-granted. That is the same row-that-cannot-work this check exists
-     * to stop, arriving from the other side.
-     */
+    /** Whether a Bot exists for an MCP or skill grant. */
     async agentIsRegistered(agentId: string): Promise<boolean> {
       const [row] = await database
         .select({ id: agents.id })
@@ -296,33 +264,6 @@ export function skillMethods(context: StoreContext) {
       });
     },
 
-    /**
-     * The Bots one Bot has been granted, read fresh.
-     *
-     * NEVER CACHED. Whether one Bot may address another is a decision an administrator can change,
-     * and a grant revoked a minute ago has to apply to the next hop rather than after a restart. It
-     * is a single indexed read, which is the right price for that.
-     */
-    /**
-     * The Bots this one may hand work to.
-     *
-     * Whatever the grantee's type. A Bot at its own endpoint is offered `message_bot` as a tool it
-     * calls back for, and the call reaches the same handoff desk, grant check and caps as a built-in
-     * Bot's (see `createCoordinationTools`). This used to keep only built-in grantees, from before
-     * remote Bots could call back for coordination, which left every remote Bot's grant reading as
-     * configured while no hop ever happened.
-     *
-     * The join keeps a grant held by a Bot that no longer exists from counting.
-     */
-    async botsReachableFrom(agentId: string): Promise<string[]> {
-      const rows = await database
-        .select({ ref: pluginGrants.ref })
-        .from(pluginGrants)
-        .innerJoin(agents, eq(agents.id, pluginGrants.agentId))
-        .where(
-          and(eq(pluginGrants.kind, "bot"), eq(pluginGrants.agentId, agentId)),
-        );
-      return rows.map((row) => row.ref);
-    },
+
   };
 }

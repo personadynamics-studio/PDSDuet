@@ -1,6 +1,5 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
-import { clearActivity } from "./activity";
 import { computerKeys } from "./queries";
 
 /**
@@ -34,8 +33,7 @@ export function setComputerStateMutationOptions(queryClient: QueryClient) {
       );
     },
     /** A reset deletes the profile those commands ran on; a stop keeps it, so only reset forgets. */
-    onSuccess: (_result, variables) => {
-      if (variables.action === "reset") clearActivity(variables.botId);
+    onSuccess: () => {
       return invalidateComputers(queryClient);
     },
   });

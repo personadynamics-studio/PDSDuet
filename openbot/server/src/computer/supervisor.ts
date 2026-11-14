@@ -57,14 +57,15 @@ export function createDockerSupervisorProvider(
   const hostForPort =
     options.hostForPort ?? ((port) => `http://127.0.0.1:${port}`);
 
-  async function call(path: string, method = "POST"): Promise<unknown> {
+  async function call(path: string, method = "POST", signal?: AbortSignal): Promise<unknown> {
     let response: Response;
     try {
       response = await doFetch(`${base}${path}`, {
         method,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
+      signal?.throwIfAborted();
       throw new SupervisorError(
         `The container supervisor at ${base} could not be reached (${error instanceof Error ? error.message : String(error)}).`,
       );
@@ -149,9 +150,11 @@ export function createDockerSupervisorProvider(
      * is an error rather than a URL, the alternative is a caller quietly falling back to somebody
      * else's computer.
      */
-    async locate(botId: string): Promise<string> {
+    async locate(botId: string, signal?: AbortSignal): Promise<string> {
       const state = (await call(
         `/computers/${encodeURIComponent(botId)}/ensure`,
+        "POST",
+        signal,
       )) as SupervisorComputerLocation;
       // The supervisor says where it is, because only it knows whether these computers sit on a
       // shared network or answer on a published port.

@@ -1,9 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readControl } from "@/lib/computers/control";
-import {
-  connectScreen,
-  type ScreenSocket,
-} from "@/lib/computers/screen-connection";
 import { keyOf } from "@/lib/hotkeys/hotkeys";
 import { socketUrl } from "@/lib/socket-url";
 import { currentPageVisible } from "./preview-visibility";
@@ -12,8 +7,7 @@ import { pageCoordinates } from "./take-the-wheel";
 /**
  * Low-latency screencast used while a human is driving the Bot's browser.
  *
- * The inline card keeps using cheap polling for passive watching. This view uses Chrome's
- * screencast socket so input and visual feedback stay synchronized during takeover.
+ * The same screencast socket supplies passive viewing and feedback during takeover.
  *
  * Follows Chrome DevTools' own `InputModel.ts` (BSD-3) for the event translation and
  * `steel-dev/steel-browser`'s casting handler (Apache-2.0) for the frame loop, because no maintained
@@ -118,14 +112,11 @@ export function LiveScreen({
   /** Monotonic guard so a slow older decode cannot replace a newer frame. */
   const latestFrameId = useRef(0);
   const [connected, setConnected] = useState(false);
-  const inputReady = useRef(false);
-  const previouslyDriving = useRef(driving);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: explicit Retry restarts this connection.
   useEffect(() => {
     let closed = false;
     setConnected(false);
-    inputReady.current = false;
     frameSize.current = null;
     latestFrame.current = null;
     latestFrameId.current++;
@@ -243,98 +234,42 @@ export function LiveScreen({
       void drawFrame(frame, frameId);
     };
 
-    const connection = connectScreen({
-      open: () => {
-        const socket = new WebSocket(
-          socketUrl(`/api/computers/${encodeURIComponent(computerId)}/stream`),
-        );
-        socketRef.current = socket;
-        // Event handlers use only data, so adapt the native event surface without changing the protocol.
-        return {
-          set onopen(callback: ScreenSocket["onopen"]) {
-            socket.onopen = callback
-              ? () => {
-                  void callback();
-                }
-              : null;
-          },
-          set onclose(callback: ScreenSocket["onclose"]) {
-            socket.onclose = callback;
-          },
-          set onerror(callback: ScreenSocket["onerror"]) {
-            socket.onerror = callback;
-          },
-          set onmessage(callback: ScreenSocket["onmessage"]) {
-            socket.onmessage = callback;
-          },
-          close: () => socket.close(),
-        };
-      },
-      verifyOwnership: async () => {
-        const state = await readControl(computerId);
-        return state?.holder === "human";
-      },
-      onReady: (ready) => {
-        inputReady.current = ready;
-        setConnected(ready);
-      },
-      onProblem: (problem) => onProblem?.(problem),
-      onDisconnect: () => {
-        frameSize.current = null;
-        latestFrame.current = null;
-        latestFrameId.current++;
-        const canvas = canvasRef.current;
-        if (canvas)
-          canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
-      },
-      onMessage,
-    });
+    const socket = new WebSocket(socketUrl(`/api/computers/${encodeURIComponent(computerId)}/stream`));
+    socketRef.current = socket;
+    socket.onopen = () => { setConnected(true); onProblem?.(null); };
+    socket.onmessage = onMessage;
+    socket.onerror = () => { onProblem?.("瀏覽器畫面連線失敗，請重新連線。"); socket.close(); };
+    socket.onclose = () => {
+      if (closed) return;
+      setConnected(false);
+      frameSize.current = null;
+      latestFrame.current = null;
+      latestFrameId.current++;
+      const canvas = canvasRef.current;
+      if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+      onProblem?.("瀏覽器畫面已斷線，請重新連線。");
+    };
     document.addEventListener("visibilitychange", drawLatestFrame);
     return () => {
       closed = true;
-      connection.stop();
+      socket.close();
       document.removeEventListener("visibilitychange", drawLatestFrame);
       socketRef.current = null;
     };
   }, [computerId, onProblem, retryKey]);
-
-  useEffect(() => {
-    const wasDriving = previouslyDriving.current;
-    previouslyDriving.current = driving;
-    if (
-      wasDriving ||
-      !driving ||
-      inputReady.current ||
-      socketRef.current?.readyState !== WebSocket.OPEN
-    )
-      return;
-    let live = true;
-    void readControl(computerId)
-      .then((state) => {
-        if (!live || socketRef.current?.readyState !== WebSocket.OPEN) return;
-        inputReady.current = state?.holder === "human";
-        setConnected(inputReady.current);
-      })
-      .catch(() => {
-        inputReady.current = false;
-      });
-    return () => {
-      live = false;
-    };
-  }, [computerId, driving]);
 
   const send = useCallback(
     (message: Record<string, unknown>) => {
       const socket = socketRef.current;
       if (
         !driving ||
-        !inputReady.current ||
+        !connected ||
         socket?.readyState !== WebSocket.OPEN
       )
         return;
       socket.send(JSON.stringify(message));
     },
-    [driving],
+    [driving, connected],
   );
 
   /**

@@ -53,7 +53,7 @@ export async function sharedGrantApproval(
   };
 }
 
-/** Granting and revoking a server, skill or Bot, and a Bot's tool calls back. */
+/** Granting and revoking MCP tools and skills, and a Bot's tool calls back. */
 export function mountGrantRoutes({
   routes,
   store,
@@ -76,7 +76,7 @@ export function mountGrantRoutes({
    * on it is a comment: before this, anything at all could be written into the grant table through
    * the ordinary endpoint, and one kind that was never meant to be settable this way already could.
    */
-  const GRANT_KINDS = new Set<PluginKind>(["mcp", "skill", "bot"]);
+  const GRANT_KINDS = new Set<PluginKind>(["mcp", "skill"]);
   const asGrantKind = (value: unknown): PluginKind | null =>
     typeof value === "string" && GRANT_KINDS.has(value as PluginKind)
       ? (value as PluginKind)
@@ -95,15 +95,7 @@ export function mountGrantRoutes({
     kind: PluginKind,
     ref: string,
     agentId: string,
-    /**
-     * Which way this is going, because they are not symmetric.
-     *
-     * TAKING SOMETHING AWAY IS ALWAYS ALLOWED. The checks below decide whether a grant should exist,
-     * and applying them to a revoke turns every one of them into a trap: a `bot` grant made before
-     * the grantee moved to its own endpoint — or before this check existed — could never be removed,
-     * because the reason it is wrong is the same reason the revoke was refused. An administrator
-     * looking at a dead row in the UI would have had no way to delete it.
-     */
+    /** Removing a grant does not require its target still to exist. */
     intent: "grant" | "revoke",
   ): Promise<string | null> {
     const actor = skillActor(context);
@@ -119,8 +111,7 @@ export function mountGrantRoutes({
       if (intent === "revoke") return null;
 
       /*
-       * A grant that could never do anything is refused rather than stored, which is the rule the
-       * `bot` branch below already states and this one did not follow.
+       * A grant that could never do anything is refused rather than stored, so a grant cannot become live later when an app is added under that ID.
        *
        * Nothing checked that the app existed. `store.grant` is a bare upsert, so a ref naming an
        * app this deployment has not added was stored and then invisible: the surface that reports a
@@ -140,56 +131,13 @@ export function mountGrantRoutes({
         return `${serverId} hasn't been added yet. Add it first, then give its tools to a Bot.`;
       }
       /*
-       * The Bot has to exist as well, which the `bot` branch below already says in the same words.
+       * The Bot has to exist as well.
        * `plugin_grants.agent_id` is a foreign key, so a grant naming a Bot nobody has reached the
        * insert and failed there, and a person's mistyped Bot id answered 500 with no body where
        * every other refusal on this route is a 403 with a sentence.
        */
       if (!(await store.agentIsRegistered(agentId)))
         return "There is no such Bot.";
-      return null;
-    }
-
-    if (kind === "bot") {
-      /*
-       * THE ROLE IS CHECKED BEFORE ANYTHING IS LOOKED UP, and that ordering is the point.
-       *
-       * One Bot reaching another lets it spend that Bot's model calls, wake its computer and reach
-       * whatever it may reach, so it is an administrator's decision rather than something somebody
-       * attaches to a coworker they own. But this route only requires a signed-in user, so every
-       * refusal below is readable by anybody: checking whether the Bot exists, and whether it runs
-       * here, before this line handed out three distinguishable answers and turned a 403 into an
-       * oracle for other people's private Bots. `handoff.ts` in this same feature collapses exactly
-       * this, deliberately, and this had it backwards.
-       */
-      if (!actor.isAdmin) {
-        return "Only an admin can choose which Bots hand work to another Bot.";
-      }
-      // Taking something away is always allowed: see the note on `intent`.
-      if (intent === "revoke") return null;
-
-      /*
-       * A grant that could never do anything is refused rather than stored, from both ends.
-       *
-       * The GRANTEE must exist. Remote Bots execute through the same signed callback and handoff
-       * desk as built-in Bots, so where their model loop runs does not change the grant.
-       *
-       * The TARGET only has to exist. Being handed work is not the same as being able to hand it on,
-       * so a target at its own endpoint is perfectly ordinary — but `ref` is bare text with no
-       * foreign key, so a typo stored happily and every hop then refused as not-granted.
-       */
-      /*
-       * A Bot cannot be granted itself. The desk refuses a self-hop outright — "a Bot cannot hand
-       * work to itself" — so the row is dead the moment it is written, and reads as configured.
-       */
-      if (ref === agentId) {
-        return "A Bot cannot be granted itself to hand work to.";
-      }
-      if (!(await store.agentIsRegistered(agentId)))
-        return "There is no such Bot.";
-      if (!(await store.agentIsRegistered(ref))) {
-        return `There is no Bot called ${ref} to hand work to.`;
-      }
       return null;
     }
 

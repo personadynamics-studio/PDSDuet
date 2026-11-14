@@ -28,12 +28,14 @@ export async function navigateWebPage(
   url: string,
   backend: Backend,
   timeoutMs: number,
+  signal?: AbortSignal,
 ) {
   const parsed = parseNavigateUrl(url);
   if (!parsed.ok) throw new Error(parsed.error);
   const response = await page.goto(parsed.url, {
     waitUntil: "domcontentloaded",
     timeout: timeoutMs,
+    signal,
   });
   assertPageAccess(backend, page.url());
   return response;

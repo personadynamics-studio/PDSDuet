@@ -48,8 +48,6 @@ const PLACES: readonly {
   { label: "連接", icon: "plug", to: "/connections" },
   { label: "功能", icon: "box", to: "/capabilities" },
   { label: "例行工作", icon: "repeat", to: "/routines" },
-  { label: "審批規則", icon: "shieldCheck", to: "/settings/approvals" },
-  { label: "通知", icon: "bell", to: "/settings/notifications" },
   { label: "密碼", icon: "key", to: "/settings/passwords" },
   { label: "管理員", icon: "shieldLock", to: "/admin", adminOnly: true },
 ];

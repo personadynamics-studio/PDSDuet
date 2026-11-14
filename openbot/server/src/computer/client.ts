@@ -77,6 +77,7 @@ export class HandoffRequestError extends Error {
   constructor(
     reason: string,
     readonly status: 400 | 404 | 409,
+    readonly code?: string,
   ) {
     super(reason);
     this.name = "HandoffRequestError";
@@ -119,6 +120,7 @@ export interface ComputerTransport {
     botId: string,
     url: string,
     toolCallId?: string,
+    caller?: AbortSignal,
   ): Promise<NavigateResult>;
   download(
     baseUrl: string,
@@ -213,12 +215,16 @@ export function createComputerTransport(
       caller,
       timeoutMsOverride,
     );
-    const body = (await response.json().catch(() => null)) as Record<
+    const body = (await response.json()) as Record<
       string,
       unknown
     > | null;
+    caller?.throwIfAborted();
     if (!response.ok) {
       throwMappedError(response.status, body);
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new ComputerUnavailableError("The computer returned an invalid response.");
     }
     return body as T;
   }
@@ -288,11 +294,12 @@ export function createComputerTransport(
     botId: string,
     url: string,
     toolCallId?: string,
+    caller?: AbortSignal,
   ): Promise<NavigateResult> {
     return post<NavigateResult>(baseUrl, botId, "/navigate", {
       url,
       ...(toolCallId ? { toolCallId } : {}),
-    });
+    }, caller);
   }
 
   return { call, post, navigate, download };
@@ -309,7 +316,7 @@ function throwMappedError(
     body?.controlRequestError === true &&
     (status === 400 || status === 404 || status === 409)
   )
-    throw new HandoffRequestError(detail, status);
+    throw new HandoffRequestError(detail, status, typeof body.code === "string" ? body.code : undefined);
   if (status === 403) {
     throw new WorkspaceRefusedError(detail);
   }

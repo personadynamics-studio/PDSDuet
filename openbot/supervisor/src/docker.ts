@@ -58,7 +58,6 @@ export type EnsureOptions = {
   network?: string;
   runtime?: string;
   memoryBytes?: number;
-  spireSocketVolume?: string;
 };
 
 function hostConfig(names: ComputerNames, options: EnsureOptions) {
@@ -66,7 +65,6 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
     Binds: [
       `${names.profileVolume}:/profiles`,
       `${names.workspaceVolume}:/workspace`,
-      ...(options.spireSocketVolume ? [`${options.spireSocketVolume}:/tmp/spire-agent/public:ro`] : []),
     ],
     ...(options.network ? { NetworkMode: options.network } : { PortBindings: { [COMPUTER_PORT]: [{ HostPort: "" }] } }),
     ...(options.runtime ? { Runtime: options.runtime } : {}),
@@ -78,24 +76,24 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
   };
 }
 
-export async function ensure(names: ComputerNames, options: EnsureOptions): Promise<ComputerState> {
+export async function ensure(names: ComputerNames, options: EnsureOptions, signal?: AbortSignal): Promise<ComputerState> {
   try {
     let container = docker.getContainer(names.container);
     let info;
     try {
-      info = await container.inspect();
+      info = await container.inspect({ abortSignal: signal });
     } catch (error) {
       if (statusOf(error) !== 404) throw error;
     }
     if (!info) {
       for (const volume of [names.profileVolume, names.workspaceVolume]) {
-        await docker.createVolume({ Name: volume, Labels: labelsFor(names) });
+        await docker.createVolume({ Name: volume, Labels: labelsFor(names), abortSignal: signal });
       }
-      container = await docker.createContainer({ name: names.container, Image: options.image, Labels: labelsFor(names), Env: options.environment, ExposedPorts: { [COMPUTER_PORT]: {} }, HostConfig: hostConfig(names, options) });
+      container = await docker.createContainer({ name: names.container, Image: options.image, Labels: labelsFor(names), Env: options.environment, ExposedPorts: { [COMPUTER_PORT]: {} }, HostConfig: hostConfig(names, options), abortSignal: signal });
     }
     if (!info?.State?.Running) {
-      await container.start();
-      info = await container.inspect();
+      await container.start({ abortSignal: signal });
+      info = await container.inspect({ abortSignal: signal });
     }
     const published = info.NetworkSettings?.Ports?.[COMPUTER_PORT]?.[0]?.HostPort;
     const port = published ? Number(published) : undefined;
@@ -108,6 +106,7 @@ export async function ensure(names: ComputerNames, options: EnsureOptions): Prom
       ...(options.network ? { url: `http://${names.container}:4100` } : port ? { url: `http://127.0.0.1:${port}` } : {}),
     };
   } catch (error) {
+    signal?.throwIfAborted();
     throw new DockerUnavailableError(String(error));
   }
 }

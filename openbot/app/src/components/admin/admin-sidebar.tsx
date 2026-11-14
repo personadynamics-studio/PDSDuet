@@ -52,7 +52,7 @@ const GROUPS: {
         linkOptions: { to: "/admin/credentials" },
       },
       {
-        title: "審批",
+        title: "共用帳戶申請",
         icon: IconChecks,
         linkOptions: { to: "/admin/approvals" },
       },

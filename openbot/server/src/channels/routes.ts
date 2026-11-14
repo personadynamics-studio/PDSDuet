@@ -36,7 +36,6 @@ import {
   announceChannelActivity,
   MAX_CHANNEL_EVENT_TEXT_BYTES,
 } from "./notifications";
-import { replyEnding } from "../proactive/engine";
 import { upgradeWebSocket } from "./socket";
 import { oneLine } from "./text";
 import type { ThreadIdentity } from "./thread-identity";
@@ -92,6 +91,9 @@ const TASK_OF_CHANNEL = sql<
 
 /** Whether a channel has an OpenDuet look, which makes it a channel rather than Chat. */
 const IS_OPENDUET_CHANNEL = sql<boolean>`exists (select 1 from ${openduetChannels} where ${openduetChannels.channelId} = ${channels.id})`;
+
+/** A channel has one conversation, shared by every member. */
+const CANONICAL_THREAD = sql<string>`(select thread_id from thread_channel_mappings where channel_id = ${channels.id} order by created_at,user_id limit 1)`;
 
 /** What a client that ran an agent reports back about the message it just saw. */
 export type ChannelActivity = {
@@ -526,7 +528,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: threadChannelMappings.threadId,
+          threadId: CANONICAL_THREAD,
           lastMessageAt: channels.lastMessageAt,
           deletedAt: agentProfiles.deletedAt,
         })
@@ -536,13 +538,6 @@ export function createChannelStore(
           and(
             eq(channelMemberships.channelId, channels.id),
             eq(channelMemberships.userId, actor.id),
-          ),
-        )
-        .innerJoin(
-          threadChannelMappings,
-          and(
-            eq(threadChannelMappings.channelId, channels.id),
-            eq(threadChannelMappings.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -632,7 +627,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: threadChannelMappings.threadId,
+          threadId: CANONICAL_THREAD,
           deletedAt: agentProfiles.deletedAt,
           busy: CHANNEL_BUSY,
           channelSummary: channels.summary,
@@ -651,13 +646,6 @@ export function createChannelStore(
           and(
             eq(channelMemberships.channelId, channels.id),
             eq(channelMemberships.userId, actor.id),
-          ),
-        )
-        .innerJoin(
-          threadChannelMappings,
-          and(
-            eq(threadChannelMappings.channelId, channels.id),
-            eq(threadChannelMappings.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -911,7 +899,7 @@ export function createChannelStore(
               lastMessageSourceId: source?.id ?? null,
               lastMessageNeedsInput:
                 activity.agentId !== null &&
-                (activity.needsInput ?? replyEnding(activity.text).asks),
+                (activity.needsInput ?? false),
               lastMessageAt: activity.at,
               lastMessageAgentId: activity.agentId,
               updatedAt: new Date(),
@@ -1149,6 +1137,17 @@ export function createChannelRoutes(
       );
     }
   };
+
+  routes.post("/direct", requireUser, async context => {
+    const body = await context.req.json().catch(() => null);
+    if (!body || typeof body.agentId !== "string" || !body.agentId.trim())
+      return context.json({ error: "A Bot id is required." }, 400);
+    try {
+      return context.json({ channel: channelDto(await store.direct(context.var.actor, body.agentId)) });
+    } catch (error) {
+      return mapStoreError(context, error);
+    }
+  });
 
   // Before `/:channelId`, or "events" is read as a channel id.
   if (events) {

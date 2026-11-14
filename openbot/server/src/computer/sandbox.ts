@@ -15,6 +15,7 @@
  * in-cluster service account gives a token and a CA, which is what `inClusterConfig` reads.
  */
 import { readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   ComputerLocation,
   ComputerProvider,
@@ -292,8 +293,8 @@ export function createSandboxComputerProvider(
     return response.json();
   }
 
-  const read = (botId: string) =>
-    call(`/${sandboxNameFor(botId)}`) as Promise<Sandbox | undefined>;
+  const read = (botId: string, signal?: AbortSignal) =>
+    call(`/${sandboxNameFor(botId)}`, { signal }) as Promise<Sandbox | undefined>;
 
   /** The desired body for a Bot's computer. Created once, then only ever patched. */
   function desired(botId: string): Record<string, unknown> {
@@ -320,10 +321,10 @@ export function createSandboxComputerProvider(
     };
   }
 
-  async function waitForReady(botId: string): Promise<Sandbox> {
+  async function waitForReady(botId: string, signal?: AbortSignal): Promise<Sandbox> {
     const deadline = Date.now() + resumeTimeoutMs;
     for (;;) {
-      const sandbox = await read(botId);
+      const sandbox = await read(botId, signal);
       if (sandbox && isReady(sandbox) && sandbox.status?.serviceFQDN) {
         return sandbox;
       }
@@ -332,7 +333,7 @@ export function createSandboxComputerProvider(
           `The computer for ${botId} did not become ready within ${Math.round(resumeTimeoutMs / 1000)}s. A resume costs a pod schedule and a browser launch, so this is a real wait rather than a failure, but it has to end somewhere.`,
         );
       }
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await delay(1_000, undefined, { signal });
     }
   }
 
@@ -414,10 +415,11 @@ export function createSandboxComputerProvider(
     name: "sandbox",
     isolation: "per-bot",
 
-    async locate(botId: string): Promise<string> {
-      const existing = await read(botId);
+    async locate(botId: string, signal?: AbortSignal): Promise<string> {
+      const existing = await read(botId, signal);
       if (!existing) {
         await call("", {
+          signal,
           method: "POST",
           contentType: "application/json",
           body: JSON.stringify(desired(botId)),
@@ -435,30 +437,17 @@ export function createSandboxComputerProvider(
          * says now, and the volumes are the Sandbox's own and are not in the patch. A computer woken
          * without this runs the image it was first created with for ever.
          */
-        if (isOutOfDate(existing)) {
-          await replaceTemplate(botId, "Running");
-          console.info(
-            JSON.stringify({
-              type: "computer-sandbox-updated",
-              botId,
-              reason:
-                "it was woken, and its image differed from the current one",
-              from: imagesOf(existing.spec?.podTemplate),
-              to: imagesOf(options.template.podTemplate),
-            }),
-          );
-        } else {
-          await call(`/${sandboxNameFor(botId)}`, {
-            method: "PATCH",
-            contentType: "application/merge-patch+json",
-            body: JSON.stringify({ spec: { operatingMode: "Running" } }),
-          });
-        }
+        await call(`/${sandboxNameFor(botId)}`, {
+          method: "PATCH",
+          contentType: "application/merge-patch+json",
+          body: JSON.stringify({ spec: { operatingMode: "Running" } }),
+          signal,
+        });
       }
       // A computer that is running on an older image is left alone here. It may be in the middle of
       // a task, and restarting it under the Bot is the person's decision, which is `update`.
 
-      const ready = await waitForReady(botId);
+      const ready = await waitForReady(botId, signal);
       const fqdn = ready.status?.serviceFQDN;
       if (!fqdn) {
         throw new SandboxError(

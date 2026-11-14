@@ -3,27 +3,16 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
 import { MAX_ATTACHMENT_BYTES } from "@openbot/shared/attachments";
-import { enterpriseControls } from "./admin/controls";
-import { createEnterpriseAdminRoutes } from "./admin/routes";
 import {
   authoriseAgentCall,
   parseAgentToolCallInput,
-  type RunAssertion,
   sameToken,
 } from "./agents/callback-token";
-import {
-  type BotLifecycleServices,
-  createBotLifecycleRoutes,
-} from "./agents/lifecycle-routes";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
-import { createApprovalRoutes } from "./approvals/routes";
-import type { ApprovalService } from "./approvals/service";
 import { HeadlessToolSuspension } from "@openbot/toolkit/headless-tools";
-import { withApprovalContext } from "@openbot/toolkit/continuation";
 import type { LocalThreadStore } from "./runtime/thread-store";
 import {
-  type AuditInitiator,
   auditEventsToCsv,
   AuditQueryError,
   type AuditReader,
@@ -53,7 +42,6 @@ import type { SandboxedStore } from "./components/sandboxed";
 import { createSandboxedRoutes } from "./components/sandboxed-routes";
 import type { ComponentStore } from "./components/store";
 import type { ComputerGateway } from "./computer/gateway";
-import type { PageFrameStore } from "./computer/page-frames";
 import { createComputerRoutes } from "./computer/routes";
 import { configuredAuthProviders, type DeploymentConfig } from "./config";
 import {
@@ -63,13 +51,6 @@ import {
 } from "./credentials";
 import type { Database } from "./db/client";
 import { withoutStatement } from "./db/query-failure";
-import {
-  createDeliveryRoutes,
-  createDeliveryWebhookRoutes,
-} from "./delivery/routes";
-import type { DemonstrationRecorder } from "./demonstrations/recording";
-import { createDemonstrationRoutes } from "./demonstrations/routes";
-import type { DemonstrationStore } from "./demonstrations/store";
 import { mountDesktopConnectionFailure } from "./desktop-connection-failure";
 import { createTranscriptionProvider } from "./dictation/provider";
 import { createDictationRoutes } from "./dictation/routes";
@@ -77,9 +58,6 @@ import type { HostAccessBroker } from "./host-access/broker";
 import { createHostAccessRoutes } from "./host-access/routes";
 import { identityRoutes } from "./identity/routes";
 import type { IdentityStore } from "./identity/store";
-import type { MemoryIngestion } from "./memory/ingestion";
-import { createMemoryRoutes } from "./memory/routes";
-import type { MemoryStore } from "./memory/store";
 import { parsePageLimit } from "./paging";
 import { createPasswordRoutes, createSignInRoutes } from "./passwords/routes";
 import type { SignInService } from "./passwords/service";
@@ -102,30 +80,12 @@ import {
 } from "./openduet/channels";
 import { createPageRoutes, type PageStore } from "./openduet/pages";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
-import type { TaskReportReader } from "./openduet/task-report";
-import {
-  createTaskRoutes,
-  type TaskIntake,
-  type TaskStore,
-} from "./openduet/task-store";
-import type { ProactiveEngine } from "./proactive/engine";
-import { createProactiveRoutes } from "./proactive/routes";
-import type { ProactiveStore } from "./proactive/store";
 import {
   type ModelProviderProxy,
   mountProviderOAuthProxy,
 } from "./provider-oauth";
-import type { ResponsibilityBindingStore } from "./responsibilities/bindings";
-import type { ResponsibilityEngine } from "./responsibilities/engine";
-import { createGithubResponsibilityRoutes } from "./responsibilities/github";
-import { createResponsibilityRoutes } from "./responsibilities/routes";
-import type { TriggerStore } from "./responsibilities/triggers";
-import type { ResponsibilityStore } from "./responsibilities/types";
 import { createRoutineRoutes, type RoutineStore } from "./routines/routes";
 import type { RoutineRunner } from "./routines/runner";
-import type { IntentRouter } from "./routing/classify";
-import { createRoutingRoutes } from "./routing/routes";
-import { createCoworkerRoutingService } from "./routing/service";
 import { createTeamBotRoutes } from "./team-bots/routes";
 import type { TeamBots } from "./team-bots/team-bots";
 import type { PackageStatusReader } from "./tenant-package";
@@ -139,10 +99,6 @@ import { userPreferencesRoutes } from "./user-preferences-routes";
 import { createVoiceProvider } from "./voice/provider";
 import { createVoiceRoutes } from "./voice/routes";
 import type { VoiceSessionServices } from "./voice/session-routes";
-import {
-  DIRECTORY_PATH as WEB_BOT_AUTH_DIRECTORY_PATH,
-  directoryResponse as webBotAuthDirectory,
-} from "./web-bot-auth";
 
 /**
  * How much of a multipart body is boundary, headers and other fields rather than file.
@@ -180,20 +136,6 @@ export const UPLOAD_BODY_LIMIT_BYTES =
  * The address is on the row rather than only the user id, because the id means nothing to a person
  * reading the trail a year later and the user row may be gone by then.
  */
-export type DeploymentToolCallInput = {
-  context?: import("@openbot/toolkit/granted-tool").ToolExecutionContext;
-  name: string;
-  args: Record<string, unknown>;
-  botId: string;
-  actorId: string;
-  initiator?: AuditInitiator;
-  /** Full verified scope. A caller cannot choose a different source thread, depth or lease. */
-  run: RunAssertion;
-};
-export type DeploymentToolCaller = (
-  input: DeploymentToolCallInput,
-) => Promise<{ text: string; isError: boolean } | null>;
-
 async function recordPersonEvent(
   auditStore: AuditStore | undefined,
   context: { var: AppVariables },
@@ -216,238 +158,57 @@ async function recordPersonEvent(
 
 export function createApp(
   config: DeploymentConfig,
+  services: {
   auth?: AuthService,
   auditReader?: AuditReader,
   credentialService?: CredentialAdminService,
   packageStatusReader?: PackageStatusReader,
-  /** Authenticated local conversation and run endpoints, built by the caller. */
   runtimeHandler?: HonoApp,
-  /** Computer transport and provider lifecycle. */
   computerGateway?: ComputerGateway,
-  /** Bots as durable objects: profile, roster, visibility. */
   agentProfileStore?: AgentProfileStore,
-  /** The durable channels a Bot runs in. */
   channelStore?: ChannelStore,
-  /** Live channel activity. Absent leaves the routes working, just without the socket. */
   channelEvents?: ChannelEventHub,
-  /**
-   * Where a Bot's own refusal is written.
-   *
-   * Separate from `auditReader`, which only reads: this writes, and it is the one thing in the trail
-   * that is not decided by the gateway, a model declining before it calls anything.
-   */
   auditStore?: AuditStore,
-  /**
-   * Which components each Bot may answer with.
-   *
-   * Absent leaves the app working and every Bot answering in prose, which is the correct degraded
-   * behaviour: a deployment that cannot reach its grant table must not fall back to granting
-   * everything.
-   */
   componentStore?: ComponentStore,
-  /**
-   * The MCP servers and packaged skills this deployment has, and which Bots hold them.
-   *
-   * Absent leaves every Bot with the tools it was born with, which is the correct degraded
-   * behaviour: a deployment that cannot reach its grant table must offer nothing extra rather than
-   * fall back to offering everything.
-   */
   pluginStore?: PluginStore,
-  /**
-   * Components authored in the browser rather than compiled into the build.
-   *
-   * Absent leaves the compiled gallery working exactly as before, which is the correct degraded
-   * behaviour: the React path is the primary one and does not depend on this.
-   */
   sandboxedStore?: SandboxedStore,
-  /**
-   * How this deployment names the threads it mints.
-   *
-   * Absent leaves the direct Bot chat generating its own id in the browser, which works and simply
-   * says nothing about which deployment the conversation belongs to.
-   */
   threadIdentity?: ThreadIdentity,
-  /**
-   * Who has signed in, and what an administrator may do about them.
-   *
-   * Absent leaves the people screen answering 503 rather than an empty list, which is the honest
-   * degraded behaviour: "nobody has signed in" and "this deployment cannot tell you" are different
-   * answers and an administrator deciding who has access needs to know which one they are reading.
-   */
   peopleStore?: PeopleStore,
-  /**
-   * The enterprise identity providers this deployment has registered.
-   *
-   * Read here rather than through Better Auth's own listing route, which scopes to the person asking:
-   * a company's Okta tenant belongs to the deployment, not to whichever administrator pasted the
-   * metadata in. See identity-provider-store.ts.
-   */
   identityProviders?: IdentityProviderStore,
-  /**
-   * Chooses which coworker an untagged message is for, before a channel is pinned to one.
-   *
-   * Passed in already built, like the local runtime handler, so this module never imports the model
-   * client. Absent leaves the composer's existing behaviour untouched: an untagged message goes to
-   * the default coworker, which is exactly the failsafe the router itself falls back to.
-   */
-  intentRouter?: IntentRouter,
-  /**
-   * Where the frame a browsing turn ended on is kept.
-   *
-   * Appended last on purpose: these are positional, so inserting one anywhere else silently
-   * shifts every existing call site's arguments by one.
-   *
-   * Absent leaves the transcript working and past turns without a picture, which is the correct
-   * degraded behaviour: a conversation that cannot show what it saw is better than one that shows
-   * the wrong thing.
-   */
-  pageFrames?: PageFrameStore,
-  /**
-   * Fires one routine run with nobody's browser open, when the worker hands one back.
-   *
-   * Appended last, like `pageFrames`: these are positional, so inserting one anywhere else silently
-   * shifts every existing call site's arguments by one.
-   *
-   * Absent leaves the internal `/internal/routines/run` route unmounted rather than mounted and
-   * refusing every call: a deployment that never built a worker has no door for it, not a locked one.
-   */
   routineRunner?: RoutineRunner,
-  /**
-   * A person's own standing instructions: the list, and a switch to stop one.
-   *
-   * Appended last, like `routineRunner` beside it: these are positional, so inserting one anywhere
-   * else silently shifts every existing call site's arguments by one.
-   *
-   * Absent leaves the routes unmounted rather than mounted and refusing every call, the same
-   * degraded shape every other optional store here takes: a deployment that never built the store
-   * has no door for this at all, not a locked one.
-   */
   routineStore?: RoutineStore,
-  /**
-   * One person's standing instructions, which every built-in coworker they run is told.
-   *
-   * Appended last, like everything above it: these are positional, so inserting one anywhere else
-   * silently shifts every existing call site's arguments by one.
-   *
-   * Absent leaves the routes answering 503 rather than "you have written none". The difference
-   * matters on exactly this screen: a person who cannot be told what they saved would otherwise be
-   * shown an empty box, and the obvious thing to do with an empty box is fill it in again.
-   */
   userInstructions?: UserInstructionsStore,
-  /**
-   * The database behind a channel's staged and sent files: upload, fetch, delete.
-   *
-   * Appended last, like everything above it: these are positional, so inserting one anywhere else
-   * silently shifts every existing call site's arguments by one.
-   *
-   * Absent leaves the routes unmounted rather than mounted and refusing every call, the same
-   * degraded shape every other optional store here takes: a deployment that never built the
-   * database has no door for this at all, not a locked one.
-   */
   attachmentDatabase?: Database,
-  /** Session-only broker for native owner-approved host folder access. */
   hostAccessBroker?: HostAccessBroker,
-  /** Fresh desktop-only bearer token for the native host worker poll/result channel. */
   desktopHostToken?: string,
-  /** Server-owned tools that are not MCP but use the same signed agent callback route. */
-  deploymentToolCaller?: DeploymentToolCaller,
-  /**
-   * The broker behind apps a person connects through Composio rather than an administrator
-   * registering an MCP server.
-   *
-   * Appended last, like everything above it: these are positional, so inserting one anywhere else
-   * silently shifts every existing call site's arguments by one.
-   *
-   * Passed in already built, like the local runtime handler and the intent router, so this module never
-   * imports the vendor's package. Absent leaves the plugin surface reporting that no broker is
-   * configured, which is the correct degraded behaviour: a deployment with no Composio API key has
-   * no app directory to offer, rather than one that lists apps nobody can connect.
-   */
   composio?: { broker: ComposioBroker; provider: BrokerProvider },
-  /** Native model OAuth stays server-side; callers hold only a separate local bearer. */
   modelProviderProxy?: ModelProviderProxy,
   userPreferences?: UserPreferencesStore,
   voiceSessions?: VoiceSessionServices,
   coworker?: {
-    runtimeThreads?: Pick<LocalThreadStore, "getThread" | "getThreadMessages">;
-    demonstrations?: {
-      store: DemonstrationStore;
-      recorder: DemonstrationRecorder;
-    };
-    approvals?: ApprovalService;
-    /**
-     * Shared apps: who may use an app's one team account, and the switch that makes an app Shared.
-     *
-     * A field here rather than another positional parameter. Everything from `auditReader` on is
-     * optional and positional, so a 37th argument is one an caller can misplace silently — the trap
-     * `composio` and `connect` are both commented for. One object carries both halves because every
-     * surface that needs one needs the other: the plugin routes switch modes and record approvals,
-     * the approvals inbox answers requests, and publishing or assigning a Bot re-checks what it was
-     * approved for. Absent, none of those surfaces exists — and nothing can turn an app Shared.
-     */
+    runtimeThreads?: Pick<LocalThreadStore, "run" | "onStop">;
     shared?: { modes: AccountModeSwitch; use: SharedUseStore };
-    /** The private sign-in form and the Passwords vault. See passwords/service.ts. */
     passwords?: SignInService;
-    delivery?: {
-      authenticated: Omit<
-        Parameters<typeof createDeliveryRoutes>[0],
-        "requireUser"
-      >;
-      webhooks: Parameters<typeof createDeliveryWebhookRoutes>[0];
-    };
-    memory?: { store: MemoryStore; ingestion: MemoryIngestion };
-    proactive?: { store: ProactiveStore; engine: ProactiveEngine };
-    responsibilities?: {
-      store: ResponsibilityStore;
-      engine: ResponsibilityEngine;
-      bindings: ResponsibilityBindingStore;
-      /** Event triggers: owner management, public signed ingress and optional SES/SNS email. */
-      triggers?: {
-        store: TriggerStore;
-        emailDomain: string | null;
-        ingressRoutes: Hono;
-        emailRoutes: Hono | null;
-      };
-    };
     groups?: GroupConversations;
     teamBots?: TeamBots;
-    /** Pause, reset, Activity and attention for a person's own Bots. See agents/lifecycle.ts. */
-    lifecycle?: BotLifecycleServices;
-    /**
-     * What OpenDuet made for the person, and the tasks it is working on: the Pages tab and the viewer,
-     * and Chat's task cards, the task page and Tasks. See openduet/pages.ts and openduet/task-store.ts.
-     * And the optional setup checklist, read from this server's own configuration and
-     * state. See openduet/setup.ts. Absent, the checklist route is not mounted.
-     */
     openduet?: {
       pages: PageStore;
       setup?: SetupSources;
-      tasks?: TaskStore;
-      intake?: TaskIntake;
-      /** A task's report, read from its conversation. See openduet/task-report.ts. */
-      report?: TaskReportReader;
-      /** The drawer's channels. See openduet/channels.ts. */
       channels?: DuetChannelStore;
     };
   },
-  /** A person's own linked accounts. Absent answers 503 on /api/identity. */
+  
   identity?: IdentityStore,
-  /** The GitHub sign-in callback, built by the caller; mounted behind requireUser ahead of /api/identity. */
+  
   identityGithubCallback?: Hono<{ Variables: AppVariables }>,
+  },
 ) {
+  const {auth,auditReader,credentialService,packageStatusReader,runtimeHandler,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,sandboxedStore,threadIdentity,peopleStore,identityProviders,routineRunner,routineStore,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,voiceSessions,coworker,identity,identityGithubCallback} = services;
   const app = new Hono<{ Variables: AppVariables }>();
   mountDesktopConnectionFailure(app, desktopHostToken);
   mountProviderOAuthProxy(app, modelProviderProxy);
 
   app.get("/health", (context) => context.json({ status: "ok" }));
-  // The public key Bots' browsers sign their requests with, where Cloudflare and any other verifier
-  // look for it. Public by design, and absent when Web Bot Auth is off. See web-bot-auth.ts.
-  const webBotAuth = config.webBotAuth;
-  if (webBotAuth) {
-    app.get(WEB_BOT_AUTH_DIRECTORY_PATH, (context) =>
-      webBotAuthDirectory(context.req.raw, webBotAuth),
-    );
-  }
   // Expose only the local runtime capabilities and configured application features.
   app.get("/api/capabilities", async (context) =>
     context.json({
@@ -493,7 +254,16 @@ export function createApp(
     : auth
       ? createRequireUser(auth, config.auth?.initialAdminEmails ?? [])
       : authenticationUnavailable;
-  app.route("/api/admin/enterprise", createEnterpriseAdminRoutes(requireUser));
+  const requireComputer: MiddlewareHandler<{ Variables: AppVariables }> = async (context, next) =>
+    requireUser(context, async () => {
+      const botId = context.req.param("botId");
+      if (botId && (!agentProfileStore || !(await agentProfileStore.get(context.var.actor, botId)))) {
+        context.res = context.json({ error: "Computer not found." }, 404);
+        return;
+      }
+      await next();
+    });
+
   app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/*", (context) =>
     auth
       ? auth.handler(context.req.raw)
@@ -558,10 +328,7 @@ export function createApp(
   app.route(
     "/api/identity",
     identityRoutes(requireUser, identity, auditStore, {
-      slackLinking: Boolean(
-        coworker?.delivery?.webhooks.slack &&
-          coworker.delivery.webhooks.identity,
-      ),
+      slackLinking: false,
       github:
         identityGithubCallback && config.githubApp && config.publicUrl
           ? {
@@ -1117,7 +884,8 @@ export function createApp(
   if (runtimeHandler) app.route("/", runtimeHandler);
 
   if (computerGateway) {
-    app.route("/api/computers", createComputerRoutes(computerGateway, requireUser, pageFrames));
+    app.route("/api/computers", createComputerRoutes(computerGateway, requireComputer,
+      async actor => agentProfileStore ? (await agentProfileStore.list(actor)).map(bot => bot.id) : []));
   }
 
   if (hostAccessBroker) {
@@ -1144,23 +912,6 @@ export function createApp(
         requireUser,
         // A Bot's own refusal goes in the same trail as everything else it does.
         auditStore,
-        /*
-         * What the Bot's own screen needs to show, and change, which Bots it may hand work to.
-         *
-         * Read per request rather than captured, for the reason the desk reads it per hop: a grant
-         * made a minute ago counts and one revoked a minute ago stops counting. Absent with no
-         * plugin store, which is a deployment where no Bot may address any other.
-         */
-        pluginStore
-          ? {
-              enabled:
-                config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0,
-              reachableFrom: (agentId) =>
-                pluginStore.botsReachableFrom(agentId),
-              // The same answer the write path checks, read up front so the screen can say it once.
-              canHandOn: (agentId) => pluginStore.agentCanHandOn(agentId),
-            }
-          : undefined,
         // Whether "built-in" is a kind of coworker this deployment can actually make: the create
         // path falls back to the managed Bot's endpoint, so without one it can only refuse.
         config.managedAgent?.endpoint !== undefined,
@@ -1170,41 +921,6 @@ export function createApp(
         coworker?.shared?.use,
       ),
     );
-    // Choosing a coworker for an untagged message needs the same permission-filtered roster the
-    // agents routes read, so it is mounted here where that store is in scope. Only when a router was
-    // configured; without one the composer keeps sending untagged messages to the default.
-    if (intentRouter) {
-      app.route(
-        "/api/route",
-        createRoutingRoutes(
-          createCoworkerRoutingService({
-            store: agentProfileStore,
-            router: intentRouter,
-            auditStore,
-            /*
-             * Which vendors each coworker holds tools for, so the router weighs what a coworker can
-             * reach and not only what somebody wrote it was for. Only when there is a plugin store to
-             * ask: a deployment with no connectors routes exactly as it did.
-             */
-            reachableSystems: pluginStore
-              ? async (agentId) => {
-                  const granted = await pluginStore.listForAgent(agentId);
-                  return [
-                    ...new Set(
-                      granted.tools.map(
-                        (tool) =>
-                          tool.toolName.replace(/^mcp__/, "").split("__")[0] ??
-                          tool.toolName,
-                      ),
-                    ),
-                  ];
-                }
-              : undefined,
-          }),
-          requireUser,
-        ),
-      );
-    }
   }
 
   if (channelStore) {
@@ -1249,30 +965,6 @@ export function createApp(
     );
   }
 
-  if (coworker?.delivery) {
-    app.route(
-      "/api/delivery/webhooks",
-      createDeliveryWebhookRoutes(coworker.delivery.webhooks),
-    );
-    app.route(
-      "/api/delivery",
-      createDeliveryRoutes({ ...coworker.delivery.authenticated, requireUser }),
-    );
-  }
-  if (coworker?.demonstrations)
-    app.route(
-      "/api/demonstrations",
-      createDemonstrationRoutes(
-        coworker.demonstrations.store,
-        coworker.demonstrations.recorder,
-        requireUser,
-      ),
-    );
-  if (coworker?.lifecycle)
-    app.route(
-      "/api/bots",
-      createBotLifecycleRoutes(coworker.lifecycle, requireUser),
-    );
   if (coworker?.groups)
     app.route("/api/groups", createGroupRoutes(coworker.groups, requireUser));
   if (coworker?.teamBots)
@@ -1290,11 +982,6 @@ export function createApp(
       "/api/approvals/shared-use",
       createSharedUseRoutes(coworker.shared.use, requireUser, auditStore),
     );
-  if (coworker?.approvals)
-    app.route(
-      "/api/approvals",
-      createApprovalRoutes(coworker.approvals, requireUser),
-    );
   if (coworker?.passwords) {
     app.route(
       "/api/sign-in-requests",
@@ -1308,15 +995,6 @@ export function createApp(
       createPasswordRoutes(coworker.passwords, requireUser),
     );
   }
-  if (coworker?.proactive)
-    app.route(
-      "/api/proactive",
-      createProactiveRoutes(
-        coworker.proactive.store,
-        coworker.proactive.engine,
-        requireUser,
-      ),
-    );
   if (coworker?.openduet)
     app.route(
       "/api/openduet/pages",
@@ -1332,64 +1010,11 @@ export function createApp(
       "/api/openduet/setup",
       createSetupRoutes(coworker.openduet.setup, requireUser),
     );
-  if (coworker?.openduet?.tasks)
-    app.route(
-      "/api/openduet/tasks",
-      createTaskRoutes(
-        coworker.openduet.tasks,
-        requireUser,
-        coworker.proactive?.engine,
-        coworker.openduet.intake,
-        coworker.openduet.report,
-      ),
-    );
   if (coworker?.openduet?.channels)
     app.route(
       "/api/openduet/channels",
       createDuetChannelRoutes(coworker.openduet.channels, requireUser),
     );
-  if (coworker?.memory)
-    app.route(
-      "/api/memory",
-      createMemoryRoutes(
-        coworker.memory.store,
-        coworker.memory.ingestion,
-        requireUser,
-      ),
-    );
-  if (coworker?.responsibilities) {
-    const { store, engine, bindings } = coworker.responsibilities;
-    app.route(
-      "/api/responsibilities",
-      createResponsibilityRoutes(
-        store,
-        engine,
-        requireUser,
-        bindings,
-        coworker.responsibilities.triggers,
-        coworker.shared?.use,
-      ),
-    );
-    if (coworker.responsibilities.triggers) {
-      app.route(
-        "/api/events/triggers",
-        coworker.responsibilities.triggers.ingressRoutes,
-      );
-      if (coworker.responsibilities.triggers.emailRoutes)
-        app.route(
-          "/api/events/email",
-          coworker.responsibilities.triggers.emailRoutes,
-        );
-    }
-    app.route(
-      "/api/events/github",
-      createGithubResponsibilityRoutes({
-        bindingFor: bindings.githubBindingFor,
-        ingest: (event) => engine.ingest(event),
-      }),
-    );
-  }
-
   if (componentStore) {
     app.route(
       "/api/components",
@@ -1453,7 +1078,7 @@ export function createApp(
    * no person behind it. Absent secret means the route does not exist: a deployment that has not
    * configured this refuses rather than accepting anybody who can reach the port.
    */
-  if (pluginStore || deploymentToolCaller) {
+  if (pluginStore) {
     const legacyToken = config.agentToolToken ?? "";
     app.post("/api/agent-tools/call", async (context) => {
       /*
@@ -1522,31 +1147,17 @@ export function createApp(
         return context.json({ error: parsedCall.error }, 400);
       }
 
+      const callbackAbort=new AbortController();
+      const stopListening=coworker?.runtimeThreads?.onStop(runId=>{if(runId===verdict.run.runId)callbackAbort.abort();});
+      const toolSignal=AbortSignal.any([context.req.raw.signal,callbackAbort.signal]);
       try {
-        const invoke = async () => {
-        const deploymentResult = await deploymentToolCaller?.({
-          name: parsedCall.value.ref,
-          args: parsedCall.value.args,
-          botId: verdict.botId,
-          actorId: verdict.actorId,
-          initiator: verdict.initiator,
-          run: verdict.run,
-          context: {
-            signal: context.req.raw.signal,
-            ...(typeof body?.toolCallId === "string" ? { toolCallId: body.toolCallId } : {}),
-          },
-        });
-        if (deploymentResult) return context.json(deploymentResult);
+      const execution=await coworker?.runtimeThreads?.run(verdict.run.runId);
+      if(!execution||execution.status!=="running"||execution.stopRequested||execution.userId!==verdict.actorId||execution.agentId!==verdict.botId||execution.threadId!==verdict.run.threadId)
+        return context.json({error:"This execution is no longer running."},409);
 
-        if (!pluginStore) {
-          return context.json({
-            text: `${REFUSAL_MARKER} That tool is not registered in this deployment.`,
-            isError: true,
-          });
-        }
-
+      try {
         const result = await pluginStore.callTool({
-          signal: context.req.raw.signal,
+          signal: toolSignal,
           ref: parsedCall.value.ref,
           args: parsedCall.value.args,
           botId: verdict.botId,
@@ -1560,35 +1171,11 @@ export function createApp(
           text: vendorAnswer(result),
           isError: result.isError,
         });
-        };
-        const toolCallId = typeof body?.toolCallId === "string" ? body.toolCallId : undefined;
-        const threadId = verdict.run.threadId;
-        if (!toolCallId || !threadId || !coworker?.runtimeThreads) return await invoke();
-        const scope = { threadId, userId: verdict.actorId };
-        const thread = await coworker.runtimeThreads.getThread(scope);
-        const { messages } = await coworker.runtimeThreads.getThreadMessages(scope);
-        const recorded = messages.some((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.id === toolCallId));
-        return await withApprovalContext({
-          runId: verdict.run.runId,
-          threadId,
-          toolCallId,
-          toolName: parsedCall.value.ref,
-          args: parsedCall.value.args,
-          messages: recorded ? messages : [...messages, {
-            id: toolCallId, role: "assistant", content: "", toolCalls: [{
-              id: toolCallId, type: "function", function: { name: parsedCall.value.ref, arguments: JSON.stringify(parsedCall.value.args) },
-            }],
-          }],
-          state: thread.state,
-          context: [],
-          forwardedProps: { openbotRun: body?.run },
-          initiator: verdict.initiator,
-        }, invoke);
+
       } catch (error) {
         if (error instanceof HeadlessToolSuspension) {
           return context.json({ waiting: {
-            kind: error.waiting.kind,
-            requestId: error.waiting.requestId,
+            ...error.waiting,
             toolCallId: body?.toolCallId,
             toolName: parsedCall.value.ref,
             message: error.message,
@@ -1640,6 +1227,7 @@ export function createApp(
           isError: true,
         });
       }
+      } finally { stopListening?.(); }
     });
   }
 

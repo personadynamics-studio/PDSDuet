@@ -1,39 +1,39 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useSyncExternalStore } from "react";
-import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { createContext, createElement, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { agentListQueryOptions } from "./queries";
 
-const CHANGED = "pdsduet:selected-bot";
+type Selection = { userId: string; selectedId: string | null; selectBot(id: string): void };
+const SelectedBotContext = createContext<Selection | null>(null);
 
-function subscribe(listener: () => void) {
-  window.addEventListener("storage", listener);
-  window.addEventListener(CHANGED, listener);
-  return () => {
-    window.removeEventListener("storage", listener);
-    window.removeEventListener(CHANGED, listener);
-  };
-}
-
-/** The Bot this person explicitly selected, shared by the workspace screens. */
-export function useSelectedBot() {
-  const person = useQuery(currentUserQueryOptions());
-  const agents = useQuery(agentListQueryOptions());
-  const key = person.data ? `pdsduet:selected-bot:${person.data.id}` : null;
-  const selectedId = useSyncExternalStore(subscribe, () => {
-    if (!key) return null;
-    try { return window.localStorage.getItem(key); } catch { return null; }
-  }, () => null);
+/** React owns the current choice; storage only remembers the person's preference. */
+export function SelectedBotProvider({ userId, children }: { userId: string; children: ReactNode }) {
+  const key = "pdsduet:selected-bot:" + userId;
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    try { return userId ? window.localStorage.getItem(key) : null; } catch { return null; }
+  });
   const selectBot = useCallback((id: string) => {
-    if (!key) return;
-    if (id) window.localStorage.setItem(key, id);
-    else window.localStorage.removeItem(key);
-    window.dispatchEvent(new Event(CHANGED));
+    setSelectedId(id || null);
+    try { if (id) window.localStorage.setItem(key, id); else window.localStorage.removeItem(key); }
+    catch { /* The explicit choice remains usable when persistence is unavailable. */ }
   }, [key]);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => { if (event.key === key) setSelectedId(event.newValue); };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, [key]);
+  return createElement(SelectedBotContext.Provider, { value: { userId, selectedId, selectBot } }, children);
+}
+export function useSelectedBot() {
+  const selection = useContext(SelectedBotContext);
+  if (!selection) throw new Error("Bot selection requires ChatProvider.");
+  const agents = useQuery(agentListQueryOptions());
   return {
-    bot: agents.data?.find((agent) => agent.id === selectedId),
+    userId: selection.userId,
+    bot: agents.data?.find((agent) => agent.id === selection.selectedId),
     agents,
-    selectBot,
-    loading: person.isPending || agents.isPending,
-    error: (person.data ? null : person.error) ?? (agents.data ? null : agents.error),
+    selectBot: selection.selectBot,
+    loading: agents.isPending,
+    error: agents.data ? null : agents.error,
   };
 }
+

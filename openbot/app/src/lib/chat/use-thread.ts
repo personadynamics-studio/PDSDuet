@@ -6,13 +6,14 @@ import { newId } from "@/lib/new-id";
 
 type Snapshot = { messages: ThreadMessage[]; activeRun?: ThreadRun; lastRun?: ThreadRun; cursor: number };
 
-export function useThread(threadId: string, agentId: string) {
+export function useThread(threadId: string, agentId?: string) {
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [activeRun, setActiveRun] = useState<ThreadRun>();
   const [submitting, setSubmitting] = useState(false);
   const [restoring, setRestoring] = useState(true);
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const cursor = useRef(0);
@@ -31,7 +32,7 @@ export function useThread(threadId: string, agentId: string) {
     source.current?.close();
     source.current = null;
     try {
-      const response = await client(`${base}/messages?agentId=${encodeURIComponent(agentId)}`, {
+      const response = await client(`${base}/messages${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`, {
         signal: AbortSignal.any([lifetime.signal, request.signal]),
         fallback: "無法載入對話，請稍後重試。",
       });
@@ -59,6 +60,7 @@ export function useThread(threadId: string, agentId: string) {
     setActiveRun(undefined);
     setRestoring(true);
     setError(null);
+    setRequestError(null);
     watch.current = () => {
       if (!requests.current || requests.current.signal.aborted || source.current || !navigator.onLine) return;
       const stream = new EventSource(`${base}/events?after=${cursor.current}`, { withCredentials: true });
@@ -121,12 +123,16 @@ export function useThread(threadId: string, agentId: string) {
 
   const submit = useCallback(async (incoming: Message[], context: { description: string; value: string }[] = []) => {
     const lifetime = requests.current;
-    if (!lifetime || lifetime.signal.aborted || !navigator.onLine) throw new Error("目前離線，請連線後再傳送。");
+    if (!lifetime || lifetime.signal.aborted || !navigator.onLine) {
+      const failure = new Error("目前離線，請連線後再傳送。");
+      setRequestError(failure.message);
+      throw failure;
+    }
     setSubmitting(true);
-    setError(null);
+    setRequestError(null);
     try {
       const response = await client(`${base}/runs`, {
-        method: "POST", body: { agentId, messages: incoming, context }, signal: lifetime.signal,
+        method: "POST", body: { ...(agentId && incoming.some((message) => message.role === "user") ? { agentId } : {}), messages: incoming, context }, signal: lifetime.signal,
         fallback: "未能傳送訊息，請重試。",
       });
       const data = await response.json() as { runId: string };
@@ -137,7 +143,7 @@ export function useThread(threadId: string, agentId: string) {
       return data.runId;
     } catch (failure) {
       if (!lifetime.signal.aborted) {
-        setError(failure instanceof Error ? failure.message : "未能傳送訊息。");
+        setRequestError(failure instanceof Error ? failure.message : "未能傳送訊息。");
         void refresh();
       }
       throw failure;
@@ -146,18 +152,20 @@ export function useThread(threadId: string, agentId: string) {
 
   const stop = useCallback(async () => {
     const lifetime = requests.current;
-    if (!activeRun || !lifetime || lifetime.signal.aborted) return;
+    if (!activeRun) return;
+    if (!lifetime || lifetime.signal.aborted || !navigator.onLine) { setRequestError("目前離線，請連線後再停止工作。"); return; }
+    setRequestError(null);
     try {
       await client(`${base}/runs/${encodeURIComponent(activeRun.id)}/stop`, {
         method: "POST", signal: lifetime.signal, fallback: "無法停止工作，請重試。",
       });
       await refresh();
     } catch (failure) {
-      if (!lifetime.signal.aborted) setError(failure instanceof Error ? failure.message : "無法停止工作。");
+      if (!lifetime.signal.aborted) setRequestError(failure instanceof Error ? failure.message : "無法停止工作。");
     }
   }, [activeRun, base, refresh]);
   const answer = useCallback(async (toolCallId: string, result: unknown) => {
     await submit([{ id: newId(), role: "tool", toolCallId, content: typeof result === "string" ? result : JSON.stringify(result) }]);
   }, [submit]);
-  return { messages, messagesRef, activeRun, busy: submitting || activeRun !== undefined, restoring, reconnecting, error, submit, stop, answer, refresh };
+  return { messages, messagesRef, activeRun, busy: submitting || activeRun !== undefined, restoring, reconnecting, error: requestError ?? error, submit, stop, answer, refresh };
 }

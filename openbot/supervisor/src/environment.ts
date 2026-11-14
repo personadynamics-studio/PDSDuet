@@ -9,10 +9,7 @@ export function environmentFor(
   botId: string,
   env: Record<string, string | undefined> = process.env,
 ): string[] {
-  const passthrough = Object.entries(env).filter(([key]) =>
-    key.startsWith("EGRESS_PROXY"),
-  );
-  const spireSocketVolume = env.SPIRE_AGENT_SOCKET_VOLUME;
+  const proxy = env[`EGRESS_PROXY_${botId.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase()}`] ?? env.EGRESS_PROXY_DEFAULT;
   // Fail fast here rather than forwarding an invalid mode that crashes the child at
   // `browserModeFromEnv`: whitespace-only is falsy after trim, anything else must be headless
   // or headed.
@@ -29,10 +26,7 @@ export function environmentFor(
   const browserMode = rawBrowserMode;
   return [
     `COMPUTER_BOT_ID=${botId}`,
-    ...(spireSocketVolume
-      ? ["SPIFFE_ENDPOINT_SOCKET=/tmp/spire-agent/public/api.sock"]
-      : []),
     ...(browserMode ? [`COMPUTER_BROWSER_MODE=${browserMode}`] : []),
-    ...passthrough.map(([key, value]) => `${key}=${value ?? ""}`),
+    ...(proxy ? [`EGRESS_PROXY_DEFAULT=${proxy}`] : []),
   ];
 }

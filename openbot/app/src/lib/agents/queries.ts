@@ -64,7 +64,6 @@ export const agentKeys = {
   detail: (agentId: string) => ["agents", "detail", agentId] as const,
   botRouteDetail: (agentId: string) =>
     ["agents", "bot-route-detail", agentId] as const,
-  handoff: (agentId: string) => ["agents", "handoff", agentId] as const,
   capabilities: () => ["agents", "capabilities"] as const,
 };
 
@@ -85,29 +84,6 @@ export function agentCapabilitiesQueryOptions() {
     staleTime: Number.POSITIVE_INFINITY,
   });
 }
-
-/** Which Bots one Bot may hand work to, and whether this deployment lets it. */
-export type HandoffGrants = {
-  /**
-   * Whether the capability is switched on at all.
-   *
-   * Separate from the grants because the two fail differently: with this false, a grant is a row
-   * nothing will ever read, so the screen says so rather than offering a switch wired to nothing.
-   */
-  enabled: boolean;
-  /** Whether the signed-in person may change any of it. Granting is an administrator's. */
-  canGrant: boolean;
-  /** Bot ids this Bot may address today. */
-  reachable: string[];
-  /**
-   * Whether this Bot can hold such a grant at all.
-   *
-   * The handing-on tool executes inside this deployment's own run loop, so only a Bot that runs in
-   * it can be offered one. False means every grant would be refused, and the screen should say that
-   * once instead of letting each switch bounce with the same message.
-   */
-  grantable: boolean;
-};
 
 export function agentListQueryOptions(hidden = false) {
   return queryOptions({
@@ -130,16 +106,6 @@ export function agentQueryOptions(agentId: string) {
     queryFn: (): Promise<AgentProfile> =>
       client(agentApiPath(agentId), "agent", {
         fallback: "Couldn't load this Bot.",
-      }),
-  });
-}
-
-export function agentHandoffQueryOptions(agentId: string) {
-  return queryOptions({
-    queryKey: agentKeys.handoff(agentId),
-    queryFn: (): Promise<HandoffGrants> =>
-      client(`${agentApiPath(agentId)}/handoff`, "handoff", {
-        fallback: "Could not load which Bots this one may ask",
       }),
   });
 }

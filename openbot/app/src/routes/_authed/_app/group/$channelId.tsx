@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { BotPausedBanner } from "@/components/bot-profile/pause-banner";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { GroupChat } from "@/components/channels/group-chat";
 import { GroupPeopleButton } from "@/components/channels/group-people";
@@ -30,9 +29,6 @@ function RouteComponent() {
         </span>
         <GroupPeopleButton channelId={channelId} />
       </div>
-      {(channel.data?.agentIds ?? []).map((agentId) => (
-        <BotPausedBanner agentId={agentId} key={agentId} />
-      ))}
       {/* Remounted per channel so one group's transcript never flashes in another. */}
       <GroupChat channelId={channelId} key={channelId} />
     </div>

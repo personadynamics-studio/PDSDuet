@@ -318,7 +318,7 @@ export function openduetTools(options: {
   initiator: AuditInitiator;
   person: () => Promise<{ name: string | null; email: string | null }>;
   build: (
-    input: Parameters<typeof buildMorningBrief>[1],
+    input: Parameters<typeof buildMorningBrief>[1], signal?: AbortSignal,
   ) => Promise<MorningBrief>;
 }): GrantedTool[] {
   const parameters = z
@@ -340,7 +340,8 @@ export function openduetTools(options: {
       ].join(" "),
       parameters,
       initiator: options.initiator,
-      async execute(args) {
+      async execute(args, context) {
+        context?.signal?.throwIfAborted();
         const parsed = parameters.safeParse(args ?? {});
         if (!parsed.success) return "Refused. Invalid morning_brief arguments.";
         const brief = await options.build({
@@ -349,7 +350,7 @@ export function openduetTools(options: {
           initiator: options.initiator,
           person: await options.person(),
           ...(parsed.data.since ? { since: parsed.data.since } : {}),
-        });
+        }, context?.signal);
         return JSON.stringify(brief);
       },
     },

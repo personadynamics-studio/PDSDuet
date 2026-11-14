@@ -1,9 +1,9 @@
 import type { BaseEvent, Message } from "@ag-ui/core";
 
-export type ThreadMessage = Message & { senderBotId?: string };
+export type ThreadMessage = Message & { senderBotId?: string; senderUserId?: string; createdAt?: string };
 export type ThreadEvent = BaseEvent & Record<string, unknown> & { seq?: number; senderBotId?: string };
 export type RunStatus = "running" | "waiting" | "completed" | "failed" | "stopped" | "interrupted";
-export type ThreadRun = { id: string; status: RunStatus; error?: string; waiting?: { toolCallId: string; toolName: string; answerable?: boolean }[] };
+export type ThreadRun = { id: string; status: RunStatus; error?: string; waiting?: { toolCallId: string; toolName: string; answerable?: boolean; metadata?: Record<string, unknown> }[] };
 
 function put(rows: readonly ThreadMessage[], message: ThreadMessage): ThreadMessage[] {
   return rows.some((row) => row.id === message.id) ? rows.map((row) => row.id === message.id ? message : row) : [...rows, message];

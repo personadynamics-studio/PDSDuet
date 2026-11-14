@@ -7,7 +7,6 @@ import {
   PageSection,
   PageShell,
 } from "@/components/layout/page-shell";
-import { GithubSources } from "@/components/settings/github-sources";
 import {
   type LinkableProvider,
   LinkedAccountSection,
@@ -90,7 +89,6 @@ export function IdentityConnectionPage({
       <LinkedAccountSection provider={provider} />
       {provider === "github" ? (
         <>
-          <GithubSources />
           <GithubTools />
         </>
       ) : null}

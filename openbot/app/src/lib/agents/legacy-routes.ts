@@ -23,10 +23,7 @@ export function legacyAgentsTarget(search: { new?: boolean; agent?: string }) {
  * Bot's page; what was the person's own is in Settings.
  */
 export const LEGACY_PAGES = {
-  "/approvals": "/settings/approvals",
   "/memory": "/capabilities/memory",
-  "/reachability": "/settings/notifications",
-  "/responsibilities": "/bots",
   // A group is started from the new-conversation screen by putting two or more Bots in To:.
   "/group/new": "/channel/new",
 } as const;

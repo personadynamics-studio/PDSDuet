@@ -1402,7 +1402,6 @@ function remoteAgentWithStandingRole(
             },
             execute: (args, context) => tool.execute(args, context),
           })),
-          initiator,
         ).run(prepared, next);
       }),
     );

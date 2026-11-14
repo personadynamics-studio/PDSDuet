@@ -13,8 +13,6 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { useConversationSend } from "@/components/channels/conversation-send";
-import { NewTaskSheet } from "@/components/shell/new-task-sheet";
-import { agentListQueryOptions } from "@/lib/agents/queries";
 import {
   checkPageMutationOptions,
   deletePageMutationOptions,
@@ -29,7 +27,6 @@ import { pageThemeStyle } from "@/lib/pages/theme";
 import { DURATION, EASE_OUT } from "@/lib/motion";
 import { useReducedMotionPreference } from "@/lib/reduced-motion";
 import { searchText } from "@/lib/search-text";
-import { startTaskMutationOptions } from "@/lib/tasks/mutations";
 import { cn } from "@/lib/utils";
 import { DuetIcon } from "./icons";
 import { PageCardFace } from "./page-card";
@@ -87,24 +84,11 @@ export function PageSheet({
 }) {
   const page = useQuery(pageQueryOptions(pageId));
   const queryClient = useQueryClient();
-  const router = useRouter({ warn: false });
-  const agents = useQuery({
-    ...agentListQueryOptions(),
-    enabled: Boolean(page.data?.botId),
-  });
-  const bot = agents.data?.find((bot) => bot.id === page.data?.botId);
   const check = useMutation(checkPageMutationOptions(queryClient, pageId));
   const remove = useMutation(deletePageMutationOptions(queryClient, pageId));
-  const start = useMutation(startTaskMutationOptions(queryClient));
   const [actions, setActions] = useState(false);
-  const [revise, setRevise] = useState(false);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
-  const openTask = (id: string) => {
-    if (router)
-      void router.navigate({ to: "/tasks/$taskId", params: { taskId: id } });
-    else onClose();
-  };
   const popup = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotionPreference();
   const morph = useSheetMorph(pageId, onClose, (summary, size) => (
@@ -239,34 +223,6 @@ export function PageSheet({
                         分享
                       </button>
                       <button
-                        className="min-h-11 rounded-xl px-3 text-left transition-colors hover:bg-duet-tile disabled:opacity-50"
-                        disabled={!bot}
-                        type="button"
-                        onClick={() => {
-                          setRevise(true);
-                          setActions(false);
-                        }}
-                      >
-                        修改
-                      </button>
-                      <button
-                        className="min-h-11 rounded-xl px-3 text-left transition-colors hover:bg-duet-tile disabled:opacity-50"
-                        disabled={!page.data?.botId || start.isPending}
-                        type="button"
-                        onClick={() => {
-                          if (!page.data?.botId) return;
-                          start.mutate(
-                            {
-                              botId: page.data.botId,
-                              instruction: `Read saved page ${pageId} with read_page, then carry out the plan in “${page.data.title}”. Ask before any external action that needs approval.`,
-                            },
-                            { onSuccess: (task) => openTask(task.id) },
-                          );
-                        }}
-                      >
-                        轉為任務
-                      </button>
-                      <button
                         className="min-h-11 rounded-xl px-3 text-left text-duet-red transition-colors hover:bg-duet-tile disabled:opacity-50"
                         disabled={remove.isPending}
                         type="button"
@@ -289,12 +245,11 @@ export function PageSheet({
                     {notice}
                   </p>
                 ) : null}
-                {actionError || check.error || remove.error || start.error ? (
+                {actionError || check.error || remove.error ? (
                   <p className="type-label mb-3 text-duet-red" role="alert">
                     {actionError ||
                       check.error?.message ||
-                      remove.error?.message ||
-                      start.error?.message}
+                      remove.error?.message}
                   </p>
                 ) : null}
                 {page.error ? (
@@ -360,20 +315,6 @@ export function PageSheet({
               </div>
             </div>
           </div>
-          {revise && bot ? (
-            <NewTaskSheet
-              bot={bot}
-              onClose={() => setRevise(false)}
-              onAdded={(where, task) => {
-                setRevise(false);
-                if (where === "active" && task) openTask(task.id);
-                else setNotice("修改要求已加入待處理");
-              }}
-              question="你想修改甚麼？"
-              instructionPrefix={`Read saved page ${pageId} with read_page before revising it. Save changes with make_page using the same page id.`}
-              starter={`修改「${title}」：…`}
-            />
-          ) : null}
           {morph.ghost}
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>

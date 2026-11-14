@@ -9,7 +9,6 @@ import {
   reset,
   stop,
 } from "./docker";
-import { registerEntry } from "./identity";
 import { namesFor } from "./names";
 import { computerMemoryBytes } from "./computer-memory-bytes";
 import { listenPort } from "./listen-port";
@@ -25,8 +24,6 @@ if (!resolvedMemory.ok) {
   process.exit(1);
 }
 const memoryBytes = resolvedMemory.bytes;
-const spireSocketVolume =
-  process.env.SPIRE_AGENT_SOCKET_VOLUME?.trim() || undefined;
 
 const app = new Hono();
 
@@ -38,21 +35,14 @@ app.post("/computers/:botId/ensure", async (context) => {
   const names = namesFor(context.req.param("botId"));
 
   try {
-    const identity = await registerEntry(names);
     const state = await ensure(names, {
       image,
       environment: environmentFor(names.botId),
       ...(network ? { network } : {}),
       ...(runtime ? { runtime } : {}),
       ...(memoryBytes ? { memoryBytes } : {}),
-      ...(spireSocketVolume ? { spireSocketVolume } : {}),
-    });
-    return context.json({
-      ...state,
-      ...(identity.registered
-        ? { spiffeId: identity.spiffeId }
-        : { identity: identity.reason }),
-    });
+    }, context.req.raw.signal);
+    return context.json(state);
   } catch (error) {
     if (error instanceof DockerUnavailableError) {
       return context.json({ error: error.message }, 503);

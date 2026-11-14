@@ -5,9 +5,7 @@ import { NewBotSheet } from "@/components/agents/new-bot-sheet";
 import { BotRoster } from "@/components/bots/bot-roster";
 import { PageShell } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
-
-/** Just longer than the sheet's 200ms exit, so it has finished sliding away before the page changes. */
-const SHEET_CLOSE_MS = 240;
+import { useSelectedBot } from "@/lib/agents/selected-bot";
 
 /** Creating a Bot is a search-parameter state, so the roster stays mounted and Back closes it. */
 export const Route = createFileRoute("/_authed/_app/bots/")({
@@ -16,6 +14,7 @@ export const Route = createFileRoute("/_authed/_app/bots/")({
 });
 
 function BotsPage() {
+  const { selectBot } = useSelectedBot();
   const { new: creating } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
@@ -32,28 +31,15 @@ function BotsPage() {
           新增機械人
         </Button>
       }
-      description="查看你的機械人及與你共用的機械人，了解各自正在處理的工作及需要你處理的事項。"
+      description="選擇機械人開始對話，或管理機械人的設定。"
       title="機械人"
     >
       <BotRoster />
       <NewBotSheet
         onClose={() => void navigate({ search: {} })}
         onCreated={(agentId) => {
-          /*
-           * Close first, then go. Navigating straight to the Bot unmounted this page with the sheet
-           * still on it, so it vanished instead of sliding away. Replacing the `?new` entry means Back
-           * from the new Bot lands on the roster, not on an empty sheet.
-           */
-          void navigate({ replace: true, search: {} });
-          window.setTimeout(
-            () =>
-              void navigate({
-                params: { agentId },
-                search: {},
-                to: "/bots/$agentId",
-              }),
-            SHEET_CLOSE_MS,
-          );
+          selectBot(agentId);
+          void navigate({ to: "/", replace: true });
         }}
         open={creating === true}
       />

@@ -3,16 +3,9 @@ import { Fragment, useState } from "react";
 import { GmailLogo, GoogleCalendarLogo } from "@/components/duet/google-logos";
 import type { DuetIconName } from "@/components/duet/icons";
 import { DuetCard, OutcomePill, Tile } from "@/components/duet/kit";
-import { deliveryQueryOptions } from "@/lib/delivery";
 import { appConfig } from "@/lib/generated/application-config";
 import { connectAccountMutationOptions } from "@/lib/plugins/mutations";
 import { recheckSetupMutationOptions } from "@/lib/setup/mutations";
-import {
-  type NotificationPermissionState,
-  refreshNotificationPermission,
-  requestNotificationPermission,
-  useNotificationPermission,
-} from "@/lib/setup/notifications";
 import {
   type SetupFix,
   type SetupRow,
@@ -24,7 +17,6 @@ const ICONS: Record<SetupRowId, DuetIconName> = {
   model: "waveform",
   google: "lock",
   gmail: "mail",
-  notifications: "inbox",
   computer: "globe",
   apps: "plus",
   chat: "chat",
@@ -51,7 +43,6 @@ export function SetupChecklist({
   const queryClient = useQueryClient();
   const checklist = useQuery(setupChecklistQueryOptions());
   const recheck = useMutation(recheckSetupMutationOptions(queryClient));
-  const notifications = useNotificationsRow();
   const [dismissed, setDismissed] = useState<SetupRowId[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
   const connect = useMutation({
@@ -78,8 +69,6 @@ export function SetupChecklist({
       disabled={checking}
       onClick={() => {
         setProblem(null);
-        refreshNotificationPermission();
-        void notifications.refetch();
         if (checklist.error) void checklist.refetch();
         else recheck.mutate();
       }}
@@ -93,9 +82,7 @@ export function SetupChecklist({
     problem ??
     (recheck.error ? "無法重新讀取狀態，請重試。" : null) ??
     notice;
-  const rows = checklist.data
-    ? withNotifications(checklist.data.rows, notifications.row)
-    : [];
+  const rows = checklist.data?.rows ?? [];
 
   return (
     <div className="flex w-full flex-col gap-3">
@@ -162,71 +149,6 @@ function summaryOf(rows: SetupRow[]): string {
       ? `${things}設定，其中 ${required === 1 ? "1 項" : `${required} 項`}為必要設定。`
       : `${things}設定。不完成這${gaps.length === 1 ? "項" : "些"}設定亦可使用 ${PRODUCT}。`;
   return notChecked ? `${needs} ${notChecked}` : needs;
-}
-
-/** The notifications row goes with the reader's other own row, after Gmail. */
-function withNotifications(rows: SetupRow[], notifications: SetupRow) {
-  const at = rows.findIndex((row) => row.id === "gmail");
-  return at === -1
-    ? [...rows, notifications]
-    : [...rows.slice(0, at + 1), notifications, ...rows.slice(at + 1)];
-}
-
-/**
- * The one row the browser decides: whether OpenDuet can tell this person something needs them.
- *
- * Ready when this browser allows notifications, or when a phone of theirs is registered for push
- * (`GET /api/delivery`). Otherwise its fix is the Get notified step's button again. Blocked and
- * unsupported say so, since no button here can change either.
- */
-function useNotificationsRow(): { row: SetupRow; refetch: () => unknown } {
-  const permission = useNotificationPermission();
-  const delivery = useQuery({
-    ...deliveryQueryOptions(),
-    refetchInterval: false,
-    retry: false,
-  });
-  const phone =
-    delivery.data?.devices.some((device) => device.enabled) === true;
-  return {
-    row: notificationsRow(permission, phone),
-    refetch: delivery.refetch,
-  };
-}
-
-export function notificationsRow(
-  permission: NotificationPermissionState,
-  phone: boolean,
-): SetupRow {
-  const row = {
-    id: "notifications" as const,
-    scope: "person" as const,
-    title: "通知",
-    required: false,
-  };
-  if (permission === "granted" || phone)
-    return {
-      ...row,
-      status: "ready",
-      ready: true,
-      detail:
-        permission === "granted"
-          ? `${PRODUCT} 會在需要你回覆時透過這個瀏覽器通知你。`
-          : `${PRODUCT} 會在需要你回覆時透過手機通知你。`,
-      fix: null,
-    };
-  return {
-    ...row,
-    status: "needs_setup",
-    ready: false,
-    detail:
-      permission === "denied"
-        ? "這個網站的通知已被封鎖，請在瀏覽器的網站設定中允許通知。"
-        : permission === "unsupported"
-          ? "這個瀏覽器不支援通知。"
-          : "未開啟通知時，你須自行查看待處理事項。",
-    fix: permission === "default" ? { kind: "notify" } : null,
-  };
 }
 
 function SetupItem({
@@ -367,20 +289,6 @@ function Fix({
           type="button"
         >
           稍後再說
-        </button>
-      </div>
-    );
-  }
-
-  if (fix.kind === "notify") {
-    return (
-      <div className="mt-3 flex gap-2">
-        <button
-          className="type-label h-9 rounded-full bg-duet-black px-4 font-semibold text-duet-on-black outline-none transition-[filter,transform,opacity] hover:brightness-125 focus-visible:ring-3 focus-visible:ring-duet-violet/40 active:scale-[0.97]"
-          onClick={() => void requestNotificationPermission()}
-          type="button"
-        >
-          開啟
         </button>
       </div>
     );

@@ -26,25 +26,13 @@ export type PageChrome = {
    * list this page was reached from. Chat when the page does not say.
    */
   backTo?: LinkProps;
-  /**
-   * `phone` holds the page to Chat's column, for a conversation; `wide` leaves it the width the
-   * configuration pages were built for.
-   */
-  column: "wide" | "phone";
-  /**
-   * The pill's second line is what the Bot is doing (`useChatStep`), while it works. On for a
-   * conversation, whose Bot reports its steps as Chat's does.
-   */
-  status?: boolean;
-  /** What the server is doing in this page's conversation, for that line when the page is not. */
-  serverWork?: string | null;
   /** What the "…" disc on the right opens, such as the conversation's Bot and its computer. */
   actions?: ReactNode;
 };
 
 type Claim = PageChrome & { owner: string };
 
-const NOTHING: PageChrome = { title: null, column: "wide" };
+const NOTHING: PageChrome = { title: null };
 
 const ChromeContext = createContext<PageChrome | null>(null);
 const ClaimContext = createContext<Dispatch<
@@ -79,16 +67,10 @@ export function useInPageChrome(): boolean {
 export function usePageChrome({
   title,
   backTo,
-  column = "wide",
-  status = false,
-  serverWork = null,
   actions,
 }: {
   title: string | null;
   backTo?: LinkProps;
-  column?: PageChrome["column"];
-  status?: boolean;
-  serverWork?: string | null;
   /** Keep it stable across renders (`useMemo`): a new element each render claims the chrome again. */
   actions?: ReactNode;
 }) {
@@ -102,13 +84,10 @@ export function usePageChrome({
     claim({
       owner,
       title,
-      column,
-      status,
-      serverWork,
       ...(backTo ? { backTo } : {}),
       ...(actions ? { actions } : {}),
     });
-  }, [claim, owner, title, column, status, serverWork, actions, backKey]);
+  }, [claim, owner, title, actions, backKey]);
   useEffect(() => {
     if (!claim) return;
     return () =>

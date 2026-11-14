@@ -1,201 +1,61 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
-import { Streamdown } from "streamdown";
-import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import {
-  MessageContent,
-  MessageHeader,
-  Message as MessageRow,
-} from "@/components/ui/message";
-import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { useCallback, useEffect, useState } from "react";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import {
-  type GroupMessage,
-  groupQueryOptions,
-  sendGroupMessageMutationOptions,
-} from "@/lib/groups";
-import { markdownComponents } from "@/lib/markdown";
+import { groupQueryOptions, sendGroupMessageMutationOptions, type GroupConversation } from "@/lib/groups";
+import { useThread } from "@/lib/chat/use-thread";
+import { useActiveConversation } from "@/lib/chat/active-bot";
+import { ConversationProvider } from "@/lib/chat/conversation";
 import { newId } from "@/lib/new-id";
-import { ChannelAvatar } from "./avatar";
-import { Composer, toAgentOptions } from "./composer";
-import { TeamBotConsentCard } from "./team-bot-consent";
-
+import { ConversationView } from "./conversation-view";
+import { toAgentOptions } from "./composer";
+import { takeFirstMessage } from "./transcript-messages";
+import { Button } from "@/components/ui/button";
 
 export function GroupChat({ channelId }: { channelId: string }) {
-  const queryClient = useQueryClient();
   const group = useQuery(groupQueryOptions(channelId));
+  if (group.isPending) return <p role="status" className="p-6">正在載入群聊…</p>;
+  if (!group.data) return <p role="alert" className="p-6 text-destructive">{group.error?.message ?? "無法載入群聊。"}</p>;
+  return <GroupSession key={group.data.threadId} channelId={channelId} group={group.data} />;
+}
+function GroupSession({ channelId, group }: { channelId: string; group: GroupConversation }) {
+  const queryClient = useQueryClient();
+  const thread = useThread(group.threadId);
+  useActiveConversation({ threadId: group.threadId, messages: thread.messages, activeRun: thread.activeRun, answer: thread.answer });
   const roster = useQuery(agentListQueryOptions());
-  const me = useQuery(currentUserQueryOptions()).data;
-  const send = useMutation(
-    sendGroupMessageMutationOptions(queryClient, channelId),
-  );
-  const bots = group.data?.bots ?? [];
-  const names = new Map([...(roster.data ?? []), ...bots].map((bot) => [bot.id, bot.name]));
-  const messages = group.data?.messages ?? [];
-  const working = messages.some(
-    (message) => message.status === "running" || message.status === "queued",
-  );
-
-  // Follow the conversation down as lines arrive, the way the single-Bot transcript does.
-  const endRef = useRef<HTMLDivElement | null>(null);
-  const lastKey = `${messages.length}:${messages.at(-1)?.status ?? ""}`;
+  const send = useMutation(sendGroupMessageMutationOptions(queryClient, channelId));
+  const [firstFailed, setFirstFailed] = useState<{ id: string; text: string } | null>(null);
+  const sendFirst = useCallback(async (message: { id: string; text: string }) => {
+    try { await send.mutateAsync({ ...message, agentId: null }); setFirstFailed(null); await thread.refresh(); }
+    catch { setFirstFailed(message); }
+  }, [send.mutateAsync, thread.refresh]);
   useEffect(() => {
-    if (lastKey) endRef.current?.scrollIntoView({ block: "end" });
-  }, [lastKey]);
-
-  if (group.isPending) return null;
-  if (group.isError)
-    return (
-      <p className="p-8 text-sm text-destructive" role="alert">
-        {group.error.message}
-      </p>
-    );
-
+    if (thread.restoring || thread.busy) return;
+    const text = takeFirstMessage(channelId);
+    if (text && !thread.messages.some((message) => message.role === "user")) void sendFirst({ id: newId(), text });
+  }, [channelId, thread.restoring, thread.busy, thread.messages, sendFirst]);
+  const names = new Map([...(roster.data ?? []), ...group.bots].map((bot) => [bot.id, bot.name]));
+  for (const person of group.people) names.set(person.userId, person.name || person.email);
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 py-6">
-          {messages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              向 {bots.map((bot) => bot.name).join(" 及 ")} 傳送訊息。
-              機械人會依次回覆；如只想問其中一個，請在訊息開頭輸入 @名稱。
-            </p>
-          ) : null}
-          {messages.map((message) => (
-            <GroupLine
-              key={message.id}
-              message={message}
-              name={
-                message.agentId
-                  ? (names.get(message.agentId) ?? message.agentId)
-                  : message.ownerUserId === me?.id
-                    ? "你"
-                    : "團隊成員"
-              }
-              mine={message.ownerUserId === me?.id}
-            />
-          ))}
-          <div ref={endRef} />
-        </div>
-      </div>
-      {/* The same column and the same compact composer as a conversation with one Bot. */}
-      <div className="mx-auto w-full max-w-2xl shrink-0 pb-4">
-        {send.error ? (
-          <p className="pb-2 text-sm text-destructive" role="alert">
-            {send.error.message}
-          </p>
-        ) : null}
-        <Composer
-          agents={toAgentOptions(bots)}
-          className="mt-auto w-full"
+      <ConversationProvider ask={(words) => { void send.mutateAsync({ id: newId(), text: words, agentId: null }).then(() => thread.refresh()).catch(() => {}); }}>
+        <ConversationView
+          messages={thread.messages}
+          speakerNames={names}
+          busy={thread.busy || send.isPending}
+          restoring={thread.restoring}
+          agents={toAgentOptions(group.bots)}
           commands={[]}
-          compact
-          disabled={bots.length === 0}
-          pending={send.isPending || working}
-          autoFocus
+          stoppable={Boolean(thread.activeRun)}
+          onStop={() => { void thread.stop(); }}
+          stopped={thread.error ?? undefined}
+          lead={<p className="text-sm text-muted-foreground">{group.bots.map((bot) => names.get(bot.id) ?? bot.id).join("、")}</p>}
+          notice={send.error ? <div role="alert" className="text-destructive">{send.error.message}{firstFailed ? <Button variant="link" disabled={send.isPending} onClick={() => { void sendFirst(firstFailed); }}>重送首句</Button> : null}</div> : thread.reconnecting ? <p role="status">正在重新連線並取回群聊進度…</p> : null}
           onSubmit={async (draft) => {
-            if (!draft.text) return;
-            await send.mutateAsync({
-              id: newId(),
-              text: draft.text,
-              agentId: draft.agentId,
-            });
+            setFirstFailed(null);
+            await send.mutateAsync({ id: newId(), text: draft.text, agentId: draft.agentId });
+            await thread.refresh();
           }}
         />
-      </div>
-    </div>
+      </ConversationProvider>
   );
 }
 
-/** One attributed line: a person's bubble, and a Bot's named reply on the left. */
-function GroupLine({
-  message,
-  name,
-  mine,
-}: {
-  message: GroupMessage;
-  name: string;
-  mine: boolean;
-}) {
-  if (message.agentId === null)
-    return (
-      <MessageRow align={mine ? "end" : "start"}>
-        <MessageContent>
-          {mine ? null : (
-            <MessageHeader className="text-xs font-medium text-muted-foreground">
-              {name}
-            </MessageHeader>
-          )}
-          <Bubble align={mine ? "end" : "start"} variant="muted">
-            <BubbleContent>
-              <span className="whitespace-pre-wrap">{message.text}</span>
-            </BubbleContent>
-          </Bubble>
-        </MessageContent>
-      </MessageRow>
-    );
-  return (
-    <MessageRow align="start" data-speaker={message.agentId}>
-      <div className="shrink-0 pt-0.5">
-        <ChannelAvatar participantIds={[message.agentId]} size={24} />
-      </div>
-      <MessageContent>
-        <MessageHeader className="text-xs font-medium text-muted-foreground">
-          {name}
-        </MessageHeader>
-        {(message.status === "running" || message.status === "queued") &&
-        !message.text ? (
-          <p
-            className="tool-line-running text-sm text-muted-foreground"
-            role="status"
-          >
-            思考中
-          </p>
-        ) : message.status === "waiting" ? (
-          <p className="text-sm text-muted-foreground">
-            {message.reason ?? "等待你的回覆。"}{" "}
-            <Link
-              className="underline"
-              params={{ agentId: message.agentId }}
-              to="/bots/$agentId"
-            >
-              Open {name}
-            </Link>
-          </p>
-        ) : message.consent ? (
-          // Only the person whose account it asked for can answer; everyone else sees the ask.
-          mine ? (
-            <TeamBotConsentCard
-              botId={message.consent.botId}
-              message={message.text}
-              serverId={message.consent.serverId}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Asked a teammate for permission to use their own{" "}
-              {message.consent.serverId} account.
-            </p>
-          )
-        ) : message.status === "failed" ? (
-          <p className="text-sm text-destructive" role="alert">
-            {message.text || "這個機械人未能回覆。"}
-          </p>
-        ) : (
-          <Bubble
-            align="start"
-            aria-busy={message.status === "running"}
-            variant="ghost"
-            className="w-full"
-          >
-            <BubbleContent className="w-full">
-              <Streamdown components={markdownComponents}>
-                {message.text}
-              </Streamdown>
-            </BubbleContent>
-          </Bubble>
-        )}
-      </MessageContent>
-    </MessageRow>
-  );
-}

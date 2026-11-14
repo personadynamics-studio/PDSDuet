@@ -1,7 +1,5 @@
 import {
   IconArrowLeft,
-  IconBell,
-  IconChecks,
   IconKey,
   IconLayoutGrid,
   IconListCheck,
@@ -46,18 +44,6 @@ const ITEMS: {
     title: "初始設定",
     icon: IconListCheck,
     linkOptions: { to: "/settings/setup" },
-  },
-  {
-    /* Where updates go for every Bot at once; how much each Bot sends is on that Bot's page. */
-    title: "通知",
-    icon: IconBell,
-    linkOptions: { to: "/settings/notifications" },
-  },
-  {
-    /* Whether Bots ask first, and rules for every Bot. Team settings are an administrator's. */
-    title: "審批",
-    icon: IconChecks,
-    linkOptions: { to: "/settings/approvals" },
   },
   {
     /* Logins saved from a Bot's private sign-in form. */

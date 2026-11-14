@@ -4,7 +4,6 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { hasUnseenActivity } from "@/components/app-sidebar/conversation-roster";
 import { markChannelReadMutationOptions } from "./mutations";
 import { channelListQueryOptions } from "./queries";
 
@@ -22,7 +21,7 @@ export function useMarkOpenChannelRead(channelId: string) {
   const markRead = useMutation(markChannelReadMutationOptions(queryClient));
   const roster = useInfiniteQuery(channelListQueryOptions());
   const summary = roster.data?.find((row) => row.id === channelId);
-  const unseen = summary !== undefined && hasUnseenActivity(summary);
+  const unseen = Boolean(summary?.lastMessageAgentId && summary.lastMessageAt && (!summary.lastReadAt || summary.lastMessageAt > summary.lastReadAt));
   const markReadMutate = markRead.mutate;
   useEffect(() => {
     if (unseen) markReadMutate(channelId);

@@ -1,7 +1,7 @@
 import { PAGE_KIND_LABELS, type PageKind } from "@openbot/shared/page-look";
 import { sanitizeThumbnail } from "@openbot/shared/thumbnail";
 import { type ReactNode, useCallback } from "react";
-import { clockTime } from "@/lib/approval-view";
+import { clockTime } from "@/lib/relative-time";
 import type { PageBlock, PageSummary } from "@/lib/pages/queries";
 import { cn } from "@/lib/utils";
 import { DuetIcon } from "./icons";

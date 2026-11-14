@@ -36,13 +36,7 @@ const TOKEN_BYTES = 32;
 /** Signed under its own label, so a signature here can never be replayed as a visitor's cookie. */
 const RUN_LABEL = "openbot:agent-run";
 
-/**
- * How long an assertion is good for.
- *
- * A run is not instant: a Bot may answer, call a tool, read the result and call another. Ten minutes
- * covers a slow tool loop with room to spare, and bounds what a captured assertion is worth.
- */
-const RUN_TTL_MS = 10 * 60 * 1000;
+
 
 export function mintCallbackToken(): string {
   return `${TOKEN_PREFIX}${randomBytes(TOKEN_BYTES).toString("base64url")}`;
@@ -116,7 +110,6 @@ export type RunAssertion = {
   initiator?: AuditInitiator;
 };
 
-type SignedRun = RunAssertion & { exp: number };
 
 /**
  * Mint the assertion for one run.
@@ -128,13 +121,11 @@ type SignedRun = RunAssertion & { exp: number };
 export function mintRunAssertion(
   run: RunAssertion,
   encryptionKey: string,
-  now: number = Date.now(),
 ): string {
-  const payload: SignedRun = {
+  const payload: RunAssertion = {
     ...run,
     depth: run.depth ?? 0,
     initiator: run.initiator ?? PERSON_INITIATOR,
-    exp: now + RUN_TTL_MS,
   };
   const value = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return sign(value, encryptionKey, RUN_LABEL);
@@ -143,14 +134,12 @@ export function mintRunAssertion(
 /**
  * The assertion a call carries, or nothing.
  *
- * Nothing on any doubt: a bad signature, an expired one, a payload that is not the right shape. The
+ * Reject a bad signature or a malformed scope. The callback boundary reads the actual run status; there is no second timer that expires a still-running Bot. The
  * caller refuses when this returns null, so every unclear case fails closed.
  */
 export function readRunAssertion(
   signed: unknown,
   encryptionKey: string,
-  now: number = Date.now(),
-  options: { ignoreExpiry?: boolean } = {},
 ): RunAssertion | null {
   if (typeof signed !== "string" || !signed) return null;
 
@@ -160,16 +149,14 @@ export function readRunAssertion(
   try {
     const payload = JSON.parse(
       Buffer.from(value, "base64url").toString("utf8"),
-    ) as Partial<SignedRun>;
+    ) as Partial<RunAssertion>;
     if (
       typeof payload.botId !== "string" ||
       typeof payload.actorId !== "string" ||
-      typeof payload.runId !== "string" ||
-      typeof payload.exp !== "number"
+      typeof payload.runId !== "string"
     ) {
       return null;
     }
-    if (!options.ignoreExpiry && payload.exp <= now) return null;
     return {
       botId: payload.botId,
       actorId: payload.actorId,
@@ -338,13 +325,12 @@ export async function authoriseAgentCall(options: {
   legacyToken?: string;
   /** Which agent holds a token hash, if any. */
   lookup: (hash: string) => Promise<{ id: string } | null>;
-  now?: number;
 }): Promise<CallVerdict> {
-  const { presented, run, encryptionKey, legacyToken, lookup, now } = options;
+  const { presented, run, encryptionKey, legacyToken, lookup } = options;
 
   if (!presented) return { ok: false, status: 401, reason: "Not authorised." };
 
-  const assertion = readRunAssertion(run, encryptionKey, now);
+  const assertion = readRunAssertion(run, encryptionKey);
   /*
    * Refused without saying which half was wrong.
    *
@@ -384,19 +370,3 @@ export async function authoriseAgentCall(options: {
   };
 }
 
-/**
- * The assertion stored with an approved action, read for carrying that action out.
- *
- * The signature is checked; the expiry is not. The expiry bounds how long a live run may call back,
- * but an approval is answered when the person gets to it, usually long after ten minutes, and the
- * approval is what authorises the action now. Read with the live expiry, a hand-off approved late
- * lost its depth and hand-off claim and restarted the Bot-to-Bot chain at depth zero.
- */
-export function readApprovedRunAssertion(
-  signed: unknown,
-  encryptionKey: string,
-): RunAssertion | null {
-  return readRunAssertion(signed, encryptionKey, Date.now(), {
-    ignoreExpiry: true,
-  });
-}

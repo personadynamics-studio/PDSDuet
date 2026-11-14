@@ -21,6 +21,6 @@ export function useComputerControl(computerId: string, enabled = true) {
     busy: change.isPending,
     problem: change.error?.message ?? query.error?.message ?? null,
     refresh: async () => { await query.refetch(); },
-    change: async (action: Action) => (await change.mutateAsync(action)) !== null,
+    change: (action: Action) => change.mutateAsync(action),
   };
 }

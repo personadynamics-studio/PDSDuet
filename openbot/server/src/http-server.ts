@@ -6,8 +6,6 @@ import { websocket as channelSocket } from "./channels/socket";
 import type { ComputerGateway } from "./computer/gateway";
 import { streamPathBotId } from "./computer/stream-path";
 import type { DeploymentConfig } from "./config";
-import type { DemonstrationRecorder } from "./demonstrations/recording";
-import type { DemonstrationStore } from "./demonstrations/store";
 
 /**
  * The server's front door: one Bun server that hands ordinary requests to the Hono app, proxies the
@@ -21,7 +19,6 @@ type StreamData = {
   upstream: string;
   ownerUserId: string;
   botId: string;
-  recordingId?: string;
   inward?: WebSocket;
 };
 
@@ -42,8 +39,7 @@ export function startHttpServer(deps: {
     request: Request,
   ) => Promise<{ id: string; name: string; role: OpenBotRole }>;
   computerGateway: ComputerGateway | undefined;
-  demonstrationStore: DemonstrationStore;
-  demonstrationRecorder: DemonstrationRecorder;
+  canUseComputer(actor: {id:string;role:OpenBotRole}, botId:string):Promise<boolean>;
   app: {
     fetch: (
       request: Request,
@@ -56,8 +52,7 @@ export function startHttpServer(deps: {
     config,
     resolveRequestActor,
     computerGateway,
-    demonstrationStore,
-    demonstrationRecorder,
+    canUseComputer,
     app,
   } = deps;
 
@@ -81,6 +76,7 @@ export function startHttpServer(deps: {
       }
       if (url.pathname === "/api/voice/calls") server.timeout(request, 30);
       if (url.pathname === "/api/voice/sessions") server.timeout(request, 30);
+      if (request.method === "POST" && url.pathname.startsWith("/api/groups/")) server.timeout(request, 0);
       const streamBotId = streamPathBotId(url.pathname);
       if (
         streamBotId !== null &&
@@ -95,6 +91,7 @@ export function startHttpServer(deps: {
         if (!actor) {
           return new Response("Sign in first.", { status: 401 });
         }
+        if (!(await canUseComputer(actor, streamBotId))) return new Response("Computer not found.", {status:404});
         let upstream: string;
         try {
           const streamBase = computerGateway
@@ -116,19 +113,12 @@ export function startHttpServer(deps: {
             { status: 502 },
           );
         }
-        const recording = await demonstrationStore.active(
-          actor.id,
-          streamBotId,
-        );
-        if (recording)
-          upstream += `&recording=${encodeURIComponent(recording.id)}`;
         if (
           server.upgrade(request, {
             data: {
               upstream,
               ownerUserId: actor.id,
               botId: streamBotId,
-              ...(recording ? { recordingId: recording.id } : {}),
             },
           })
         ) {
@@ -149,72 +139,9 @@ export function startHttpServer(deps: {
         stream.inward = inward;
         // Frames outward, input inward. Buffered by neither side: a frame the browser is too slow for
         // should be dropped, not queued, because a stale frame is worse than a missing one.
-        inward.onmessage = (event) => {
-          if (stream.recordingId) {
-            let recorded: unknown;
-            try {
-              recorded = JSON.parse(String(event.data));
-            } catch {
-              recorded = null;
-            }
-            if (
-              recorded &&
-              typeof recorded === "object" &&
-              "type" in recorded &&
-              recorded.type === "demonstration.action"
-            ) {
-              const data = stream;
-              const message = recorded as {
-                recordingId?: unknown;
-                action?: unknown;
-              };
-              if (message.recordingId !== data.recordingId) {
-                ws.send(
-                  JSON.stringify({
-                    type: "error",
-                    error:
-                      "The recording identity changed. Stop and restart recording.",
-                  }),
-                );
-                return;
-              }
-              demonstrationRecorder
-                .capture(
-                  data.ownerUserId,
-                  data.botId,
-                  data.recordingId ?? "",
-                  message.action,
-                )
-                .catch((error) => {
-                  console.error(
-                    JSON.stringify({
-                      type: "demonstration-capture-error",
-                      error:
-                        error instanceof Error ? error.name : "UnknownError",
-                      context: { recordingId: data.recordingId },
-                      timestamp: new Date().toISOString(),
-                    }),
-                  );
-                  try {
-                    ws.send(
-                      JSON.stringify({
-                        type: "error",
-                        error:
-                          "A browser step could not be saved. Stop and review the demonstration before continuing.",
-                      }),
-                    );
-                  } catch {
-                    /* A closed viewer cannot receive the already logged failure. */
-                  }
-                });
-              return;
-            }
-          }
-          try {
-            ws.send(String(event.data));
-          } catch {
-            inward.close();
-          }
+        inward.onmessage = event => {
+          try { ws.send(event.data); }
+          catch { inward.close(); }
         };
         inward.onclose = () => ws.close();
         inward.onerror = () => ws.close();

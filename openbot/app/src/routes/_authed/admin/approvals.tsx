@@ -1,18 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { TeamApprovalSettings } from "@/components/approvals/team-settings";
+import { SharedUseRequests } from "@/components/approvals/shared-use-requests";
 import { PageShell } from "@/components/layout/page-shell";
 
 export const Route = createFileRoute("/_authed/admin/approvals")({
-  component: AdminApprovalsPage,
+  component: () => <PageShell title="共用帳戶申請" description="處理機械人使用團隊共用帳戶的授權申請。"><SharedUseRequests /></PageShell>,
 });
-
-function AdminApprovalsPage() {
-  return (
-    <PageShell
-      description="What members' Bots must ask before they act, rules for everyone, and requests to use shared accounts."
-      title="審批"
-    >
-      <TeamApprovalSettings />
-    </PageShell>
-  );
-}

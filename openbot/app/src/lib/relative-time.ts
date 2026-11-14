@@ -43,3 +43,13 @@ export function agoShort(iso: string, now: number = Date.now()): string {
   if (days < 7) return `${days} 天前`;
   return `${Math.floor(days / 7)} 星期前`;
 }
+
+const timeFormat = new Intl.DateTimeFormat("zh-HK", { hour: "numeric", minute: "2-digit" });
+const dayFormat = new Intl.DateTimeFormat("zh-HK", { month: "short", day: "numeric" });
+
+/** A saved page's local timestamp. */
+export function clockTime(iso: string, now = new Date()): string {
+  const at = new Date(iso);
+  if (!Number.isFinite(at.getTime())) return "";
+  return at.toDateString() === now.toDateString() ? timeFormat.format(at) : dayFormat.format(at);
+}

@@ -5,22 +5,8 @@ import {
 } from "@tanstack/react-query";
 import { type AgentChannel, channelKeys } from "@/lib/channels/queries";
 import { client } from "@/lib/client";
+import type { ThreadMessage, ThreadRun } from "@openbot/shared/thread-events";
 
-/** One line of a group conversation: a person's message (`agentId` null) or one Bot's reply. */
-export type GroupMessage = {
-  id: string;
-  channelId: string;
-  /** Who sent it, for a person's line; whose run it was, for a Bot's. */
-  ownerUserId: string;
-  agentId: string | null;
-  text: string;
-  status: "queued" | "running" | "waiting" | "completed" | "failed";
-  createdAt: string;
-  /** Why a waiting Bot is waiting, when it is. */
-  reason?: string;
-  /** A Team Bot asking the person whose turn it was to use their own account. */
-  consent?: { botId: string; serverId: string };
-};
 export type GroupPerson = {
   userId: string;
   email: string;
@@ -30,19 +16,18 @@ export type GroupPerson = {
 };
 export type GroupBot = { id: string; name: string };
 export type GroupConversation = {
+  threadId: string;
   bots: GroupBot[];
   people: GroupPerson[];
-  messages: GroupMessage[];
+  messages: ThreadMessage[];
+  activeRun?: ThreadRun;
+  lastRun?: ThreadRun;
 };
 
 export const groupKeys = {
   detail: (channelId: string) => ["groups", channelId] as const,
 };
 
-/**
- * The shared transcript. Bot turns run on the server with nobody's browser attached, so the page
- * polls while a turn is still owed an answer and stops once every Bot has spoken.
- */
 export function groupQueryOptions(channelId: string) {
   return queryOptions({
     queryKey: groupKeys.detail(channelId),
@@ -53,27 +38,7 @@ export function groupQueryOptions(channelId: string) {
       );
       return (await response.json()) as GroupConversation;
     },
-    refetchInterval: (query) =>
-      query.state.data?.messages.some(
-        (message) =>
-          message.status === "running" || message.status === "queued",
-      ) || awaitingFirstReply(query.state.data)
-        ? 1_500
-        : false,
   });
-}
-
-/**
- * The last line is still a person's: the server has queued it but no Bot has started yet. Bounded,
- * so a turn the server gave up on before any Bot started does not poll for ever.
- */
-function awaitingFirstReply(data: GroupConversation | undefined) {
-  const last = data?.messages.at(-1);
-  return (
-    last !== undefined &&
-    last.agentId === null &&
-    Date.now() - Date.parse(last.createdAt) < 10 * 60_000
-  );
 }
 
 export function sendGroupMessageMutationOptions(
