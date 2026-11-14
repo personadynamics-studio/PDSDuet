@@ -9,6 +9,7 @@ import type { AgentActor } from "./profile-types";
 import { attachmentIdsIn, newInlineBudget, resolveAttachmentParts, type StoredAttachment } from "../channels/attachment-parts";
 import type { AgentFetch } from "../channels/stall-guard";
 import { UNTRUSTED_GUIDANCE } from "../untrusted-content";
+import { limitModelContext } from "./model-context";
 
 type RegisteredBuiltInAgent = { id: string; name: string; type: "built_in"; systemPrompt: string };
 type RegisteredRemoteAgent = {
@@ -185,7 +186,7 @@ export type MarkAttachmentsSent = (
 
 async function inlineAttachments(
   messages: Message[],
-  load: LoadAttachment,
+  load: LoadAttachment | undefined,
   
   threadId: string,
   markSent?: MarkAttachmentsSent,
@@ -201,13 +202,15 @@ async function inlineAttachments(
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
     if (message.role !== "user") continue;
-    const content = await resolveAttachmentParts(
-      message.content,
-      
-      (id) => load(id, threadId),
-      index === asked ? "fail" : "note",
-      budget,
-    );
+    let content = message.content;
+    if (index !== asked && Array.isArray(content)) {
+      // Historical file bodies never reach a later turn, including inline images and PDFs.
+      content = content.map(part => part.type === "text" && attachmentIdsIn([part]).length === 0
+        ? part
+        : { type: "text" as const, text: "[Attachment from an earlier message omitted. Attach the file again to read it.]" });
+    } else if (index === asked && load) {
+      content = await resolveAttachmentParts(content, id => load(id, threadId), "fail", budget) as typeof message.content;
+    }
     
     if (index === asked && markSent) {
       sentIds = attachmentIdsIn(message.content);
@@ -245,22 +248,24 @@ export async function buildAgent(agent: RegisteredAgent, options: AgentBuildOpti
           content: `${entry.description}: ${entry.value}`,
         }));
         const messages = [agent.standingMessage, ...instructions, ...input.messages.filter(message => message.id !== agent.standingMessage.id)];
-        return from(options.loadAttachment ? inlineAttachments(messages, options.loadAttachment, input.threadId, options.markAttachmentsSent) : Promise.resolve(messages))
+        return from(inlineAttachments(messages, options.loadAttachment, input.threadId, options.markAttachmentsSent))
           .pipe(switchMap(messages => next.run({ ...input, messages, context: [] })));
       });
-    });
+    }, limitModelContext);
   }
   if (!options.apiKey && !options.model.plan) throw new Error(`Model credential is not configured for ${agent.name}.`);
   const standing = standingInstructionsGuidance(await options.loadInstructions?.());
   const plan = options.model.plan;
+  const prompt = [`You are the Bot ${agent.name}. Your Bot ID is ${agent.id}.`, agent.systemPrompt, standing, PROVENANCE_GUIDANCE, UNTRUSTED_GUIDANCE, options.computerGuidance].filter(Boolean).join("\n\n");
   const configuration: NativeAgentConfiguration = {
     model: plan ? (input, signal) => new PlanModel(plan, agent.id, input, new Set(input.tools.map(tool => tool.name)), signal) : `${options.model.provider}/${options.model.defaultModel}`,
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-    prompt: [`You are the Bot ${agent.name}. Your Bot ID is ${agent.id}.`, agent.systemPrompt, standing, PROVENANCE_GUIDANCE, UNTRUSTED_GUIDANCE, options.computerGuidance].filter(Boolean).join("\n\n"),
+    prompt,
+    prepareInput: input => limitModelContext(input, prompt),
   };
   const built = new NativeAgent(configuration);
   const load = options.loadAttachment;
-  if (load) built.use((input, next) => from(inlineAttachments(input.messages, load, input.threadId, options.markAttachmentsSent))
+  built.use((input, next) => from(inlineAttachments(input.messages, load, input.threadId, options.markAttachmentsSent))
     .pipe(switchMap(messages => next.run({ ...input, messages }))));
   built.agentId = agent.id;
   built.description = agent.name;

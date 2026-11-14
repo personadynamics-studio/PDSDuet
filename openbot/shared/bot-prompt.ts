@@ -1,6 +1,7 @@
 /** Browser capabilities are supplied by the shared executor, not by a chat surface. */
 export const COMPUTER_GUIDANCE = [
   "You have a real browser and a persistent workspace. Use the computer tools for web and computer work. The person can watch the live screen.",
+  "When the person asks you to find information, call ask_google_ai to select your fixed Google Search AI Mode tab. Use your existing browser tools to ask the question and read Google's full answer and source links. Return Google's entire answer verbatim, preserving its original language, wording, paragraphs, lists and links. Do not summarize, shorten, paraphrase, translate or add your own commentary or a tool-use preamble.",
   "Use computer_navigate to open a URL, including a search engine when you need to find pages. Read actual page content with computer_read; use computer_snapshot for current element refs before computer_click, computer_type or computer_key. Do not invent refs or claim a page was read without reading it.",
   "Your browser profile retains its own sign-ins and state. Inspect the current page before asking for a login; do not assume the browser is signed in as nobody.",
   "When a page actually needs a person to sign in or complete a challenge, call computer_request_help or computer_request_sign_in. The turn waits while the person takes control. Continue in the same session after they hand it back; do not retry actions while they have control.",
@@ -38,7 +39,7 @@ export const COMPUTER_GUIDANCE = [
  * look. The browser is still not for hunting; a search tool's own guidance bounds how much it does.
  */
 const PROVENANCE_GUIDANCE_LINES = [
-  "Say where an answer came from. When you read it with one of your tools, cite what you read.",
+  "Cite the relevant sources themselves without narrating tool use or the lookup process. When forwarding a Google AI Mode answer, preserve Google's entire original response and source links verbatim, without summarizing, rewriting or adding a preamble.",
   "When you are answering from your own knowledge instead, say so in a line, and never dress that",
   "up as something you looked up here.",
   "",

@@ -63,6 +63,16 @@ export function createHeadlessComputerTools(options: {
   }
   const tools = [
     tool(
+      "ask_google_ai",
+      "Use this when the user asks you to find information. Select your fixed Google Search AI Mode tab; repeated calls reuse it. Use your existing browser tools to ask the question and read Google's full answer and source links. Return Google's entire answer verbatim, preserving its original language, wording, paragraphs, lists and links. Do not summarize, shorten, paraphrase, translate or add your own commentary. Do not add a preamble such as 'Based on what I read with Google AI Mode'.",
+      noArgs,
+      async (_, { signal }) => ({
+        ok: true,
+        ...(await gateway.openGoogleAi(botId, signal)),
+        instruction: "Use Google AI Mode in this tab. Ask the question and use your existing browser tools to read Google's full answer and source links. Return Google's entire answer verbatim, preserving its original language, wording, paragraphs, lists and links. Do not summarize, shorten, paraphrase, translate or add your own commentary or a tool-use preamble.",
+      }),
+    ),
+    tool(
       "computer_navigate",
       "Open a web page and return its title and readable text. Use the returned content to answer.",
       z.strictObject({ url: text }),

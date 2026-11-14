@@ -7,7 +7,7 @@ import { browserRuntimeFromEnv } from "./browser-runtime";
 import { profileDirectoryFor } from "./bot-id";
 import { ControlRequestError, HumanControlError, NO_SECRET_PENDING } from "./control";
 import { assertPageAccess, navigateWebPage, type PagePurpose } from "./navigation";
-import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
+import { createProfiles, GOOGLE_AI_URL, isGoogleAiUrl, numberFromEnv, VIEWPORT } from "./profiles";
 import { parseExecTimeout, parseInputMessage, parseNavigateUrl, parseScrollDelta } from "./request-validation";
 import { startScreencast } from "./screencast";
 import { markElementSecret, maskSensitiveValues, SECRET_ATTRIBUTE, SENSITIVE_FIELD_SELECTOR, sensitiveRefs } from "./secret-masking";
@@ -52,7 +52,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 async function currentPage(botId: string, signal?: AbortSignal, purpose: PagePurpose = "read"): Promise<Page> {
-  const page = await profiles.page(botId, signal);
+  const page = purpose === "navigate" ? await profiles.navigationPage(botId, signal) : await profiles.page(botId, signal);
   signal?.throwIfAborted();
   assertPageAccess(runtime.backend, page.url(), purpose);
   return page;
@@ -183,6 +183,13 @@ serve<{ botId: string }>({
       if (humanInputs.has(url.pathname) && request.method === "POST") {
         const body = await bodyOf(request);
         return await session.control.runHuman(async () => json(await humanInput(await currentPage(botId, signal), url.pathname, body, signal)));
+      }
+      if (url.pathname === "/google-ai" && request.method === "POST") {
+        return await session.control.runBot(signal, async (signal) => {
+          const page = await profiles.googleAiPage(botId, signal);
+          if (!isGoogleAiUrl(page.url())) await navigateWebPage(page, GOOGLE_AI_URL, runtime.backend, navigationTimeout, signal);
+          return json({ url: page.url() });
+        });
       }
       if (url.pathname === "/navigate" && request.method === "POST") {
         const body = await bodyOf(request);

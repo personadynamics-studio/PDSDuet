@@ -8,7 +8,8 @@ type HeaderBearingAgent = AbstractAgent & { headers?: Record<string, string> };
 export class CloningRemoteAgent extends AbstractAgent {
   headers?: Record<string, string>;
   private readonly remote: HeaderBearingAgent;
-  constructor(remote: AbstractAgent, private readonly attachMiddleware: (target: AbstractAgent) => void) {
+  constructor(remote: AbstractAgent, private readonly attachMiddleware: (target: AbstractAgent) => void,
+    private readonly prepareInput?: (input: RunAgentInput) => RunAgentInput) {
     super({ agentId: remote.agentId, description: remote.description, threadId: remote.threadId,
       initialMessages: remote.messages, initialState: remote.state, debug: remote.debug });
     this.remote = remote as HeaderBearingAgent;
@@ -19,12 +20,12 @@ export class CloningRemoteAgent extends AbstractAgent {
     return defer(() => {
       const transport = this.remote.clone() as HeaderBearingAgent;
       if (this.headers) transport.headers = { ...this.headers };
-      return transport.run(input).pipe(finalize(() => transport.abortRun()));
+      return transport.run(this.prepareInput?.(input) ?? input).pipe(finalize(() => transport.abortRun()));
     });
   }
   async getCapabilities() { return this.remote.getCapabilities?.() ?? {}; }
   clone(): CloningRemoteAgent {
-    const clone = new CloningRemoteAgent(this.remote.clone(), this.attachMiddleware);
+    const clone = new CloningRemoteAgent(this.remote.clone(), this.attachMiddleware, this.prepareInput);
     if (this.headers) clone.headers = { ...this.headers };
     return clone;
   }

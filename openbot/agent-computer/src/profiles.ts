@@ -10,6 +10,12 @@ import { botIdsIn } from "./profile-listing";
 
 export { numberFromEnv };
 export const VIEWPORT = { width: 1280, height: 800 };
+export const GOOGLE_AI_URL = "https://www.google.com/ai";
+export function isGoogleAiUrl(value: string): boolean {
+  const url = new URL(value);
+  return url.origin === "https://www.google.com" &&
+    (["/ai", "/aimode"].includes(url.pathname) || (url.pathname === "/search" && url.searchParams.get("udm") === "50"));
+}
 const runtime = browserRuntimeFromEnv(process.env);
 const local = runtime.backend === "local-chrome";
 const sandbox = local || process.env.COMPUTER_SANDBOX === "on";
@@ -52,6 +58,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
   type Browser = {
     context: BrowserContext;
     page: Page;
+    googleAiPage?: Page;
     startedAt: string;
   };
   const live = new Map<string, Browser>();
@@ -105,7 +112,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     }
     const existing = live.get(botId);
     if (existing?.context.browser()?.isConnected()) {
-      const target = chooseLivePage(existing.context.pages()) ?? await existing.context.newPage();
+      const target = !existing.page.isClosed() ? existing.page : chooseLivePage(existing.context.pages()) ?? await existing.context.newPage();
       existing.page = target;
       signal?.throwIfAborted();
       return target;
@@ -140,7 +147,9 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       });
       try {
         const target = chooseLivePage(context.pages()) ?? await context.newPage();
-        live.set(botId, { context, page: target, startedAt: new Date().toISOString() });
+        const browser: Browser = { context, page: target, startedAt: new Date().toISOString() };
+        context.on("page", opened => { browser.page = opened; });
+        live.set(botId, browser);
         return target;
       } catch (error) {
         await context.close();
@@ -159,6 +168,28 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
 
   return {
     page,
+    async googleAiPage(botId: string, signal: AbortSignal): Promise<Page> {
+      await page(botId, signal);
+      const browser = live.get(botId)!;
+      if (!browser.googleAiPage || browser.googleAiPage.isClosed()) {
+        browser.googleAiPage = browser.context.pages().find(candidate => isGoogleAiUrl(candidate.url())) ?? await browser.context.newPage();
+      }
+      browser.page = browser.googleAiPage;
+      signal.throwIfAborted();
+      await browser.page.bringToFront();
+      signal.throwIfAborted();
+      return browser.page;
+    },
+    async navigationPage(botId: string, signal?: AbortSignal): Promise<Page> {
+      const current = await page(botId, signal);
+      const browser = live.get(botId)!;
+      if (current !== browser.googleAiPage) return current;
+      browser.page = chooseLivePage(browser.context.pages().filter(candidate => candidate !== browser.googleAiPage)) ?? await browser.context.newPage();
+      signal?.throwIfAborted();
+      await browser.page.bringToFront();
+      signal?.throwIfAborted();
+      return browser.page;
+    },
     stop: (botId: string) => closingProfile(botId, () => close(botId)),
     reset: (botId: string) => closingProfile(botId, async () => {
       await close(botId);

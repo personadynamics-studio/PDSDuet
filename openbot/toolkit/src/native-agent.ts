@@ -11,6 +11,7 @@ export type NativeAgentConfiguration = {
   model: string | LanguageModelV3 | ((input: RunAgentInput, signal: AbortSignal) => LanguageModelV3);
   apiKey?: string;
   prompt?: string;
+  prepareInput?: (input: RunAgentInput) => RunAgentInput;
 };
 export function resolveLocalModel(model: string | LanguageModelV3, apiKey?: string): LanguageModelV3 {
   if (typeof model !== "string") return model;
@@ -63,6 +64,7 @@ export class NativeAgent extends AbstractAgent {
       let completionReason: unknown;
       const emit = (event: Record<string, unknown>) => subscriber.next(event as BaseEvent);
       const work = async () => {
+        input = this.config.prepareInput?.(input) ?? input;
         emit({ type: "RUN_STARTED", threadId: input.threadId, runId: input.runId });
         const tools: ToolSet = {};
         for (const tool of input.tools) tools[tool.name] = {

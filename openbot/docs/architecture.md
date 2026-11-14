@@ -49,6 +49,10 @@ The left menu lists visible profiles and switches to their conversations. With n
 
 `historyForBot` adapts canonical history for the selected Bot and quotes foreign Bot records as data. `mergeContinuationHistory` keeps tool-call/result pairs adjacent for model input. Neither rewrites the saved transcript. Model state is stored per run and Bot in `local_runs.model_states`, so a group phase or child cannot replace another Bot's state.
 
+Before each native or remote model segment, `agents/model-context.ts` applies a 300,000-token application budget using the `o200k_base` tokenizer. Instructions, tool definitions and non-PDF message content share that budget. The newest complete turns that fit are sent; older turns are omitted without summaries or compression. System instructions remain, and a current turn that cannot fit fails explicitly. This local count includes serialized message structure and an allowance per message; it is not a provider billing count, particularly for images and non-OpenAI models. PDF source bytes/URLs are excluded from this application budget but remain subject to the provider's own limits.
+
+Only the current user message's attachments are loaded and sent, including during that turn's tool continuations. Earlier messages retain their text and an attachment-omitted note, without loading or resending their files. Stored messages and downloadable attachments are unchanged.
+
 ## Waiting, Stop and reconnect
 
 Waiting retains the actual tool call ID and tool-specific metadata. Person questions, browser takeover and private input are answered through the thread API. Settlement resolves the recorded waiting leaf and its owner; the currently selected UI Bot does not choose the recipient. Resume keeps the same run ID and completes unexecuted siblings in the original tool batch before another model segment. There is no full continuation snapshot alongside history.

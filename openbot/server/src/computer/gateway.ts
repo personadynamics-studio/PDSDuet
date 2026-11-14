@@ -25,6 +25,7 @@ export interface ComputerGateway {
   screenshot(botId: string, signal?: AbortSignal): Promise<ScreenshotResult>;
   snapshot(botId: string, signal?: AbortSignal): Promise<SnapshotResult>;
   read(botId: string, signal?: AbortSignal): Promise<ReadResult>;
+  openGoogleAi(botId: string, signal?: AbortSignal): Promise<{ url: string }>;
   navigate(
     botId: string,
     url: string,
@@ -163,6 +164,7 @@ export function createComputerGateway(options: ComputerGatewayOptions): Computer
       const result = await transport.navigate(await provider.locate(botId, signal), botId, url, toolCallId, signal);
       return withUntrustedNotice(result, "web page", ["title", "text"]);
     },
+    openGoogleAi: async (botId, signal) => transport.post<{ url: string }>(await provider.locate(botId, signal), botId, "/google-ai", {}, signal),
     click: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/click", input, signal),
     type: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/type", input, signal),
     key: async (botId, input, signal) => transport.post<ActionResult>(await provider.locate(botId, signal), botId, "/key", input, signal),
