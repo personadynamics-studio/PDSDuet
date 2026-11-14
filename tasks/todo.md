@@ -19,3 +19,15 @@
 已停止後續安裝、修復、建置、啟動與實際對話；沒有第三輪。這次啟動的 PostgreSQL 與 supervisor 已停止。舊的三個已停止電腦容器已移除，原有 profile／workspace 命名 volume 保留；新電腦映像已產生，但沒有完成 Bot 實際運作。
 
 未建立、修改或執行測試；未執行 lint／typecheck。源碼已保存不代表建置或運行成功。狗屎形狀庫與 Slop 已在另一個 repo 推送完成，這裡不重複記錄其工作狀態。
+
+## 依賴阻塞的追加授權與結果
+
+使用者另行允許最多兩輪，只處理 `@ai-sdk/openai` 的安裝／解析阻塞，不擴大重構。
+
+- 第 1／2 輪在 `openbot/` 執行 `bun install --frozen-lockfile --ignore-scripts`，成功安裝 58 個套件，沒有執行安裝腳本。
+- 已讀回 toolkit 的實際連結與套件 metadata：`@ai-sdk/openai` 3.0.99 已安裝於工作區的 Bun 套件目錄。manifest、版本及 lockfile 均未變動，不需要修改模型或執行邏輯。
+- 直接啟動正式後端後，原缺少 OpenAI 套件的錯誤不再出現；啟動改為停在 `SyntaxError: Export named 'MessageSchema' not found`。來源是 `server/src/runtime/routes.ts:1` 從 `@ag-ui/core` 匯入該符號。
+- 這是另一個源碼匯入問題，依「只處理這個阻塞」的範圍未作修改，亦未使用第 2 輪重跑。沒有新增建置、啟動前端或進入實際對話。
+- 本輪啟動的 PostgreSQL 與 supervisor 已停止。未跑測試、lint、typecheck，未新增或修改測試檔。
+
+本次只更新這份紀錄與架構文件；實際依賴安裝位於不提交的 `node_modules`。commit／push 結果以本次對話的 Git 交付為準。
