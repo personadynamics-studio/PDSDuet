@@ -37,7 +37,7 @@ The output is prepared **for the broker to use with customers**. The phone provi
 
 | Area | Work in PDSDuet |
 | --- | --- |
-| Insurance workflow | A dedicated PDF-to-sales-material use case, with broker-facing drafts in Hong Kong Traditional Chinese. The deployment's specific agent instructions remain private. |
+| Insurance workflow | A default insurance PDF assistant with broker-facing drafts in Hong Kong Traditional Chinese. Its role is included in the default Bot definitions. |
 | Original PDF input | Browser and iPhone PDF selection, upload handling and original-file input through the agent runtime to OpenAI. |
 | Mobile conversation recovery | Code changes to reconcile durable history, restore progress after reconnecting and isolate replaced streaming connections. |
 | Readable replies | Complete-message bubbles and explicit completion of streamed Markdown rendering. |
@@ -55,7 +55,7 @@ The output is prepared **for the broker to use with customers**. The phone provi
 - **Document understanding:** Original PDF input to an OpenAI model, including document pages rather than a text-only extraction.
 - **Remote access:** Tailscale connects a phone browser to the self-hosted application.
 
-The current insurance workflow focuses on uploaded documents. Email and calendar connections, reading and sending tools, and the manually requested morning brief remain available when granted. Opening Chat does not start an introduction, request an email connection, or run a morning brief. The package no longer seeds stock Bots; existing user-created insurance assistants remain in the database.
+The current insurance workflow focuses on uploaded documents. Email and calendar connections, reading and sending tools, and the manually requested morning brief remain available when granted. Opening Chat does not start an introduction, request an email connection, or run a morning brief. The package includes two default Bots in [agents.yaml](openbot/examples/openduet/agents.yaml): the insurance PDF assistant and a search assistant that forwards Google's complete original answer without summarizing or adding tool-use commentary. Default Bot roles are synchronized at startup; conversations and attachments are not included in these definitions.
 
 PDF and Markdown/text uploads allow **20 MiB per file**. PDFs reach the model as original files; Markdown/text files are stored whole, with the first 120,000 characters sent to the model and a partial-read warning shown for large text attachments. A run can include up to 32 MiB of attachment data in total.
 
@@ -71,7 +71,7 @@ PDF and Markdown/text uploads allow **20 MiB per file**. PDFs reach the model as
 
 ## Public code and private deployment
 
-This public repository contains the application changes and documentation. Deployment-specific agent instructions, API keys, OAuth credentials, customer documents and conversation data are kept outside the public commits. Running the insurance workflow requires configuring your own agent and model credentials.
+This public repository contains the application changes, documentation and two default Bot role definitions. API keys, OAuth credentials, browser profiles, customer documents and conversation data remain outside the public commits. Running the default Bots requires configuring your own model credentials.
 
 For platform setup and architecture, see the local [deployment guide](openbot/docs/deployment.md), [architecture guide](openbot/docs/architecture.md) and [configuration reference](openbot/docs/configuration.md).
 
