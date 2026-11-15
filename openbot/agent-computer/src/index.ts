@@ -7,7 +7,7 @@ import { browserRuntimeFromEnv } from "./browser-runtime";
 import { profileDirectoryFor } from "./bot-id";
 import { ControlRequestError, HumanControlError, NO_SECRET_PENDING } from "./control";
 import { assertPageAccess, navigateWebPage, type PagePurpose } from "./navigation";
-import { createProfiles, GOOGLE_AI_URL, isGoogleAiUrl, numberFromEnv, VIEWPORT } from "./profiles";
+import { createProfiles, GOOGLE_AI_URL, isGoogleAiUrl, isWhatsAppUrl, numberFromEnv, VIEWPORT, WHATSAPP_WEB_URL } from "./profiles";
 import { parseExecTimeout, parseInputMessage, parseNavigateUrl, parseScrollDelta } from "./request-validation";
 import { startScreencast } from "./screencast";
 import { markElementSecret, maskSensitiveValues, SECRET_ATTRIBUTE, SENSITIVE_FIELD_SELECTOR, sensitiveRefs } from "./secret-masking";
@@ -188,6 +188,13 @@ serve<{ botId: string }>({
         return await session.control.runBot(signal, async (signal) => {
           const page = await profiles.googleAiPage(botId, signal);
           if (!isGoogleAiUrl(page.url())) await navigateWebPage(page, GOOGLE_AI_URL, runtime.backend, navigationTimeout, signal);
+          return json({ url: page.url() });
+        });
+      }
+      if (url.pathname === "/whatsapp" && request.method === "POST") {
+        return await session.control.runBot(signal, async (signal) => {
+          const page = await profiles.whatsAppPage(botId, signal);
+          if (!isWhatsAppUrl(page.url())) await navigateWebPage(page, WHATSAPP_WEB_URL, runtime.backend, navigationTimeout, signal);
           return json({ url: page.url() });
         });
       }

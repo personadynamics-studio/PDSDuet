@@ -1,17 +1,16 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { AppVariables } from "../auth/guards";
-import { PluginRefusedError } from "../plugins/store";
-import type { MemoryIngestion } from "./ingestion";
 import type { MemoryStore } from "./store";
 import {
   MemoryNotFoundError,
   MemoryRefusedError,
+  parseMemoryInput,
+  parseMemoryPatch,
 } from "./types";
 
 export function createMemoryRoutes(
   store: MemoryStore,
-  ingestion: MemoryIngestion,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
@@ -19,12 +18,7 @@ export function createMemoryRoutes(
   routes.onError((error, context) => {
     if (error instanceof MemoryNotFoundError)
       return context.json({ error: error.message }, 404);
-    // A connector's policy refusing the read is an answer to give the person, as it is on the
-    // plugin routes, and the same sentence `sync` saves on the source.
-    if (
-      error instanceof MemoryRefusedError ||
-      error instanceof PluginRefusedError
-    )
+    if (error instanceof MemoryRefusedError)
       return context.json({ error: error.message }, 400);
     console.error(
       JSON.stringify({
@@ -36,72 +30,28 @@ export function createMemoryRoutes(
     );
     return context.json({ error: "Memory is unavailable. Try again." }, 503);
   });
-  routes.get("/", async (context) =>
-    context.json({ memories: await store.list(context.var.actor.id) }),
-  );
+  routes.get("/", async (context) => {
+    const search = context.req.query("search") ?? "";
+    if (search.length > 200) throw new MemoryRefusedError("Search is at most 200 characters.");
+    return context.json({ memories: await store.list(context.var.actor.id, search) });
+  });
   routes.post("/", async (context) =>
     context.json(
       {
         memory: await store.create(
           context.var.actor.id,
-          await body(context.req.raw),
+          parseMemoryInput(await body(context.req.raw)),
         ),
       },
       201,
     ),
   );
-  routes.get("/sources", async (context) =>
-    context.json({ sources: await store.sources(context.var.actor.id) }),
-  );
-  routes.get("/sources/available/:botId", async (context) =>
-    context.json({
-      tools: await ingestion.availableSources(
-        context.var.actor.id,
-        context.req.param("botId"),
-      ),
-    }),
-  );
-  routes.post("/sources", async (context) =>
-    context.json(
-      await ingestion.createSource(
-        context.var.actor.id,
-        await body(context.req.raw),
-      ),
-      201,
-    ),
-  );
-  routes.patch("/sources/:id", async (context) => {
-    const input = await body(context.req.raw);
-    if (
-      !input ||
-      typeof input !== "object" ||
-      !("enabled" in input) ||
-      typeof input.enabled !== "boolean"
-    )
-      throw new MemoryRefusedError("Choose whether this source is enabled.");
-    return context.json({
-      source: await store.setSourceEnabled(
-        context.var.actor.id,
-        context.req.param("id"),
-        input.enabled,
-      ),
-    });
-  });
-  routes.post("/sources/:id/sync", async (context) =>
-    context.json(
-      await ingestion.sync(context.var.actor.id, context.req.param("id")),
-    ),
-  );
-  routes.delete("/sources/:id", async (context) => {
-    await store.removeSource(context.var.actor.id, context.req.param("id"));
-    return context.body(null, 204);
-  });
   routes.patch("/:id", async (context) =>
     context.json({
       memory: await store.update(
         context.var.actor.id,
         context.req.param("id"),
-        await body(context.req.raw),
+        parseMemoryPatch(await body(context.req.raw)),
       ),
     }),
   );

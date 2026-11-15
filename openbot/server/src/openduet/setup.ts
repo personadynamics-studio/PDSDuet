@@ -2,7 +2,6 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../auth/guards";
 import type { DeploymentConfig } from "../config";
 import type { CredentialStatusReader } from "../credentials";
-import type { ModelCheckOutcome } from "../model-availability-check";
 import type { BrokerProvider } from "../plugins/access";
 import { GOOGLE_WORKSPACE } from "../plugins/catalogue";
 
@@ -13,20 +12,17 @@ import { GOOGLE_WORKSPACE } from "../plugins/catalogue";
  * a first run, "what is set up, and what still needs doing", from the server's own configuration and
  * state rather than from a list the app keeps.
  *
- * Reads model availability and connected-app access without exposing credentials.
+ * Reads configured models, credentials and connected apps without exposing secrets.
  *
  * WHO READS IT DECIDES WHAT IT SAYS. An admin, and somebody trying OpenDuet alone on their own
  * machine, is told how to fix each gap: the page to open, or the variable to set. Everybody else is
- * told whether it works and that their admin sets it up, and the response they receive carries no
+ * told whether it is configured and that their admin sets it up; the response carries no
  * variable name at all, so a member's browser never holds the deployment's configuration vocabulary.
  */
 
 /** The guides a fix links to. The repository is where the docs ship from. */
 const DOCS = "https://github.com/personadynamics-studio/PDSDuet/blob/main/openbot/docs";
 const QUICK_START = "https://github.com/personadynamics-studio/PDSDuet";
-
-/** How long a "Check again" is answered from the last one, so a held button is not a flood. */
-export const RECHECK_INTERVAL_MS = 10_000;
 
 export type SetupRowId =
   | "model"
@@ -51,22 +47,8 @@ export type SetupFix =
     }
   | { kind: "page"; label: string; path: string; docsUrl?: string };
 
-/**
- * What a row says about its dependency.
- *
- * `ready` works, as far as anything here can tell. `needs_setup` does not, and the row says why.
- * `not_checked` is set up, but nobody has asked whether it works: a model key added since the server
- * started, or one behind a custom endpoint the provider's own check cannot reach.
- */
-export type SetupStatus = "ready" | "needs_setup" | "not_checked";
-
-/**
- * What the Bot computer check found, which has one answer more than a row's status: `idle`, the
- * computer service answered and no Bot's computer is running yet. That is how every correctly set
- * up install starts, because a computer starts the first time a Bot needs one, so the row reads
- * Ready and says so.
- */
-export type ComputerVerdict = SetupStatus | "idle";
+/** Configuration presence only; no service or model is exercised to produce this status. */
+export type SetupStatus = "ready" | "needs_setup";
 
 export type SetupRow = {
   id: SetupRowId;
@@ -76,7 +58,7 @@ export type SetupRow = {
   /** True only where the product cannot answer without it. */
   required: boolean;
   status: SetupStatus;
-  /** `status === "ready"`, for a reader that only asks yes or no. */
+  /** The required configuration is present; this is not a runtime result. */
   ready: boolean;
   /** One sentence: what it gives you when ready, what happens without it when not. */
   detail: string;
@@ -90,20 +72,6 @@ export type SetupChecklist = {
 };
 
 /**
- * What the model provider said about the key in use now.
- *
- * `not_checked` when nobody has asked about this key (one added since the last check) or the
- * provider did not answer; `cannot_check` when the key sits behind a custom endpoint, which the
- * provider's own model lookup cannot vouch for.
- */
-export type ModelVerdict =
-  | "available"
-  | "refused_key"
-  | "refused_model"
-  | "not_checked"
-  | "cannot_check";
-
-/**
  * Everything the rows are decided from. Booleans, names and state words, never a value: see the
  * module comment.
  */
@@ -112,8 +80,7 @@ export type SetupFacts = {
     provider: "openai" | "anthropic";
     /** Where the key the Bots answer with comes from, or null when there is none. */
     source: "plan" | "credential" | "environment" | null;
-    verdict: ModelVerdict;
-    /** The model the Bots run on, named when the key cannot use it. */
+    /** The configured model name. */
     model: string;
   };
   google: {
@@ -126,8 +93,6 @@ export type SetupFacts = {
   };
   /** A Bot computer is configured. Absent, its routes are not mounted at all. */
   computer: boolean;
-  /** What the computer check last found, when one is configured. Absent, nobody has asked. */
-  computerStatus?: ComputerVerdict;
   /** A broker for apps beyond the ones an admin adds, and which one this deployment would use. */
   apps: { configured: boolean; provider: BrokerProvider };
   /** The OpenTag pairing that carries Slack and Microsoft Teams. */
@@ -138,16 +103,12 @@ const KEY_NAME = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
 } as const;
-const PROVIDER_NAME = { openai: "OpenAI", anthropic: "Anthropic" } as const;
 const BROKER = {
   composio: { key: "COMPOSIO_API_KEY", docs: `${DOCS}/plugins/composio.md` },
   arcade: { key: "ARCADE_API_KEY", docs: `${DOCS}/plugins/arcade.md` },
 } as const;
 
-/** What a member is told about a dependency that is set up and was never checked. */
-const MEMBER_NOT_CHECKED = "Set up, not checked yet.";
-
-/** The rows for one reader. Pure, so every branch can be pinned without a server. */
+/** The configured dependencies for one reader. */
 export function setupRows(
   facts: SetupFacts,
   options: { productName: string; audience: "admin" | "member" },
@@ -158,8 +119,7 @@ export function setupRows(
     facts.google.publicUrl && facts.google.added && facts.google.client;
 
   /**
-   * A deployment row as its reader should see it. A member is told it works, that it is not checked
-   * yet, or that their admin sets it up, and is handed no fix: the variable names stay on the server.
+   * Members see whether configuration is present, with variable names kept on the server.
    */
   const deployment = (row: {
     id: SetupRowId;
@@ -181,9 +141,7 @@ export function setupRows(
         ? row.readyDetail
         : admin
           ? row.gapDetail
-          : row.status === "not_checked"
-            ? MEMBER_NOT_CHECKED
-            : "Your admin sets this up.",
+          : "Your admin sets this up.",
     fix: row.status === "ready" || !admin ? null : row.fix,
   });
 
@@ -201,8 +159,8 @@ export function setupRows(
       title: "Google apps",
       required: false,
       status: googleReady ? "ready" : "needs_setup",
-      readyDetail: "People can connect Gmail and Google Calendar.",
-      gapDetail: "Without it, nobody can connect Gmail or Google Calendar.",
+      readyDetail: "Google OAuth client and callback address are configured.",
+      gapDetail: "Google apps configuration is incomplete.",
       fix: facts.google.publicUrl
         ? {
             kind: "page",
@@ -220,15 +178,22 @@ export function setupRows(
       id: "computer",
       title: "Bot computer",
       required: false,
-      ...computerRow(facts),
+      status: facts.computer ? "ready" : "needs_setup",
+      readyDetail: "Bot computer endpoint is configured.",
+      gapDetail: "No Bot computer endpoint is configured.",
+      fix: {
+        kind: "env",
+        names: ["AGENT_COMPUTER_URL", "COMPUTER_TOKEN"],
+        docsUrl: `${DOCS}/configuration.md#computer-and-supervisor`,
+      },
     }),
     deployment({
       id: "apps",
       title: "More apps",
       required: false,
       status: facts.apps.configured ? "ready" : "needs_setup",
-      readyDetail: "People can connect apps beyond Gmail and Calendar.",
-      gapDetail: "Without it, people can connect only the apps an admin adds.",
+      readyDetail: "An app connector provider is configured.",
+      gapDetail: "No additional app connector provider is configured.",
       fix: { kind: "env", names: [broker.key], docsUrl: broker.docs },
     }),
     deployment({
@@ -236,8 +201,8 @@ export function setupRows(
       title: "Slack and Teams",
       required: false,
       status: facts.chat ? "ready" : "needs_setup",
-      readyDetail: `People can talk to ${product} in Slack and Microsoft Teams.`,
-      gapDetail: `Without it, people can talk to ${product} only here.`,
+      readyDetail: "Slack and Teams pairing is configured.",
+      gapDetail: "Slack and Teams pairing is not configured.",
       fix: {
         kind: "env",
         names: ["OPENTAG_SHARED_SECRET", "OPENTAG_URL"],
@@ -247,198 +212,59 @@ export function setupRows(
   ];
 }
 
-/**
- * The Bot computer row, from whether one is configured and what the check last found.
- *
- * EACH STATE SAYS ITS OWN THING, because they ask different people for different acts. Not
- * configured is the admin's to set, and names the variables. Configured and answering, with no Bot's
- * computer running yet, is how a correct install starts, so it reads Ready and says when one starts.
- * Configured but not checked has nothing to fix yet. Configured and failing is the address or the
- * token, so it names those. It used to name the variables in every state but Ready, which told
- * somebody who had already set both to set them.
- */
-function computerRow(facts: SetupFacts): {
-  status: SetupStatus;
-  readyDetail: string;
-  gapDetail: string;
-  fix: SetupFix | null;
-} {
-  const variables: SetupFix = {
-    kind: "env",
-    names: ["AGENT_COMPUTER_URL", "COMPUTER_TOKEN"],
-    docsUrl: `${DOCS}/configuration.md#computer-and-supervisor`,
-  };
-  const ready = "Bots can browse the web and work with files.";
-  if (!facts.computer)
-    return {
-      status: "needs_setup",
-      readyDetail: ready,
-      gapDetail: "Without it, Bots can't browse the web or work with files.",
-      fix: variables,
-    };
-  switch (facts.computerStatus ?? "not_checked") {
-    case "ready":
-      return { status: "ready", readyDetail: ready, gapDetail: "", fix: null };
-    case "idle":
-      return {
-        status: "ready",
-        readyDetail: `${ready} Each Bot's computer starts the first time it's needed.`,
-        gapDetail: "",
-        fix: null,
-      };
-    case "not_checked":
-      return {
-        status: "not_checked",
-        readyDetail: ready,
-        gapDetail:
-          "Set up, not checked yet. Each Bot's computer starts the first time it's needed.",
-        fix: null,
-      };
-    case "needs_setup":
-      return {
-        status: "needs_setup",
-        readyDetail: ready,
-        gapDetail:
-          "Set up, but the computer service didn't answer. Check its address and token.",
-        fix: variables,
-      };
-  }
-}
-
-/** The model row, from where its key comes from and what the provider last said about that key. */
+/** The model row reports saved configuration, without making a provider request. */
 function modelRow(model: SetupFacts["model"], product: string) {
-  const provider = PROVIDER_NAME[model.provider];
-  const fix: SetupFix = {
-    kind: "env",
-    names: [KEY_NAME[model.provider]],
-    docsUrl: QUICK_START,
-    page: { label: "Credentials", path: "/admin/credentials" },
+  const configured = model.source !== null && Boolean(model.model.trim());
+  return {
+    status: configured ? "ready" as const : "needs_setup" as const,
+    readyDetail: model.source === "plan"
+      ? "Subscription plan and model are configured."
+      : "AI model, credential and API endpoint are configured.",
+    gapDetail: model.source === null
+      ? `No model credential is configured for ${product}.`
+      : `No AI model is configured for ${product}.`,
+    fix: {
+      kind: "env" as const,
+      names: [KEY_NAME[model.provider]],
+      docsUrl: QUICK_START,
+      page: { label: "Credentials", path: "/admin/credentials" },
+    },
   };
-  const readyDetail = `Lets ${product} answer you.`;
-  if (model.source === null)
-    return {
-      status: "needs_setup" as const,
-      readyDetail,
-      gapDetail: `Without a model key, ${product} can't answer.`,
-      fix,
-    };
-  // A subscription plan answers without a key of ours, so there is no key to ask about.
-  if (model.source === "plan")
-    return { status: "ready" as const, readyDetail, gapDetail: "", fix };
-  switch (model.verdict) {
-    case "available":
-      return { status: "ready" as const, readyDetail, gapDetail: "", fix };
-    case "refused_key":
-      return {
-        status: "needs_setup" as const,
-        readyDetail,
-        gapDetail: `${provider} refused the model key, so ${product} can't answer.`,
-        fix,
-      };
-    case "refused_model":
-      return {
-        status: "needs_setup" as const,
-        readyDetail,
-        gapDetail: `The model key can't use ${model.model}, so ${product} can't answer.`,
-        fix,
-      };
-    case "cannot_check":
-      return {
-        status: "not_checked" as const,
-        readyDetail,
-        gapDetail: `Key set. It uses a custom endpoint, which ${product} can't check.`,
-        fix: null,
-      };
-    case "not_checked":
-      return {
-        status: "not_checked" as const,
-        readyDetail,
-        gapDetail: `Key set, not checked yet. Check again to ask ${provider}.`,
-        fix: null,
-      };
-  }
 }
 
-/**
- * The provider's answer about the key in use now.
- *
- * A check about another key says nothing about this one: the stamp names the key the check was
- * made with (see {@link modelKeyOf}), and a key added or rotated since is "not checked yet". Only a
- * definite answer counts: a 401 or 403 on the key, a 404 on the model, a 2xx. "Could not ask" is
- * not evidence either way.
- */
-export function modelVerdict(
-  check: { outcome: ModelCheckOutcome; stamp: string | null } | undefined,
-  stamp: string | null,
-): ModelVerdict {
-  if (!check || stamp === null || check.stamp !== stamp) return "not_checked";
-  const { outcome } = check;
-  if (outcome.kind === "available") return "available";
-  // Skipped with a key in hand means a custom endpoint: the provider's own lookup cannot vouch.
-  if (outcome.kind === "skipped") return "cannot_check";
-  if (outcome.line.type === "model-credential-rejected") return "refused_key";
-  if (outcome.line.type === "model-unavailable") return "refused_model";
-  return "not_checked";
-}
-
-/**
- * Where the key the built-in Bots answer with comes from, in the order the runtime resolves it, and
- * a stamp naming that one key.
- *
- * The stamp is what tells a check about this key from a check about the one before it: the vault
- * row's id (rotating a key writes a new row), or the source's name for the environment and a plan,
- * which cannot change without a restart. An id, never anything read from the secret.
- */
-export async function modelKeyOf(input: {
+/** Read where the runtime resolves its credential; no secret or provider request is needed. */
+export async function modelKeySource(input: {
   plan: boolean;
   provider: "openai" | "anthropic";
   keyId: string;
   credentials: CredentialStatusReader;
   environment: Record<string, string | undefined>;
-}): Promise<{
-  source: SetupFacts["model"]["source"];
-  stamp: string | null;
-}> {
-  // A subscription plan answers without any key (see `planModelForEnvironment`).
-  if (input.plan) return { source: "plan", stamp: "plan" };
-  // The vault before the environment, as `resolveModelApiKey` reads them. Statuses only: the list
-  // carries no secret, so nothing here could hold one even by mistake.
-  const stored = (await input.credentials.list()).find(
+}): Promise<SetupFacts["model"]["source"]> {
+  if (input.plan) return "plan";
+  const stored = (await input.credentials.list()).some(
     (credential) =>
       credential.kind === "model" &&
       credential.provider === input.provider &&
       credential.keyId === input.keyId &&
       credential.revokedAt === null,
   );
-  if (stored) return { source: "credential", stamp: `credential:${stored.id}` };
-  return input.environment[KEY_NAME[input.provider]]?.trim()
-    ? { source: "environment", stamp: "environment" }
-    : { source: null, stamp: null };
+  if (stored) return "credential";
+  return input.environment[KEY_NAME[input.provider]]?.trim() ? "environment" : null;
 }
 
-/** Where the key comes from, without the stamp. */
-export async function modelKeySource(
-  input: Parameters<typeof modelKeyOf>[0],
-): Promise<SetupFacts["model"]["source"]> {
-  return (await modelKeyOf(input)).source;
-}
-
-/** What the route needs: the product's name, the facts for one reader, and a way to ask again. */
+/** Configuration facts the settings page may read. */
 export type SetupSources = {
   productName: string;
   /** A local install for one person, whose only reader is the person running it. */
   localEvaluation: boolean;
-  facts: (userId: string) => Promise<SetupFacts>;
-  /** Refresh the configured model provider status. */
-  recheck: () => Promise<void>;
+  facts: () => Promise<SetupFacts>;
 };
 
 /**
  * The facts read from this server's configuration and stores.
  *
  * Built once at boot and asked on every request, so a connection made or a credential added a
- * moment ago shows up on the next read. Model availability is retained from boot and refreshed on
- * `recheck`.
+ * moment ago shows up on the next read. This does not call the configured providers.
  */
 export function createSetupSources(input: {
   productName: string;
@@ -449,14 +275,8 @@ export function createSetupSources(input: {
     keyId: string;
     defaultModel: string;
     plan: boolean;
-    /** One read of the provider's model endpoint with the key in use now. Never rejects. */
-    check?: () => Promise<ModelCheckOutcome>;
   };
   credentials: CredentialStatusReader;
-  /** The answer the boot check got, with the stamp of the key it asked about. */
-  modelCheckAtBoot?: Promise<
-    { outcome: ModelCheckOutcome; stamp: string | null } | undefined
-  >;
   plugins: {
     listServers: () => Promise<Array<{ id: string; hasCredential: boolean }>>;
   };
@@ -471,29 +291,19 @@ export function createSetupSources(input: {
     credentials: input.credentials,
     environment: input.environment,
   };
-  let modelCheck: Promise<
-    { outcome: ModelCheckOutcome; stamp: string | null } | undefined
-  > = (input.modelCheckAtBoot ?? Promise.resolve(undefined)).catch(
-    () => undefined,
-  );
-  let lastRecheck: { at: number; done: Promise<void> } | null = null;
-
   return {
     productName: input.productName,
     localEvaluation: input.config.singleUser,
     facts: async () => {
-      const [key, check, servers] =
-        await Promise.all([
-          modelKeyOf(keyFacts),
-          modelCheck,
-          input.plugins.listServers(),
-        ]);
+      const [source, servers] = await Promise.all([
+        modelKeySource(keyFacts),
+        input.plugins.listServers(),
+      ]);
       const google = servers.find((server) => server.id === GOOGLE_WORKSPACE);
       return {
         model: {
           provider: input.model.provider,
-          source: key.source,
-          verdict: modelVerdict(check, key.stamp),
+          source,
           model: input.model.defaultModel,
         },
         google: {
@@ -502,34 +312,14 @@ export function createSetupSources(input: {
           client: google?.hasCredential === true,
         },
         computer: input.computer,
-        computerStatus: input.computer ? "not_checked" : "needs_setup",
         apps: input.apps,
         chat: input.chat,
       };
     },
-    recheck: () => {
-      const now = Date.now();
-      if (lastRecheck && now - lastRecheck.at < RECHECK_INTERVAL_MS)
-        return lastRecheck.done;
-      const check = input.model.check;
-      if (check) {
-        modelCheck = (async () => {
-          const { stamp } = await modelKeyOf(keyFacts);
-          return stamp === null ? undefined : { outcome: await check(), stamp };
-        })().catch(() => undefined);
-      }
-      const done = modelCheck.then(
-        () => {},
-      );
-      lastRecheck = { at: now, done };
-      return done;
-    },
   };
 }
 
-/**
- * `GET /` answers the signed-in person's checklist. `POST /check` refreshes model status first.
- */
+/** Read the signed-in person's current configuration checklist. */
 export function createSetupRoutes(
   sources: SetupSources,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
@@ -545,7 +335,7 @@ export function createSetupRoutes(
       }),
     );
     return context.json(
-      { error: "Couldn't check your setup. Try again." },
+      { error: "Couldn't read your setup. Try again." },
       503,
     );
   });
@@ -557,7 +347,7 @@ export function createSetupRoutes(
       context.var.actor.role === "admin" || sources.localEvaluation
         ? "admin"
         : "member";
-    const facts = await sources.facts(context.var.actor.id);
+    const facts = await sources.facts();
     return context.json({
       checklist: {
         audience,
@@ -566,9 +356,5 @@ export function createSetupRoutes(
     });
   };
   routes.get("/", (context) => answer(context));
-  routes.post("/check", async (context) => {
-    await sources.recheck();
-    return answer(context);
-  });
   return routes;
 }

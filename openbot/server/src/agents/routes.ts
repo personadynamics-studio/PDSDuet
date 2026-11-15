@@ -5,7 +5,6 @@ import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { afterExposureChange } from "../plugins/exposure-change";
 import type { SharedUseStore } from "../plugins/shared-use-store";
-import { testAgentConnection } from "./connection-test";
 import {
   AgentNotFoundError,
   type AgentProfileStore,
@@ -105,21 +104,7 @@ function isAgentInputObject(input: unknown): input is AgentInputObject {
   return typeof input === "object" && input !== null && !Array.isArray(input);
 }
 
-/**
- * What in this value stops it being a header, or null when nothing does.
- *
- * `new Headers()` refuses a line break, a NUL, and any code point above U+00FF, and it refuses them
- * by throwing a TypeError from inside `fetch` — which is not a decision this deployment gets to
- * take part in. Both surfaces below take a header value from the same box on the same form and
- * neither looked, so the throw arrived somewhere that reads as something else entirely: on the
- * connection test it lands in the catch written for a dead host, and the person is told "this server
- * could not reach that address", which sends them to their tunnel and their firewall over a key
- * they had just pasted with a wrapped line in it. A hyphen a document turned into an en dash does
- * the same thing, and looks like nothing at all in a password box.
- *
- * The description never contains the value. This is asked of a credential on one of the two paths,
- * and one character of a secret in an error message is one character too many.
- */
+/** Describe an unsendable auth header without exposing its value. */
 function unsendableHeaderValue(value: string): string | null {
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
@@ -128,75 +113,6 @@ function unsendableHeaderValue(value: string): string | null {
     if (code > 0xff) return "a character that cannot go in a header value";
   }
   return null;
-}
-
-/**
- * Parse and validate the headers a person attaches to a connection test.
- *
- * Unvalidated, the route cast any object straight into the probe `fetch`, so an array value, a
- * nested object, or a `__proto__` key travelled into the network call and threw a TypeError 500 —
- * or probed header handling the deployment never meant to exercise. Names follow the same rule as
- * the stored agent auth header; values must be strings; the whole map is capped so a pasted dump
- * cannot balloon the probe.
- */
-export function parseConnectionHeaders(
-  input: unknown,
-):
-  | { ok: true; value: Record<string, string> | undefined }
-  | { ok: false; error: string } {
-  if (input === undefined) return { ok: true, value: undefined };
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return { ok: false, error: "Headers must be an object of name to value." };
-  }
-  /*
-   * A JSON body carrying `__proto__` does not arrive as an own property: `JSON.parse` sets the
-   * object's prototype instead, so `Object.entries` never sees it and a name block-list below
-   * would pass it straight through into the probe fetch. Refuse any headers object whose prototype
-   * is not a plain one before reading entries.
-   */
-  if (Object.getPrototypeOf(input) !== Object.prototype) {
-    return { ok: false, error: "Headers must be an object of name to value." };
-  }
-  const entries = Object.entries(input);
-  if (entries.length > 32) {
-    return { ok: false, error: "Headers must have at most 32 entries." };
-  }
-  const headers: Record<string, string> = {};
-  for (const [name, value] of entries) {
-    if (
-      name === "__proto__" ||
-      name === "constructor" ||
-      name === "prototype" ||
-      !/^[A-Za-z0-9-]+$/.test(name) ||
-      name.length > 64
-    ) {
-      return {
-        ok: false,
-        error: `That is not a valid header name: ${name.slice(0, 64)}.`,
-      };
-    }
-    if (typeof value !== "string") {
-      return {
-        ok: false,
-        error: `Header "${name}" must be a string value.`,
-      };
-    }
-    if (value.length > 4096) {
-      return {
-        ok: false,
-        error: `Header "${name}" must be at most 4096 characters.`,
-      };
-    }
-    const unsendable = unsendableHeaderValue(value);
-    if (unsendable) {
-      return {
-        ok: false,
-        error: `Header "${name}" contains ${unsendable}, so it cannot be sent.`,
-      };
-    }
-    headers[name] = value;
-  }
-  return { ok: true, value: entries.length === 0 ? undefined : headers };
 }
 
 /**
@@ -325,30 +241,6 @@ export function createAgentRoutes(
     } catch (error) {
       return mapStoreError(context, error);
     }
-  });
-
-  /**
-   * Try an endpoint before saving it.
-   *
-   * Deliberately not part of create: a person needs to know whether their agent answers before they
-   * commit to it, and they need to be able to try again without creating dead
-   * Bots on the way.
-   */
-  routes.post("/test-connection", requireUser, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as {
-      endpoint?: unknown;
-      headers?: unknown;
-    } | null;
-    const parsed = parseConnectionHeaders(body?.headers);
-    if (!parsed.ok) {
-      return context.json({ error: parsed.error }, 400);
-    }
-    const result = await testAgentConnection(body?.endpoint, {
-      ...(parsed.value ? { headers: parsed.value } : {}),
-    });
-    // 200 either way: the request succeeded, and the verdict is the payload. A failed connection test
-    // is an answer, not an error, and a 4xx here would have the surface render it as a broken button.
-    return context.json(result);
   });
 
   /**

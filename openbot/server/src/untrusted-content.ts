@@ -7,10 +7,8 @@
  * that arrives from outside is handed to the model inside one envelope, worded the same way every
  * time, that says what it is and that it carries no authority.
  *
- * The wording is the one personal memory has used since it shipped (`memory/ingestion.ts`): untrusted
- * data, not instructions or tool authorization, and the person's current instructions win. One helper
- * so that every surface says it identically, and so the transcript can recognise the envelope and draw
- * the content inside it rather than the notice (`app/src/lib/plugins/tool-result.ts`).
+ * One helper gives each surface the same notice, so the transcript can recognise the envelope and
+ * draw the content inside it rather than the notice (`app/src/lib/plugins/tool-result.ts`).
  *
  * Two shapes, because tool results come in two:
  *  - a string (a connector's answer) is wrapped in delimiters with the notice in front;

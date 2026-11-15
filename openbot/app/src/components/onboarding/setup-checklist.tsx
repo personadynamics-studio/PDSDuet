@@ -1,11 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { GmailLogo, GoogleCalendarLogo } from "@/components/duet/google-logos";
 import type { DuetIconName } from "@/components/duet/icons";
 import { DuetCard, OutcomePill, Tile } from "@/components/duet/kit";
 import { appConfig } from "@/lib/generated/application-config";
 import { connectAccountMutationOptions } from "@/lib/plugins/mutations";
-import { recheckSetupMutationOptions } from "@/lib/setup/mutations";
 import {
   type SetupFix,
   type SetupRow,
@@ -40,9 +39,7 @@ export function SetupChecklist({
   /** Said above the list, such as a connection that came back failed. */
   notice?: string;
 }) {
-  const queryClient = useQueryClient();
   const checklist = useQuery(setupChecklistQueryOptions());
-  const recheck = useMutation(recheckSetupMutationOptions(queryClient));
   const [dismissed, setDismissed] = useState<SetupRowId[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
   const connect = useMutation({
@@ -57,31 +54,21 @@ export function SetupChecklist({
     },
   });
 
-  /*
-   * Check again asks the server to ask the model provider again, which a plain
-   * refetch would not: those two answers are kept from the last time they were asked. A checklist
-   * that could not be read at all is read again first.
-   */
-  const checking = checklist.isFetching || recheck.isPending;
   const checkAgain = (
     <button
       className="type-label h-9 self-center rounded-full px-4 font-semibold text-duet-ink-2 outline-none transition-colors hover:bg-duet-tile hover:text-duet-ink focus-visible:ring-3 focus-visible:ring-duet-violet/40 disabled:opacity-50"
-      disabled={checking}
+      disabled={checklist.isFetching}
       onClick={() => {
         setProblem(null);
-        if (checklist.error) void checklist.refetch();
-        else recheck.mutate();
+        void checklist.refetch();
       }}
       type="button"
     >
-      {checking ? "讀取中…" : "重新讀取"}
+      {checklist.isFetching ? "讀取中…" : "重新讀取設定"}
     </button>
   );
 
-  const said =
-    problem ??
-    (recheck.error ? "無法重新讀取狀態，請重試。" : null) ??
-    notice;
+  const said = problem ?? notice;
   const rows = checklist.data?.rows ?? [];
 
   return (
@@ -133,14 +120,7 @@ export function SetupChecklist({
 /** One line over the card, so the state of the whole list is said before its rows are read. */
 function summaryOf(rows: SetupRow[]): string {
   const gaps = rows.filter((row) => row.status === "needs_setup");
-  const unchecked = rows.filter((row) => row.status === "not_checked").length;
-  const notChecked =
-    unchecked === 0
-      ? null
-      : unchecked === 1
-        ? "有 1 項尚未讀取狀態。"
-        : `有 ${unchecked} 項尚未讀取狀態。`;
-  if (gaps.length === 0) return notChecked ?? "所有設定已完成。";
+  if (gaps.length === 0) return "所有設定已完成。";
   const required = gaps.filter((row) => row.required).length;
   const things =
     gaps.length === 1 ? "有 1 項需要" : `有 ${gaps.length} 項需要`;
@@ -148,7 +128,7 @@ function summaryOf(rows: SetupRow[]): string {
     required > 0
       ? `${things}設定，其中 ${required === 1 ? "1 項" : `${required} 項`}為必要設定。`
       : `${things}設定。不完成這${gaps.length === 1 ? "項" : "些"}設定亦可使用 ${PRODUCT}。`;
-  return notChecked ? `${needs} ${notChecked}` : needs;
+  return needs;
 }
 
 function SetupItem({
@@ -169,7 +149,7 @@ function SetupItem({
   const tone =
     row.status === "ready"
       ? "green"
-      : row.status === "not_checked" || !row.required
+      : !row.required
         ? "amber"
         : "red";
   return (
@@ -203,11 +183,7 @@ function SetupItem({
             ) : null}
           </div>
           <OutcomePill icon={row.ready ? "check" : null} tone={tone}>
-            {row.status === "ready"
-              ? "已就緒"
-              : row.status === "not_checked"
-                ? "尚未讀取狀態"
-                : "尚待設定"}
+            {row.status === "ready" ? "已設定" : "尚待設定"}
           </OutcomePill>
         </div>
         <p className="type-sub mt-1 text-duet-ink-2 [overflow-wrap:anywhere]">

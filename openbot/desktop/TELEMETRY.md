@@ -25,27 +25,8 @@ Every event carries desktop distribution, numeric app version, platform, archite
 
 Image timing covers an explicit missing-only Compose pull, excluding startup and migrations. Byte counts are the download counters observed from Compose, deduplicated per layer; they are not an exact network total. Missing counters remain null. Older Compose providers without `pull --policy missing` retain their existing implicit pull behavior and emit no pull measurement.
 
-## Delivery and verification
+## Delivery
 
 Events persist before sending and keep their event IDs across retries. The queue holds at most 256 events, dropping the oldest on overflow. Background delivery, bounded quit flushing, and replay on relaunch use the existing CopilotKit ingest contract. A crash before activation records abandonment on the next launch. Telemetry failures do not block setup.
 
 The ingest must accept the new `oss.desktop.*` namespace: [oss-path-to-production #290](https://github.com/CopilotKit/oss-path-to-production/pull/290). A successful HTTP response alone does not prove downstream acceptance; production ingest acknowledges filtered events too. Merge and deployment of that change are required for production desktop delivery.
-
-Regression tests live in the native telemetry and pull-metrics modules, frontend telemetry tests, and server metadata tests. For an actual local HTTP and installed-runtime check, build the native probe and run the driver from the repository root:
-
-```sh
-cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --example telemetry_probe
-bun desktop/scripts/validate-telemetry.ts desktop/src-tauri/target/release/examples/telemetry_probe
-```
-
-The driver uses temporary data and a loopback receiver. It exercises separate-process persistence/replay, quit, activation deduplication, opt-out, and the installed runtime's identity/metadata handoff. It does not require AI credentials or send validation events to production. Windows and Linux execution remain covered by the platform CI runs; a Mac run is not proof of their native UI behavior.
-
-Local HTTP validation is reusable through `desktop/scripts/validate-telemetry.ts` with the separately built `telemetry_probe` example. It checks offline queue replay with stable installation/event IDs, recovered abandonment, quit flushing, activation once across process restarts, native/runtime metadata, and both `true`/`1` values of `COPILOTKIT_TELEMETRY_DISABLED` and `DO_NOT_TRACK`. Opt-out must remove queued state and identity and produce zero HTTP sends.
-
-The September 12 local run used installed runtime 1.70.1 and its public ESM Hono factory, following the production `eventsource` preload. Its existing Bun dependency layout needed an explicit `NODE_PATH` pointing at the existing hoist directory so a cached `gaxios` module could resolve `extend`. No dependency was installed or modified. Reproduce that adapter from the repository root:
-
-```sh
-NODE_PATH="$PWD/node_modules/.bun/node_modules" bun --no-env-file --no-install desktop/scripts/validate-telemetry.ts /absolute/path/to/telemetry_probe
-```
-
-The final loopback report recorded five native requests and one runtime request with matching installation identity, with all four opt-out cases passing. This covers the emitter and installed-runtime HTTP contract; fresh dependency installation and final PostHog delivery still require their own validation.

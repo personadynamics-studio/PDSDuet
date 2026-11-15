@@ -57,9 +57,6 @@ export const Route = createRootRouteWithContext<RouterContext>()({
  * A surface that wants to explain itself claims the drop and writes its own sentence, which is what
  * the composer does with `RejectedFiles`. Silence about a file nobody can place is a poorer outcome
  * than an explanation and a far better one than losing the page.
- *
- * Exported for `app/tests/root-drop-guard.test.tsx`, which mounts it on its own rather than
- * standing up a router.
  */
 export function useUnclaimedDropGuard() {
   useEffect(() => {

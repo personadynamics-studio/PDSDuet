@@ -613,8 +613,7 @@ export function Composer({
    *
    * EVERY BRANCH BELOW HAS TO PASS IT, WHICH IS THE WHOLE OF THIS PROP'S CORRECTNESS. It went on
    * the compact one alone for a while, and the full-size branch — the shape the home screen draws
-   * — swallowed exactly this paste in silence. `composer-paste.test.tsx` renders that branch for
-   * no other reason.
+   * — swallowed exactly this paste in silence.
    */
   const stagePastedImage = useCallback(
     (file: File) => {
@@ -719,9 +718,7 @@ export function Composer({
       // FIRST, AND UNCONDITIONALLY. Everything below this line is the explanation; this line is
       // the fix, and no branch of the explanation may be able to skip it.
       event.preventDefault();
-      // `?.` and `??` because a drag event can reach a handler with no `dataTransfer` — happy-dom
-      // builds one only when a test supplies it — and a throw here would be a page saved and a
-      // refusal never written down.
+      // A drag event can arrive without dataTransfer; the refusal still has to be recorded.
       const files = Array.from(event.dataTransfer?.files ?? []);
       if (files.length === 0) {
         /*
@@ -1099,7 +1096,6 @@ export function Composer({
     <Button
       aria-label="停止機械人"
       className={actionClassName}
-      data-testid="composer-stop"
       onClick={onStop}
       size="icon"
       type="button"

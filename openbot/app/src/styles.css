@@ -60,8 +60,7 @@
   /*
    * OpenDuet's tokens (parity-spec Part 2). Neutral greys with a cool bias, one accent used in a few
    * fixed places, and four status colours for how work stands. Every token here has a dark value in
-   * `.dark` below; `tests/visual-system.test.ts` fails if one is missing or a colour falls under its
-   * contrast floor, and `lib/theme-tokens.ts` carries the same values to the generated-UI prompt.
+   * `.dark` below; `lib/theme-tokens.ts` carries the same values to the generated-UI prompt.
    */
   --duet-surface: #f6f6f8;
   --duet-card: #ffffff;

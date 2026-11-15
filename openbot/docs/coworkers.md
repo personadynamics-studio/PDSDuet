@@ -109,7 +109,6 @@ In the product, create a coworker from `/bots` and edit it from its page's **Set
 
 Endpoint registration uses target checks. Cloud metadata addresses are refused under every configuration. Optional keys are write-only: sending a key stores/replaces it, omitting it keeps the existing key, and APIs do not return it.
 
-`POST /api/agents/test-connection` checks whether an endpoint answers before saving it.
 
 ## Capabilities
 

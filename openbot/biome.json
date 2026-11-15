@@ -11,8 +11,7 @@
       "!app/src/routeTree.gen.ts",
       "!desktop/src-tauri/gen",
       "!**/target",
-      "!server/drizzle",
-      "!server/tests/fixtures/arcade-catalogue.json"
+      "!server/drizzle"
     ]
   },
   "formatter": {
@@ -28,16 +27,6 @@
     }
   },
   "overrides": [
-    {
-      "includes": ["**/tests/**", "**/*.test.ts", "**/*.test.tsx"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noNonNullAssertion": "off"
-          }
-        }
-      }
-    },
     {
       "includes": ["toolkit/src/**", "!toolkit/src/copilotkit/**"],
       "linter": {

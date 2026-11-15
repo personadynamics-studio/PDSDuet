@@ -4,7 +4,6 @@ import type { Database } from "../db/client";
 import { savedLogins, signInRequests } from "../db/schema/passwords";
 import type {
   PasswordStore,
-  SavedLoginRecord,
   SignInRequestRecord,
 } from "./types";
 
@@ -131,94 +130,6 @@ export function createPasswordStore(database: Database): PasswordStore {
         )
         .returning({ id: savedLogins.id });
       return rows.length > 0;
-    },
-  };
-}
-
-/** The same contract in memory, for tests and for a deployment wired without a database. */
-export function createMemoryPasswordStore(): PasswordStore & {
-  requests: Map<string, SignInRequestRecord>;
-  saved: Map<string, SavedLoginRecord>;
-} {
-  const requests = new Map<string, SignInRequestRecord>();
-  const saved = new Map<string, SavedLoginRecord>();
-  return {
-    requests,
-    saved,
-    async createRequest(input) {
-      const record: SignInRequestRecord = {
-        ...input,
-        status: "pending",
-        method: null,
-        outcome: null,
-        controlRequestId: null,
-        createdAt: new Date(),
-        resolvedAt: null,
-        fillingUntil: null,
-      };
-      requests.set(record.id, record);
-      return { ...record };
-    },
-    async request(ownerUserId, id) {
-      const row = requests.get(id);
-      return row && row.ownerUserId === ownerUserId ? { ...row } : null;
-    },
-    async pendingRequests(ownerUserId) {
-      return [...requests.values()].filter(
-        (row) =>
-          row.ownerUserId === ownerUserId &&
-          ["pending", "code_required", "taken_over"].includes(row.status) &&
-          row.expiresAt > new Date(),
-      );
-    },
-    async transition(ownerUserId, id, from, to) {
-      const row = requests.get(id);
-      if (!row || row.ownerUserId !== ownerUserId || !from.includes(row.status))
-        return null;
-      Object.assign(row, to);
-      return { ...row };
-    },
-    async logins(ownerUserId, origin) {
-      return [...saved.values()].filter(
-        (row) =>
-          row.ownerUserId === ownerUserId && (!origin || row.origin === origin),
-      );
-    },
-    async login(ownerUserId, id) {
-      const row = saved.get(id);
-      return row && row.ownerUserId === ownerUserId ? { ...row } : null;
-    },
-    async saveLogin(input) {
-      const existing = [...saved.values()].find(
-        (row) =>
-          row.ownerUserId === input.ownerUserId &&
-          row.origin === input.origin &&
-          row.username === input.username,
-      );
-      if (existing) {
-        existing.encryptedPassword = input.encryptedPassword;
-        existing.updatedAt = new Date();
-        return { ...existing };
-      }
-      const record: SavedLoginRecord = {
-        id: randomUUID(),
-        ...input,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        lastUsedAt: null,
-      };
-      saved.set(record.id, record);
-      return { ...record };
-    },
-    async touchLogin(ownerUserId, id) {
-      const row = saved.get(id);
-      if (row && row.ownerUserId === ownerUserId) row.lastUsedAt = new Date();
-    },
-    async deleteLogin(ownerUserId, id) {
-      const row = saved.get(id);
-      if (!row || row.ownerUserId !== ownerUserId) return false;
-      saved.delete(id);
-      return true;
     },
   };
 }

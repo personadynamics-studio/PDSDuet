@@ -216,10 +216,8 @@ const FIRECRAWL_READ_TOOLS = Object.freeze([
  * own future runs is a capability worth that same deliberate grant, even though there is no vendor on
  * the other end of it.
  *
- * This is the reviewed list. {@link CATALOGUE} is this list with the development override below
- * applied, which outside development is this list unchanged.
  */
-const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
+export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
   {
     key: "parallel",
     title: "Parallel Search",
@@ -476,119 +474,6 @@ const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
     docsUrl: "https://developers.notion.com/guides/mcp/build-mcp-client",
   },
 ]);
-
-/** The environment variable that points {@link GOOGLE_WORKSPACE} at a stand-in for Google. */
-export const FAKE_GOOGLE_VARIABLE = "OPENDUET_FAKE_GOOGLE_URL";
-
-/**
- * The origin of a stand-in for Google that this deployment may use instead of Google, or null.
- *
- * WHY THIS EXISTS. Gmail is a restricted scope: Google lets an unverified app consent only for the
- * test users listed on its project, so trying this connector, demoing it, or testing it end to end
- * otherwise needs a Cloud project, a consent screen and somebody's real mailbox. `scripts/fake-google`
- * answers the same requests with an invented one, and this is how a local deployment is pointed at it.
- *
- * WHY IT IS REFUSED IN PRODUCTION. Every address in this file is a reviewed source contract, and
- * this one is not: it comes from the environment. Where it points is where this deployment sends a
- * client secret, people's authorization codes and refresh tokens, and people's replies. On a
- * developer's machine that is the developer's own fake; on a deployed server it is a way to send all
- * of that somewhere nobody reviewed. So it is honoured only when `NODE_ENV` is not `production`, and
- * a production server that has it set says so on startup rather than quietly ignoring it. `NODE_ENV`
- * is trimmed before it is compared, for the reason `isProduction` in `config.ts` gives: a trailing
- * space survives an env file and a hosting dashboard alike.
- *
- * Only an http or https origin with nothing else in it is taken. The fake serves every route at its
- * root, and a path, a query or a credential here would be one more thing to explain on a variable
- * whose job is to be obvious.
- */
-export function fakeGoogleOrigin(
-  environment: Readonly<Record<string, string | undefined>>,
-  warn: (message: string) => void = console.warn,
-): string | null {
-  const raw = environment[FAKE_GOOGLE_VARIABLE]?.trim();
-  if (!raw) return null;
-
-  if (environment.NODE_ENV?.trim() === "production") {
-    warn(
-      `${FAKE_GOOGLE_VARIABLE} is set and ignored: NODE_ENV is production, and a deployed server talks to Google itself. Gmail and Google Calendar use Google's own addresses.`,
-    );
-    return null;
-  }
-
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    warn(
-      `${FAKE_GOOGLE_VARIABLE} is not a URL, so it is ignored and Gmail and Google Calendar use Google's own addresses.`,
-    );
-    return null;
-  }
-  if (
-    (url.protocol !== "http:" && url.protocol !== "https:") ||
-    url.username ||
-    url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
-  ) {
-    warn(
-      `${FAKE_GOOGLE_VARIABLE} must be an http or https origin with nothing after it, such as http://127.0.0.1:4900, so it is ignored and Gmail and Google Calendar use Google's own addresses.`,
-    );
-    return null;
-  }
-  return url.origin;
-}
-
-/**
- * The catalogue as this process uses it: the reviewed list, with the Gmail and Calendar entry
- * pointed at a fake Google when {@link fakeGoogleOrigin} allows one.
- *
- * Applied HERE, where an entry is resolved, rather than where Google is dialled, so every consumer
- * agrees about it at once. `hostAdmissible` and `resolveServerUrl` admit the fake's origin because
- * the entry names it, the stored row's url becomes the fake's when the server is enabled, and the
- * connection flow sends people to the fake's consent page and redeems their codes at its token
- * endpoint, because those addresses are the entry's too. Nothing downstream has a second switch to
- * forget. And the reverse holds without the override: the fake's origin is just another address that
- * no entry names, and is refused like one.
- *
- * Only {@link GOOGLE_WORKSPACE}. Drive shares the same Google host and the same kind of client, and
- * stays on Google whatever this says, so turning the fake on cannot quietly redirect anything else.
- */
-export function catalogueFor(
-  environment: Readonly<Record<string, string | undefined>>,
-  warn?: (message: string) => void,
-): readonly CatalogueEntry[] {
-  const origin = fakeGoogleOrigin(environment, warn);
-  if (origin === null) return REVIEWED;
-  return Object.freeze(
-    REVIEWED.map((entry) =>
-      entry.key === GOOGLE_WORKSPACE && entry.auth.kind === "user-oauth"
-        ? Object.freeze({
-            ...entry,
-            host: origin,
-            auth: Object.freeze({
-              ...entry.auth,
-              authorizationUrl: `${origin}/o/oauth2/v2/auth`,
-              tokenUrl: `${origin}/token`,
-              revokeUrl: `${origin}/revoke`,
-            }),
-          })
-        : entry,
-    ),
-  );
-}
-
-/**
- * Resolved once, at startup, from this process's environment.
- *
- * Except under `bun test`, which sets `NODE_ENV=test` and also loads the developer's own `.env`. A
- * laptop set up to demo against the fake would otherwise run the whole suite against the fake's
- * addresses, and the suite's job is the reviewed catalogue. The override's own tests call
- * {@link catalogueFor} directly, and import this module in a process started with the variable set.
- */
-export const CATALOGUE: readonly CatalogueEntry[] =
-  process.env.NODE_ENV === "test" ? REVIEWED : catalogueFor(process.env);
 
 const BY_KEY = new Map(CATALOGUE.map((entry) => [entry.key, entry]));
 

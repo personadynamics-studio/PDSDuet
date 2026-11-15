@@ -6,7 +6,7 @@ import { client } from "@/lib/client";
  * server/src/openduet/setup.ts.
  *
  * Every sentence and every fix comes from the server, already shaped for its reader: an admin is
- * told which page to open or which variable to set, and a member is told only that it works or that
+ * told which page to open or which variable to set, and a member is told only that it is configured or that
  * their admin sets it up. The browser draws what it is given and never decides who may see a fix.
  * Nothing on it is a secret's value: a key is reported as there or not there.
  */
@@ -29,11 +29,9 @@ export type SetupFix =
   | { kind: "connect"; serverId: string };
 
 /**
- * `ready` works, as far as the server can tell. `needs_setup` does not, and the row says why.
- * `not_checked` is set up, but nobody has asked whether it works, such as a model key added since
- * the server last asked the provider.
+ * `ready` means the required configuration is present. `needs_setup` means something is missing.
  */
-export type SetupStatus = "ready" | "needs_setup" | "not_checked";
+export type SetupStatus = "ready" | "needs_setup";
 
 export type SetupRow = {
   id: SetupRowId;
@@ -45,7 +43,7 @@ export type SetupRow = {
   status: SetupStatus;
   /** `status === "ready"`. */
   ready: boolean;
-  /** What it gives you when ready, or what happens without it. */
+  /** Which configuration is present, or what remains to be configured. */
   detail: string;
   fix: SetupFix | null;
 };
@@ -65,7 +63,7 @@ export function setupChecklistQueryOptions() {
     queryKey: setupKeys.checklist(),
     queryFn: (): Promise<SetupChecklist> =>
       client("/api/openduet/setup", "checklist", {
-        fallback: "Couldn't check your setup.",
+        fallback: "Couldn't read your setup.",
       }),
   });
 }

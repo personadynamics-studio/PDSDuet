@@ -23,18 +23,6 @@ export const memoryPatchSchema = z
     reviewState: z.enum(["unreviewed", "confirmed", "edited"]).optional(),
   })
   .strict();
-export const memorySourceInputSchema = z
-  .object({
-    agentId: text(128),
-    toolRef: text(256),
-    title: text(160),
-    args: z.record(z.string(), z.unknown()).default({}),
-  })
-  .strict()
-  .refine(
-    (input) => JSON.stringify(input.args).length <= 8192,
-    "Source settings are too large.",
-  );
 export class MemoryRefusedError extends Error {
   constructor(message: string) {
     super(message);
@@ -63,10 +51,8 @@ export const parseMemoryPatch = (input: unknown) => {
     throw new MemoryRefusedError("Supply a change to this memory.");
   return value;
 };
-export const parseMemorySourceInput = (input: unknown) =>
-  parse(memorySourceInputSchema, input);
 export type MemoryInput = z.infer<typeof memoryInputSchema>;
-export type MemorySourceInput = z.infer<typeof memorySourceInputSchema>;
+export type MemoryPatch = z.infer<typeof memoryPatchSchema>;
 export type MemoryRecord = MemoryInput & {
   id: string;
   ownerUserId: string;
@@ -83,21 +69,4 @@ export type MemoryRecord = MemoryInput & {
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
-};
-export type MemorySource = MemorySourceInput & {
-  id: string;
-  ownerUserId: string;
-  enabled: boolean;
-  syncStatus: "idle" | "running" | "succeeded" | "error";
-  syncError: string | null;
-  lastSyncAt: Date | null;
-  nextSyncAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-};
-export type ImportedMemory = {
-  externalId: string;
-  content: string;
-  provenance: string;
-  digest: string;
 };

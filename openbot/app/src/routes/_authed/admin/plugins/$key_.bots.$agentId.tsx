@@ -72,9 +72,8 @@ export const Route = createFileRoute(
 /**
  * The refs the bulk action would grant: every action that only reads.
  *
- * Exported as a function so the promise the button makes is assertable without a DOM, a router or
- * a query client — see `tests/bot-app-grants.test.tsx`. The button says "read-only" and states a
- * resulting count before it acts, and both of those are only true if this is exactly the reads.
+ * The button says "read-only" and states a resulting count before it acts, and both of those
+ * are only true if this is exactly the reads.
  *
  * A destructive action can never appear here. `destructive` sits beside `effect` rather than inside
  * it, and the effect a destructive action carries is `write` — anything not positively known to be
@@ -240,8 +239,7 @@ function RouteComponent() {
    * `isPending` goes false on a failed fetch exactly as it does on a successful one, so `!bot`
    * alone cannot tell "this deployment has no such Bot" apart from "the roster could not be read"
    * — and the first of those is a claim, made about a Bot that may be perfectly real, on the
-   * evidence of a request that never came back. See `tests/agent-roster-error.test.tsx`, which
-   * exists for the same mistake on the two screens that shipped it. With no roster the grants
+   * evidence of a request that never came back. With no roster the grants
    * below are still the plugins query's own answer and still true; the name falls back to the id.
    */
   // Both rosters, because a Bot absent from the visible one may simply be hidden.

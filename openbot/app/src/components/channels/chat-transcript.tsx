@@ -29,6 +29,7 @@ import {
 import { readTeamBotConsent } from "@/lib/team-bots";
 import { cn } from "@/lib/utils";
 import { AppAccessCard } from "./app-access-card";
+import { MessageActions } from "./message-actions";
 import {
   repliesLast,
   type SentAttachment,
@@ -146,7 +147,6 @@ function Stopped({ reason }: { reason: string }) {
   return (
     <p
       className="text-destructive text-sm"
-      data-testid="transcript-stopped"
       role="alert"
     >
       {reason}
@@ -350,6 +350,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
               </BubbleContent>
             </Bubble>
           )}
+          <MessageActions text={said} align={align} />
           {seen ? <Seen /> : null}
         </Arriving>
       </MessageContent>
@@ -776,11 +777,6 @@ function unavailableSentence(filename?: string): string {
  * actually asked. Escape and the close button still work, and the state resets when the popup
  * unmounts, so reopening genuinely tries again rather than remembering a failure.
  *
- * ITS OWN COMPONENT, AND EXPORTED, SO THE FAILURE CAN BE TESTED AT ALL: Base UI portals this popup
- * and under happy-dom the portal never mounts — checked, and recorded in the test named "a thumbnail
- * is a crop" — so there is no way to reach this `<img>` through the trigger. Same reason
- * `sameAttachmentRow` is exported: the behaviour is worth pinning and the thing it lives inside
- * cannot be mounted here.
  */
 export function LightboxPicture({
   filename,

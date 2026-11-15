@@ -172,9 +172,7 @@ export function BrokerDirectory({ provider }: { provider: PluginsProvider }) {
 
               return (
                 <React.Fragment key={entry.slug}>
-                  {/* The test id names the screen, not the vendor: this module draws whichever
-                      broker is active, and the id is not user-visible. */}
-                  <Item data-testid={`directory-${entry.slug}`} size="sm">
+                  <Item size="sm">
                     {/* The vendor's own mark where the broker supplies one, and a plug where it does
                         not, so a list of third parties still has a fixed left edge. */}
                     <ItemMedia variant={entry.logo ? "image" : "icon"}>
@@ -233,7 +231,7 @@ export function CoverageNote({ app }: { app: ComposioApp }) {
   const warning = coverageWarning(app);
   if (!warning) return null;
   return (
-    <p className="text-muted-foreground text-xs" data-testid="coverage-warning">
+    <p className="text-muted-foreground text-xs">
       {warning}
     </p>
   );
@@ -244,7 +242,7 @@ export function BreadthNote({ app }: { app: ComposioApp }) {
   const breadth = consentBreadth(app);
   if (!breadth) return null;
   return (
-    <p className="text-muted-foreground text-xs" data-testid="breadth-note">
+    <p className="text-muted-foreground text-xs">
       {breadth}
     </p>
   );

@@ -60,8 +60,7 @@ export type Harness = {
 
 /*
  * Asserted rather than inferred: a JSON import widens `credential` and `maintainer` to `string`,
- * and the point of naming them as unions is that a typo in the file is caught. `harnesses.test.ts`
- * is what actually checks the data, including that every mark it names is vendored.
+ * and the point of naming them as unions is that a typo in the file is caught.
  */
 export const HARNESSES: readonly Harness[] =
   catalogue.harnesses as readonly Harness[];

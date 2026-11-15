@@ -12,7 +12,6 @@ export function RefusedCard({
   return (
     <div
       className="my-2 w-full max-w-2xl rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3"
-      data-testid="component-refused"
       role="status"
     >
       <p className="text-sm font-medium text-destructive">Not shown: {title}</p>

@@ -109,12 +109,6 @@ export type ManagedAgentConfig = {
 
 
 export type DeploymentConfig = {
-  /**
-   * Memory sources and background research OpenBot switches on for each person (memory/defaults.ts).
-   * Both on unless OPENBOT_MEMORY_SOURCE_DEFAULTS or OPENBOT_PROACTIVE_DEFAULTS is "false" or "0".
-   * Switching either off stops new defaults and leaves every existing row as it is.
-   */
-  memoryDefaults: { sources: boolean; research: boolean };
   /** Audio configuration is independent of agent model providers. */
   transcription?: TranscriptionConfig;
   voice?: VoiceConfig;
@@ -671,10 +665,6 @@ export function loadConfig(
     tenantPackageDirectory:
       optional(environment, "TENANT_PACKAGE_DIR") ?? "../examples/openduet",
     runtime: { mode: "local" as const, durableHistory: true as const },
-    memoryDefaults: {
-      sources: switchedOn(environment, "OPENBOT_MEMORY_SOURCE_DEFAULTS"),
-      research: switchedOn(environment, "OPENBOT_PROACTIVE_DEFAULTS"),
-    },
     agentStallTimeoutMs: agentStallTimeoutMs(environment),
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
@@ -692,9 +682,4 @@ export function loadConfig(
   };
 }
 
-/** On unless the variable is "false" or "0", the rule every default-on switch here follows. */
-function switchedOn(environment: Environment, name: string): boolean {
-  const value = optional(environment, name);
-  return value !== "false" && value !== "0";
-}
 

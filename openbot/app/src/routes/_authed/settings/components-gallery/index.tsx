@@ -54,7 +54,6 @@ function RouteComponent() {
              */
             <Link
               className="flex aspect-square flex-col overflow-hidden rounded-lg border border-border bg-card text-left outline-none transition-colors hover:border-ring focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              data-testid={`gallery-${component.name}`}
               key={component.name}
               params={{ name: component.name }}
               to="/settings/components-gallery/$name"

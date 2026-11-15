@@ -178,7 +178,6 @@ function RouteComponent() {
                        * the row draws empty. Its accessible name comes from the title inside it.
                        */}
                       <Item
-                        data-testid={`plugin-${server.id}`}
                         render={
                           <Link
                             params={{ key: server.id }}
@@ -242,7 +241,6 @@ function RouteComponent() {
                   return (
                     <React.Fragment key={entry.key}>
                       <Item
-                        data-testid={`plugin-${entry.key}`}
                         render={
                           <Link
                             params={{ key: entry.key }}
@@ -290,7 +288,6 @@ function RouteComponent() {
                */}
               {moreApps.linked ? (
                 <Item
-                  data-testid="plugin-directory"
                   /* The ACTIVE provider's own directory. Read from the vocabulary rather than
                      written here: a hard-coded path is the lowercase spelling of a vendor name,
                      which is how this row pointed every Arcade deployment at a screen that
@@ -315,7 +312,7 @@ function RouteComponent() {
               ) : (
                 /* No chevron and no link: the row goes nowhere, because there is nowhere to go
                    until the key is set. */
-                <Item data-testid="plugin-directory" size="sm">
+                <Item size="sm">
                   <RowMark>
                     <IconPlug className="size-4" />
                   </RowMark>

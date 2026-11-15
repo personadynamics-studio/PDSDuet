@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import {
   Item,
   ItemActions,
@@ -69,7 +70,7 @@ export function RememberFact() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>記住資料</DialogTitle>
-            <DialogDescription>所有機械人都會知道這項資料。</DialogDescription>
+            <DialogDescription>所有機械人都能搜尋取用這項資料，包括你保存的電話和聯絡人。</DialogDescription>
           </DialogHeader>
           <DialogBody className="mt-4">
             {/* The submit button is in the footer and reaches this form by id, so DialogBody stays a
@@ -96,7 +97,7 @@ export function RememberFact() {
                   maxLength={6000}
                   value={content}
                   onChange={(event) => setContent(event.target.value)}
-                  placeholder="我偏好在上午開會。"
+                  placeholder="我的電話是…；陳先生是我的客戶，電話是…"
                 />
               </Field>
             </form>
@@ -136,7 +137,8 @@ export function MemoryList({
   action?: ReactNode;
   description?: ReactNode;
 } = {}) {
-  const memories = useQuery(memoriesQueryOptions());
+  const [search, setSearch] = useState("");
+  const memories = useQuery(memoriesQueryOptions(search));
   const agents = useQuery(agentListQueryOptions());
   const botName = (id: string | null) =>
     agents.data?.find((agent) => agent.id === id)?.name ?? "你的機械人";
@@ -146,6 +148,15 @@ export function MemoryList({
       description={description}
       title="你的記憶"
     >
+      <Input
+        aria-label="搜尋記憶、電話或聯絡人"
+        className="my-4"
+        type="search"
+        maxLength={200}
+        placeholder="搜尋記憶、電話或聯絡人"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
       {memories.isPending ? null : memories.error ? (
         <p role="alert" className="mt-4 text-destructive text-sm">
           {memories.error.message}
@@ -163,7 +174,7 @@ export function MemoryList({
           ))}
         </PageRows>
       ) : (
-        <PageEmpty>尚未有記憶，請按「記住資料」新增。</PageEmpty>
+        <PageEmpty>{search ? "找不到符合的記憶，請換個名稱或電話搜尋。" : "尚未有記憶，請按「記住資料」新增。"}</PageEmpty>
       )}
     </PageSection>
   );

@@ -204,13 +204,11 @@ function SheetRow({
   label,
   summary,
   onOpen,
-  testId,
 }: {
   icon: ReactNode;
   label: string;
   summary: string;
   onOpen: () => void;
-  testId: string;
 }) {
   return (
     <Item
@@ -220,7 +218,7 @@ function SheetRow({
        * replace the row's own — which is how this first drew as three empty rows. The button takes
        * its accessible name from the title and summary inside instead.
        */
-      render={<button data-testid={testId} onClick={onOpen} type="button" />}
+      render={<button onClick={onOpen} type="button" />}
       size="sm"
     >
       <ItemMedia variant="icon">{icon}</ItemMedia>
@@ -355,7 +353,6 @@ function ComponentDetail({
               <Switch
                 aria-label="已發佈"
                 checked={component.published}
-                data-testid={`publish-${component.name}`}
                 onCheckedChange={onPublish}
               />
             </ItemActions>
@@ -368,7 +365,6 @@ function ComponentDetail({
             label="說明"
             onOpen={() => setSheet("description")}
             summary={component.draftDescription || "Nothing yet"}
-            testId={`description-${component.name}`}
           />
 
           <Separator />
@@ -378,7 +374,6 @@ function ComponentDetail({
             label="Available to"
             onOpen={() => setSheet("grants")}
             summary={grantSummary}
-            testId={`grants-${component.name}`}
           />
 
           <Separator />
@@ -388,7 +383,6 @@ function ComponentDetail({
             label="Can read"
             onOpen={() => setSheet("functions")}
             summary={functionSummary}
-            testId={`functions-${component.name}`}
           />
         </PageRows>
       </PageSection>
@@ -497,7 +491,6 @@ function ComponentDetail({
                           <Switch
                             aria-label={bot.name}
                             checked={has}
-                            data-testid={`grant-${component.name}-${bot.id}`}
                             onCheckedChange={(next) => onSetGrant(bot.id, next)}
                           />
                         </ItemActions>
@@ -551,7 +544,6 @@ function ComponentDetail({
                           <Switch
                             aria-label={fn.name}
                             checked={has}
-                            data-testid={`function-${component.name}-${fn.name}`}
                             onCheckedChange={(next) =>
                               onSetFunction(fn.name, next)
                             }

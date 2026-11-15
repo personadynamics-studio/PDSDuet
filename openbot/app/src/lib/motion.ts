@@ -6,8 +6,7 @@
  * three sets of magic numbers that happen to agree today.
  *
  * THE SAME NUMBERS AS styles.css. A class animates with `--duet-dur-*` and `--duet-ease-*`; motion's
- * JavaScript cannot read a custom property, so the four durations and two curves are repeated here,
- * and `tests/motion-tokens.test.ts` fails if the two ever disagree.
+ * JavaScript cannot read a custom property, so the four durations and two curves are repeated here.
  */
 
 /** Strong ease-out. The browser's built-in curve is too weak to read as deliberate. */

@@ -247,12 +247,9 @@ export function createSandboxComputerProvider(
   options: SandboxProviderOptions,
 ): ComputerProvider & {
   update(botId: string): Promise<ComputerUpdate>;
-  restarting(botId: string): Promise<void> | undefined;
 } {
   const doFetch = options.fetchImpl ?? fetch;
   const resumeTimeoutMs = options.resumeTimeoutMs ?? 120_000;
-  /** Restarts started by `update` and not yet finished, one per Bot. */
-  const lastRestart = new Map<string, Promise<void>>();
   const base = () =>
     `${options.apiServer}/apis/${GROUP}/${VERSION}/namespaces/${options.namespace}/sandboxes`;
 
@@ -540,7 +537,6 @@ export function createSandboxComputerProvider(
         });
         await waitForReady(botId);
       })();
-      lastRestart.set(botId, restarted);
       restarted
         .catch((error: unknown) => {
           console.error(
@@ -551,16 +547,8 @@ export function createSandboxComputerProvider(
               note: "The computer is on its new image and suspended; the next action wakes it.",
             }),
           );
-        })
-        .finally(() => {
-          if (lastRestart.get(botId) === restarted) lastRestart.delete(botId);
         });
       return { updated: true, wasRunning: true, from, to };
-    },
-
-    /** The restart an `update` started, for a test to wait on. Undefined once it has finished. */
-    restarting(botId: string): Promise<void> | undefined {
-      return lastRestart.get(botId);
     },
 
     async list(): Promise<ComputerLocation[]> {

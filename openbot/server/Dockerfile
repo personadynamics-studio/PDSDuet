@@ -15,7 +15,6 @@ COPY package.json bun.lock ./
 # The shared tsconfig, which every package extends. Vite reads it while transforming and fails
 # without it, in a stack trace that names esbuild rather than a missing file.
 COPY tsconfig.base.json tsconfig.base.json
-COPY bunfig.toml bunfig.toml
 COPY app/package.json app/package.json
 COPY server/package.json server/package.json
 COPY shared/package.json shared/package.json

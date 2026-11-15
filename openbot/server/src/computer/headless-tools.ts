@@ -73,6 +73,15 @@ export function createHeadlessComputerTools(options: {
       }),
     ),
     tool(
+      "open_whatsapp",
+      "Select your fixed WhatsApp Web tab at https://web.whatsapp.com/ in your persistent browser profile. After sign-in, use the existing browser tools to read or send messages when the person asks or has explicitly instructed you to do so. Use computer_request_sign_in if the page needs a QR scan or sign-in. Find saved recipient details with recall_personal_memory when available; otherwise ask for the exact contact or phone number, including country code. For the person's own signed-in account, you can use Message Yourself. Read the selected chat's identity and outgoing message before sending. Report sent only once the outgoing message appears in the chat; if the outcome is unclear, read the chat before retrying.",
+      noArgs,
+      async (_, { signal }) => ({
+        ok: true,
+        ...(await gateway.openWhatsApp(botId, signal)),
+      }),
+    ),
+    tool(
       "computer_navigate",
       "Open a web page and return its title and readable text. Use the returned content to answer.",
       z.strictObject({ url: text }),

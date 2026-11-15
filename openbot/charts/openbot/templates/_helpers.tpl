@@ -331,15 +331,6 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
 - name: COMPUTER_SANDBOX_TEMPLATE_FILE
   value: /etc/openbot/sandbox-template.json
 {{- end }}
-{{- $memory := .Values.config.memory | default dict }}
-{{- if eq (toString $memory.sourceDefaults) "false" }}
-- name: OPENBOT_MEMORY_SOURCE_DEFAULTS
-  value: "false"
-{{- end }}
-{{- if eq (toString $memory.researchDefaults) "false" }}
-- name: OPENBOT_PROACTIVE_DEFAULTS
-  value: "false"
-{{- end }}
 {{- with .Values.config.managedAgent.url }}
 - name: MANAGED_AGENT_AG_UI_URL
   value: {{ . | quote }}
@@ -572,7 +563,7 @@ One definition, read by the shared StatefulSet and by the per-Bot sandbox templa
 cannot be headed in one mode and headless in the other, or proxied in one and not the other.
 
 Each key is reached through a guard, because `helm upgrade --reuse-values` hands an existing release
-none of the keys this release added (see scripts/check-new-values-keys.ts). Absent `browserMode`
+none of the keys this release added. Absent `browserMode`
 leaves the computer to its own default, which is headed on Linux, the same thing.
 */}}
 {{- define "openbot.computerEnv" -}}

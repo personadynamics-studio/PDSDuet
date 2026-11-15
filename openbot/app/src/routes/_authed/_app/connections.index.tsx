@@ -460,7 +460,6 @@ function ConnectionItem({ row }: { row: ConnectionRow }) {
   return (
     <Item
       className="min-w-0 flex-nowrap gap-3 px-2 py-3"
-      data-testid={`account-${row.key}`}
       render={<Link params={{ key: row.key }} to="/connections/$key" />}
       size="sm"
     >

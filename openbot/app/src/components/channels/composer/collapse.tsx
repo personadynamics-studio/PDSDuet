@@ -12,14 +12,6 @@ import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
  * somebody was mid-sentence in with it. Growing into the space instead is what makes a picture read
  * as having been added to the message rather than as the message having been replaced.
  *
- * WHY IT IS NOT `AnimatePresence`, WHICH IS THE OBVIOUS SPELLING. It was written that way first and
- * cost eight tests. An exiting element stays MOUNTED until its animation reports finished, and
- * under happy-dom that report never comes: every assertion that a removed attachment is gone hung
- * until it timed out. `MotionGlobalConfig.skipAnimations` is motion's own documented hook for
- * exactly this and did not fix it either — it moved the wait from never to about four seconds,
- * against a suite that runs in three. A flourish that makes the behaviour underneath it
- * unverifiable is not worth having.
- *
  * WHY IT MEASURES INSTEAD OF ANIMATING TO `auto`. That was the second attempt, and it looked right
  * in one direction only. Motion resolves `auto` by measuring at the moment the animation starts, so
  * closing — where the content has already left the DOM — measured the EMPTY box and animated 0 to

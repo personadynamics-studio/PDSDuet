@@ -35,7 +35,8 @@ import { startHttpServer } from "./http-server";
 import { githubCallbackRoutes } from "./identity/github-callback";
 import { retireIdentityLinks, retireOwnedAccounts } from "./identity/retire";
 import { createIdentityStore } from "./identity/store";
-import { reportModelAvailability } from "./model-availability-check";
+import { createMemoryStore } from "./memory/store";
+import { memoryTools } from "./memory/tools";
 import { buildMorningBrief, openduetTools } from "./openduet/brief";
 import { createPageStore, pageTools } from "./openduet/pages";
 import { replyTools } from "./openduet/replies";
@@ -142,6 +143,7 @@ const teamBots = createTeamBots({
 const host = createHostAccessBroker();
 const pages = createPageStore(database);
 const instructions = createUserInstructionsStore(database);
+const memory = createMemoryStore(database);
 normalizeModelBaseUrls();
 const model = runtimeModelForEnvironment(tenant.model);
 const modelKey = () => resolveModelApiKey({
@@ -178,6 +180,7 @@ const execution: Execution = createExecution({
         }, input),
       }),
       ...replyTools({ initiator }),
+      ...memoryTools({ store: memory, ownerUserId: actorId }),
       ...pageTools({ initiator, get: id => pages.get(actorId, id), save: input => pages.save(actorId, botId, input) }),
       ...(await grantedTools({ store: plugins, botId, actorId, initiator, credentialActorFor: teamBots.credentialActorFor(actorId, botId) })),
       ...hostAccessTools({ broker: host, botId, actorId, auditStore: audit, initiator }),
@@ -214,6 +217,7 @@ const app = createApp(config, {
   composio,
   modelProviderProxy: process.env.OPENBOT_MODEL_OAUTH_FILE?.trim() ? createProviderOAuthProxy(process.env.OPENBOT_MODEL_OAUTH_FILE.trim()) : undefined,
   userPreferences: createUserPreferencesStore(database),
+  memoryStore: memory,
   coworker: {
     shared: { modes: accountModes, use: sharedUse },
     ...(passwords ? { passwords } : {}), groups, teamBots,
@@ -221,7 +225,7 @@ const app = createApp(config, {
       pages,
       setup: createSetupSources({
         productName: tenant.productName, config, environment: process.env,
-        model: { provider: model.provider, keyId: tenant.model.credentialSecretRef, defaultModel: model.defaultModel, plan: Boolean(model.plan), check: () => reportModelAvailability({ provider: model.provider, model: model.defaultModel, apiKey: modelKey }) },
+        model: { provider: model.provider, keyId: tenant.model.credentialSecretRef, defaultModel: model.defaultModel, plan: Boolean(model.plan) },
         credentials, plugins, computer: Boolean(computer),
         apps: { configured: Boolean(composio), provider: composio?.provider ?? config.brokerProvider ?? "composio" },
         chat: false,

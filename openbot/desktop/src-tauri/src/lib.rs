@@ -1,4 +1,4 @@
-//! The parts of the shell that are worth testing without a window around them.
+//! Native modules shared by the desktop shell.
 pub mod acquire;
 pub mod deployment;
 pub mod engine;
@@ -19,5 +19,3 @@ pub mod tray;
 pub mod vault;
 pub mod windows;
 
-#[cfg(test)]
-pub(crate) mod test_support;

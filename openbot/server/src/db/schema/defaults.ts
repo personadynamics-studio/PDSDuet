@@ -8,21 +8,12 @@ import {
 } from "drizzle-orm/pg-core";
 import { agents, users } from "./core";
 
-/** What a person can switch off that OpenBot otherwise switches on for them. */
+/** Features recorded by historical default opt-outs. */
 export type DefaultFeature = "memory_source" | "proactive_research";
 
 /**
- * A default a person turned down, so OpenBot never switches it back on.
- *
- * Memory sources and background research are on by default (see `memory/defaults.ts`): a person who
- * talks to one of their Bots gets research from it, and each app they connected that the Bot can read
- * becomes a memory source. Turning one OFF keeps its row with `enabled = false`, and that row alone
- * stops it coming back. REMOVING one deletes the row, so the removal is written here instead, and
- * adoption reads this table before it creates anything.
- *
- * `scope` narrows the feature: for a memory source it is the app (the server id), because a person who
- * removed their Bot's Gmail source said "not Gmail for this Bot", whichever Gmail action it read. For
- * background research it is empty: one setting per person and Bot.
+ * Persisted opt-outs for earlier memory sources and background research.
+ * `scope` is the source app's server id, or empty for research on a person and Bot.
  */
 export const defaultOptOuts = pgTable(
   "default_opt_outs",

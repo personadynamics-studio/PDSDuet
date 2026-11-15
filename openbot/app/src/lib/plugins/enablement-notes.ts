@@ -80,10 +80,6 @@ export function consentBreadth(
 /**
  * The apps to draw, in the order to draw them.
  *
- * A function rather than a `.sort()` inside the map, so the two things a row is decided from — the
- * order, and the marker saying an app is already here — can be asserted without a DOM, a router and
- * a query client. See `tests/composio-picker.test.tsx`.
- *
  * A copy, because the array belongs to TanStack Query's cache and is the same object on every
  * render; sorting it in place would rewrite what the cache holds. By name rather than by the
  * vendor's own order, which is popularity — useful for a landing page, useless for finding the one

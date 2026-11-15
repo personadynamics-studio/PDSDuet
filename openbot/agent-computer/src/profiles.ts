@@ -11,6 +11,10 @@ import { botIdsIn } from "./profile-listing";
 export { numberFromEnv };
 export const VIEWPORT = { width: 1280, height: 800 };
 export const GOOGLE_AI_URL = "https://www.google.com/ai";
+export const WHATSAPP_WEB_URL = "https://web.whatsapp.com/";
+export function isWhatsAppUrl(value: string): boolean {
+  return new URL(value).origin === "https://web.whatsapp.com";
+}
 export function isGoogleAiUrl(value: string): boolean {
   const url = new URL(value);
   return url.origin === "https://www.google.com" &&
@@ -59,6 +63,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     context: BrowserContext;
     page: Page;
     googleAiPage?: Page;
+    whatsAppPage?: Page;
     startedAt: string;
   };
   const live = new Map<string, Browser>();
@@ -183,11 +188,23 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     async navigationPage(botId: string, signal?: AbortSignal): Promise<Page> {
       const current = await page(botId, signal);
       const browser = live.get(botId)!;
-      if (current !== browser.googleAiPage) return current;
-      browser.page = chooseLivePage(browser.context.pages().filter(candidate => candidate !== browser.googleAiPage)) ?? await browser.context.newPage();
+      if (current !== browser.googleAiPage && current !== browser.whatsAppPage) return current;
+      browser.page = chooseLivePage(browser.context.pages().filter(candidate => candidate !== browser.googleAiPage && candidate !== browser.whatsAppPage)) ?? await browser.context.newPage();
       signal?.throwIfAborted();
       await browser.page.bringToFront();
       signal?.throwIfAborted();
+      return browser.page;
+    },
+    async whatsAppPage(botId: string, signal: AbortSignal): Promise<Page> {
+      await page(botId, signal);
+      const browser = live.get(botId)!;
+      if (!browser.whatsAppPage || browser.whatsAppPage.isClosed()) {
+        browser.whatsAppPage = browser.context.pages().find(candidate => isWhatsAppUrl(candidate.url())) ?? await browser.context.newPage();
+      }
+      browser.page = browser.whatsAppPage;
+      signal.throwIfAborted();
+      await browser.page.bringToFront();
+      signal.throwIfAborted();
       return browser.page;
     },
     stop: (botId: string) => closingProfile(botId, () => close(botId)),

@@ -11,7 +11,7 @@ function MemoryPage() {
     <CapabilitiesShell>
       <MemoryList
         action={<RememberFact />}
-        description="查看機械人對你的了解。你新增的資料會供所有機械人使用；機械人自行學到的內容則只供它自己使用。"
+        description="保存你的電話和聯絡人，讓機械人按需要搜尋取用。每項資料都可編輯、停用或刪除。"
       />
     </CapabilitiesShell>
   );

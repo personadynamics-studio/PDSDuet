@@ -138,12 +138,6 @@ config:
       issuer: ""
   tenantPackageDir: /app/examples/openduet
 
-  # Memory sources and background research, on by default for each person and Bot (OpenBot turns
-  # them on when a person talks to a Bot, and never back on once the person turns one off or removes
-  # it). false stops new defaults for the whole deployment; existing settings are left as they are.
-  memory:
-    sourceDefaults: true
-    researchDefaults: true
   # Your own Bot, over AG-UI.
   #
   # OpenBot is a shell for somebody else's agent, so this is the seam that matters: point it at a

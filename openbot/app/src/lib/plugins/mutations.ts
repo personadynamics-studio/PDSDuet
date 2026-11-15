@@ -494,7 +494,7 @@ export type HeldDisconnect = { disconnected: boolean; vendorRevoked: boolean };
  * vendor that could not be reached is a refusal with the server's sentence, and nothing was changed.
  *
  * Refreshes the plugin screens either way, as every write here does: a refusal is not evidence that
- * nothing changed (see `app/tests/plugin-mutation-refresh.test.ts`).
+ * nothing changed.
  */
 export function disconnectHeldMutationOptions(queryClient: QueryClient) {
   return mutationOptions({

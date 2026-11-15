@@ -51,6 +51,8 @@ import type { HostAccessBroker } from "./host-access/broker";
 import { createHostAccessRoutes } from "./host-access/routes";
 import { identityRoutes } from "./identity/routes";
 import type { IdentityStore } from "./identity/store";
+import { createMemoryRoutes } from "./memory/routes";
+import type { MemoryStore } from "./memory/store";
 import { parsePageLimit } from "./paging";
 import { createPasswordRoutes, createSignInRoutes } from "./passwords/routes";
 import type { SignInService } from "./passwords/service";
@@ -163,6 +165,7 @@ export function createApp(
   composio?: { broker: ComposioBroker; provider: BrokerProvider },
   modelProviderProxy?: ModelProviderProxy,
   userPreferences?: UserPreferencesStore,
+  memoryStore?: MemoryStore,
   coworker?: {
     shared?: { modes: AccountModeSwitch; use: SharedUseStore };
     passwords?: SignInService;
@@ -282,6 +285,9 @@ export function createApp(
     "/api/settings/preferences",
     userPreferencesRoutes(requireUser, userPreferences),
   );
+  if (services.memoryStore) {
+    app.route("/api/memory", createMemoryRoutes(services.memoryStore, requireUser));
+  }
 
   /*
    * The session must match the sealed state's person, otherwise a link started by one person could

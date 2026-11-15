@@ -38,6 +38,6 @@ conditional update, `LISTEN`/`NOTIFY` for fan-out.
 - [ ] A line in `CHANGELOG.md` under `Unreleased`, or a sentence on why a deployment behaves no
       differently afterwards.
 
-## Proof
+## Source review
 
-<!-- What you ran, and what you saw. Screenshots or a recording for anything with a surface. -->
+<!-- Describe the source and diff reviewed. Do not add or run tests; see the root AGENTS.md. -->

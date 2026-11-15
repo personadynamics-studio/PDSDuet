@@ -16,12 +16,6 @@ import {
 import { COMPUTER_GUIDANCE, NO_ANSWER_CAME } from "../../shared/bot-prompt";
 import { userContent } from "../../shared/user-content";
 
-/*
- * Re-exported so this module's own tests and callers keep reading it from here, while the wording
- * itself lives in `shared` where the other Bot can reach it. Both have to say the same thing.
- */
-export { NO_ANSWER_CAME };
-
 /**
  * The providers that take one system prompt, and take it first.
  *

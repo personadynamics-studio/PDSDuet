@@ -150,61 +150,6 @@ credential and removes the connection in one transaction, and writes an audit ev
   finish at Google's own third-party access settings
   ([myaccount.google.com/connections](https://myaccount.google.com/connections)).
 
-## Trying it without a Google account
-
-`openbot/scripts/fake-google/server.ts` is a fake Google: just enough of Google's OAuth, the Gmail API
-and the Calendar API to use this connector end to end, with nobody's real mail. It holds the mailbox of
-Maya Okafor, who runs a small ceramics studio: the 60 invented messages from `evals/triage/emails.jsonl`,
-re-dated so they all arrived within the last day, and a calendar for today with a 10:00 glaze test
-review and a 15:00 studio visit among others.
-
-1. Start it, from the repository root:
-
-   ```sh
-   bun openbot/scripts/fake-google/server.ts --port 4900
-   ```
-
-2. Point the connector at it in `openbot/.env`, then restart the API:
-
-   ```sh
-   OPENDUET_FAKE_GOOGLE_URL=http://127.0.0.1:4900
-   ```
-
-3. At `/admin/plugins/google-workspace`, enable the connector, paste any client ID and secret (the fake
-   accepts any), and press **Refresh tools**.
-4. At `/connections/google-workspace`, press **Connect**. The fake consents at once, as
-   `maya@marlowceramics.com`, and sends you straight back.
-5. Grant the tools to a Bot and ask it about the inbox.
-
-To see what was sent, and to start over:
-
-```sh
-curl http://127.0.0.1:4900/__fake/sent
-curl -X POST http://127.0.0.1:4900/__fake/reset
-```
-
-Reset puts the mailbox and calendar back, dated from now, and forgets what was sent. People stay
-connected across a reset and across restarting the fake.
-
-What the variable does and does not do:
-
-- It moves this connector's API host and its OAuth consent, token and revocation addresses to the fake,
-  where the catalogue entry is resolved, so admitting the host, enabling the connector and connecting an
-  account all agree.
-- It is **refused in production**. When `NODE_ENV=production` it is ignored, the server logs that it was,
-  and Google's own addresses are used. Every other address in the catalogue is reviewed in code; this one
-  comes from the environment, and on a deployed server it would send client secrets and people's tokens
-  wherever it pointed.
-- It never affects Google Drive.
-- It is ignored under `bun test`, so a laptop set up for a demo still tests the reviewed catalogue.
-- Switching back to Google means reconnecting: the stored refresh token belongs to the fake.
-
-The fake is not a faithful Gmail. Search understands the operators people commonly write (`in:`,
-`label:`, `category:`, `is:`, `from:`, `to:`, `subject:`, `newer_than:`, `older_than:` and plain words)
-and ignores the rest. It does check what matters for the connector: PKCE on the token exchange, a bearer
-token on every API call, and that a reply's `In-Reply-To` or `References` points into the thread it is
-filed in, as Gmail does.
-
 ## Troubleshooting
 
 Every message below is what OpenBot actually shows. Each starts with Google's own sentence, and then says
@@ -278,8 +223,7 @@ both `access_type=offline` and `prompt=consent`.
 
 - [Google Drive](google-drive.md): the same per-person shape, read-only.
 - [Architecture](../architecture.md): where plugins, grants, policy and audit sit.
-- [Configuration](../configuration.md): `OPENBOT_PUBLIC_URL`, `KEY_ENCRYPTION_KEY`,
-  `OPENDUET_FAKE_GOOGLE_URL`.
+- [Configuration](../configuration.md): `OPENBOT_PUBLIC_URL`, `KEY_ENCRYPTION_KEY`.
 - [Gmail API](https://developers.google.com/workspace/gmail/api/reference/rest) and
   [Calendar API](https://developers.google.com/workspace/calendar/api/v3/reference): the REST APIs this
   connector calls.

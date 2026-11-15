@@ -36,8 +36,7 @@ Composio keeps people apart by a user id sent with every call, so one person's c
 reachable from another's.
 
 Nothing validates the key at startup. There is no shape to check it against and no call worth making
-at boot to find out, so the first real request is what says whether it works. `composio:smoke` below
-is how an operator asks that question deliberately rather than by watching somebody else fail.
+at boot to find out, so the first real request is what says whether it works.
 
 Unset is a supported, fully described state rather than a degraded one: it is what every deployment
 is today. What is on screen with no key is exactly one row, on `/admin/plugins` under the **More
@@ -53,59 +52,6 @@ anybody's connected-accounts page, and no Composio tool for a Bot to call.
 An app enabled while a key was set and then left without one keeps its row and its grants. Its page
 says the key is missing, and its calls refuse with a sentence saying the same — distinguished, as
 everywhere else here, from "the app advertises nothing".
-
-### Asking what this key can see
-
-```
-COMPOSIO_API_KEY=... bun run composio:smoke -- --user <id> [--call]
-```
-
-`scripts/composio-smoke.ts` is the one command to run when Composio misbehaves and nothing on screen
-says why. It ships inside the container image, so it is run where the key is — in the deployment,
-not on a laptop — and it answers the question no page can: whether *this* key opens *this* project. A
-key with no project behind it, a project with no authorization config for the app, and a person who
-never finished the consent page all leave a product that looks configured and answers nothing.
-
-**It separates the key from the person, which is two of those three and not all of them.** The
-catalogue read answers for the key: a key Composio rejects, and a project whose catalogue does not
-carry the app, both stop the run with the vendor's own sentence. The connection read answers for the
-person. What it does not separate is the authorization config — an app no administrator has enabled
-here has no config for anybody to connect against, so it reads exactly like a person who never
-finished consenting, and the no-connection line says so rather than blaming the person. Check the
-app's page under `/admin/plugins` to tell those two apart; enabling an app is what creates the
-config. Making the script itself distinguish them would need a read-only auth-config listing on the
-broker seam, which does not exist yet — the seam has `ensureAuthConfig` and `deleteAuthConfig`, both
-of which write, and a read-only diagnostic must not create the object it was asked to look for.
-
-**It names every app's resolved connection kind, and tallies the kinds, because a silent failure
-lives exactly there.** One line per app carries the slug, the kind this deployment resolved it to
-and its action count — and for a `fields` app the scheme too, `fields: API_KEY`, because which of
-API_KEY, BASIC, BEARER_TOKEN or BASIC_WITH_JWT an app resolved to decides what the connect form
-asks somebody to type. The kind is read off the catalogue row rather than derived a second time
-here, so a diagnostic can never disagree with the product about how an app connects. Under the
-lines is a tally: `Kinds: consent 121, self-registering 86, fields 1243, no auth 34, unsupported
-56.` Every known kind is seeded at zero so the zeros print, which is the whole point of it —
-resolution reads a malformed `auth_schemes` as an empty list, so a vendor renaming or reshaping
-that field resolves *every* app to `unsupported`, and the picker hides unsupported apps. From
-every other angle that failure says nothing: the catalogue lists its usual four figures, the
-directory answers 200, not one app is offered. `Kinds: consent 0, self-registering 0, fields 0,
-no auth 0, unsupported 1540` is that state, and it reads as one without anybody scrolling. The
-per-app lines are what to grep afterwards for the app the report was run about.
-
-It is all reads. It mints no connect link and starts no session, because a link is a bearer
-capability and a diagnostic that printed one would leave somebody's mailbox in a terminal scrollback.
-The key is never printed either: every line goes out through a redactor, including the vendor's own
-sentences, which are the only lines carrying text nobody here wrote. `--user` takes the id this
-deployment sends Composio as the person a call is for — the same id `composio_connections` records.
-`--call` additionally runs one read-only action, `GMAIL_GET_PROFILE`, and only after checking
-Composio's own behaviour label at call time rather than trusting the name.
-
-**Which stream a line goes to is decided by the exit code it explains.** A line that explains a
-non-zero exit is written to stderr; every other line is written to stdout. So `… > report.txt` keeps
-a report of what the key can see while every reason the command failed is still on the terminal
-beside it — and an action that ran and failed puts its outcome and its log id on stderr, because
-those two lines are the whole explanation of the `1` it exits with. The exit codes are `0` for a run
-that finished, `1` for a run that stopped, and `2` for a missing `--user`.
 
 ## What an administrator does
 

@@ -121,6 +121,10 @@ export function readToolName(
  *
  */
 const OWN_TOOLS: Record<string, { running: string; done: string }> = {
+  open_whatsapp: {
+    running: "正在開啟 WhatsApp",
+    done: "已開啟 WhatsApp",
+  },
   [SHOW_APP_ACCESS_TOOL]: {
     running: "正在查看你的應用程式",
     done: "已查看你的應用程式",

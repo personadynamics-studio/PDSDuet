@@ -35,10 +35,7 @@ import {
   agentInputFrom,
 } from "@/lib/agents/form";
 import { createAgentMutationOptions } from "@/lib/agents/mutations";
-import {
-  agentCapabilitiesQueryOptions,
-  testAgentConnection,
-} from "@/lib/agents/queries";
+import { agentCapabilitiesQueryOptions } from "@/lib/agents/queries";
 import { isComposing } from "@/lib/composing";
 import { appConfig } from "@/lib/generated/application-config";
 import { DURATION, EASE_OUT } from "@/lib/motion";
@@ -92,8 +89,8 @@ export function NewBotSheet({
  * WHERE IT RUNS COMES FIRST because it decides what the rest of the sheet means. For a Bot that runs
  * here, its instructions are the system prompt it runs on; for one somebody else runs, they are a
  * line added on top of a prompt written elsewhere. Asking for them before knowing which left the
- * field unable to say what it was for. The address is asked only of a Bot somebody else runs, and is
- * checked before the person spends time naming it. About it is always last, and always creates.
+ * field unable to say what it was for. The address is asked only of a Bot somebody else runs.
+ * About it is always last, and always creates.
  */
 const STEPS = ["runtime", "endpoint", "about"] as const;
 type Step = (typeof STEPS)[number];
@@ -147,10 +144,6 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
   const [key, setKey] = useState("");
   /** Whether Continue was pressed on the address, which is when its error becomes worth showing. */
   const [tried, setTried] = useState(false);
-  /** Continue on the address is dialling it, before anything is created. */
-  const [checking, setChecking] = useState(false);
-  /** Why the server could not reach the address on the last Continue, in its own words. */
-  const [unreachable, setUnreachable] = useState<string>();
   /** The Bot just made, held for the moment the sheet spends saying so before it hands over. */
   const [createdId, setCreatedId] = useState<string>();
   const reduceMotion = useReducedMotion();
@@ -185,7 +178,7 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
       ? "請輸入代理程式的網址。"
       : agentFormSchema.shape.endpoint.safeParse(endpoint).error?.issues[0]
           ?.message;
-  const busy = checking || createAgent.isPending;
+  const busy = createAgent.isPending;
   const canContinue =
     !busy &&
     (step === "about"
@@ -197,7 +190,6 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
   const go = (to: Step) => {
     setDirection(STEPS.indexOf(to) > STEPS.indexOf(step) ? 1 : -1);
     setTried(false);
-    setUnreachable(undefined);
     createAgent.reset();
     setStep(to);
   };
@@ -222,44 +214,20 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
     if (step === "runtime" && runtime) {
       return go(runtime.kind === "builtin" ? "about" : "endpoint");
     }
-    if (step === "endpoint") return connect();
+    if (step === "endpoint") {
+      if (endpointIssue) {
+        setTried(true);
+        document.getElementById("new-bot-endpoint")?.focus();
+        return;
+      }
+      return go("about");
+    }
     if (step === "about" && runtime) return create(runtime);
   };
 
   /** Where Back goes: the address for a Bot somebody else runs, where it runs otherwise. */
   const previous = (): Step =>
     step === "about" && runtime?.kind === "managed" ? "endpoint" : "runtime";
-
-  /**
-   * Continue on the address: dial it from the server, and move on only if it answers.
-   *
-   * There is no separate Test button. A test that could be skipped let a Bot be made pointed at
-   * nothing, and one that could not be skipped was a second button doing Continue's job. So Continue
-   * tests: an agent that answers moves on, and one that does not says why under its address, where
-   * the fix will be typed. Continue stays pressable after that, because the usual fix is starting the
-   * agent, not editing what was typed.
-   */
-  const connect = async () => {
-    const focusAddress = () =>
-      // Focus would otherwise fall to the page while the button below is busy or disabled.
-      document.getElementById("new-bot-endpoint")?.focus();
-    if (endpointIssue) {
-      setTried(true);
-      focusAddress();
-      return;
-    }
-    setUnreachable(undefined);
-    setChecking(true);
-    const verdict = await testAgentConnection(endpoint.trim(), key).finally(
-      () => setChecking(false),
-    );
-    if (!verdict.ok) {
-      setUnreachable(verdict.reason);
-      focusAddress();
-      return;
-    }
-    go("about");
-  };
 
   if (createdId) {
     return (
@@ -341,17 +309,13 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
             ) : (
               <EndpointStep
                 endpoint={endpoint}
-                endpointError={tried ? endpointIssue : unreachable}
+                endpointError={tried ? endpointIssue : undefined}
                 harness={runtime?.kind === "managed" ? runtime.harness : null}
                 onEndpoint={(value) => {
                   setEndpoint(value);
                   setTried(false);
-                  setUnreachable(undefined);
                 }}
-                onKey={(value) => {
-                  setKey(value);
-                  setUnreachable(undefined);
-                }}
+                onKey={setKey}
                 secret={key}
               />
             )}
@@ -390,13 +354,11 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
           size="lg"
           type="submit"
         >
-          {checking
-            ? "連接中…"
-            : createAgent.isPending
-              ? "建立中…"
-              : step === "about"
-                ? "建立"
-                : "繼續"}
+          {createAgent.isPending
+            ? "建立中…"
+            : step === "about"
+              ? "建立"
+              : "繼續"}
         </Button>
       </SheetFooter>
     </form>
@@ -702,11 +664,6 @@ function RuntimeStep({
  *
  * The address takes focus on arrival rather than the heading, as the name does on the last step: it
  * is the one thing this step asks for, and its label says what it is.
- *
- * Whether it answers is checked when Continue is pressed, by the server rather than the browser,
- * because the server is what will dial it on every run. An agent on this machine has to be reachable
- * from there, which is the one thing the browser cannot tell. Why it could not be reached arrives as
- * this field's error.
  */
 function EndpointStep({
   harness,

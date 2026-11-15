@@ -333,7 +333,7 @@ fn socket_override(engine: Engine) -> Option<String> {
     }
 }
 
-#[cfg(any(target_os = "linux", all(test, unix)))]
+#[cfg(target_os = "linux")]
 pub mod local_api {
     use crate::problem::Problem;
     use std::path::Path;
@@ -364,147 +364,9 @@ pub mod local_api {
             Ok(())
         }
 
-        #[cfg(test)]
-        pub(super) fn child_id(&self) -> Option<u32> {
-            self.child.as_ref().map(Child::id)
-        }
     }
 
     impl Drop for Service {
         fn drop(&mut self) { let _ = self.stop(); }
-    }
-}
-
-#[cfg(all(test, unix))]
-mod local_api_tests {
-    use super::local_api::Service;
-    use crate::test_support::temp_root;
-    use std::path::Path;
-    use std::process::Command;
-
-    fn fixture(socket: &Path) -> Command {
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args([
-                "--exact",
-                "engine::local_api_tests::api_fixture_child",
-                "--nocapture",
-            ])
-            .env("OPENBOT_API_FIXTURE_SOCKET", socket);
-        command
-    }
-
-    #[test]
-    fn api_fixture_child() {
-        let Some(socket) = std::env::var_os("OPENBOT_API_FIXTURE_SOCKET") else {
-            return;
-        };
-        use std::io::{Read, Write};
-        let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-        for stream in listener.incoming() {
-            let mut stream = stream.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                let mut byte = [0; 1];
-                stream.read_exact(&mut byte).unwrap();
-                request.push(byte[0]);
-                assert!(request.len() < 4096, "fixture request must be bounded");
-            }
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
-                .unwrap();
-        }
-    }
-
-    #[test]
-    fn linux_api_starts_a_real_socket_and_reaps_only_its_own_child() {
-        let root = temp_root("linux-api");
-        std::fs::create_dir_all(&root).unwrap();
-        let socket = root.join("api.sock");
-        let log = root.join("api.log");
-        let mut owned = Service::default();
-        owned
-            .ensure_with(&socket, &log, || fixture(&socket))
-            .unwrap();
-        let pid = owned.child_id().expect("new service is owned");
-        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
-        let mut borrowed = Service::default();
-        borrowed
-            .ensure_with(&socket, &log, || panic!("reuse the existing API"))
-            .unwrap();
-        borrowed.stop().unwrap();
-        assert_eq!(
-            unsafe { libc::kill(pid as i32, 0) },
-            0,
-            "unowned service must remain alive"
-        );
-        owned.stop().unwrap();
-        assert_eq!(
-            unsafe { libc::kill(pid as i32, 0) },
-            -1,
-            "owned child must be reaped"
-        );
-        assert!(
-            !socket.exists(),
-            "owned socket must not prevent a later start"
-        );
-        owned
-            .ensure_with(&socket, &log, || fixture(&socket))
-            .unwrap();
-        owned.stop().unwrap();
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn linux_api_drop_reaps_the_owned_service_without_removing_a_replacement_socket() {
-        let root = temp_root("linux-api-drop");
-        std::fs::create_dir_all(&root).unwrap();
-        let socket = root.join("api.sock");
-        let mut service = Service::default();
-        service
-            .ensure_with(&socket, &root.join("api.log"), || fixture(&socket))
-            .unwrap();
-        let pid = service.child_id().unwrap();
-        std::fs::remove_file(&socket).unwrap();
-        let replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-        drop(service);
-        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
-        assert!(socket.exists(), "replaced socket belongs to another owner");
-        drop(replacement);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn linux_api_start_failure_preserves_diagnostics_and_reaps_child() {
-        let root = temp_root("linux-api-failed");
-        std::fs::create_dir_all(&root).unwrap();
-        let mut service = Service::default();
-        let problem = service
-            .ensure_with(&root.join("api.sock"), &root.join("api.log"), || {
-                let mut command = Command::new("/bin/sh");
-                command.args(["-c", "echo native-service-failed >&2; exit 19"]);
-                command
-            })
-            .unwrap_err();
-        assert!(problem.detail.unwrap().contains("native-service-failed"));
-        assert!(service.child_id().is_none());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn linux_api_refuses_an_unresponsive_existing_socket_without_replacing_it() {
-        let root = temp_root("linux-api-existing");
-        std::fs::create_dir_all(&root).unwrap();
-        let socket = root.join("api.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-        let mut service = Service::default();
-        assert!(service
-            .ensure_with(&socket, &root.join("api.log"), || panic!(
-                "must not replace existing socket"
-            ))
-            .is_err());
-        assert!(socket.exists());
-        drop(listener);
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

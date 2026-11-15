@@ -7,7 +7,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { MemoryRecord, MemorySource } from "../../memory/types";
+import type { MemoryRecord } from "../../memory/types";
 import { agents, users } from "./core";
 import { jsonb } from "./json";
 
@@ -26,7 +26,7 @@ export const memorySources = pgTable(
     args: jsonb("args").$type<Record<string, unknown>>().notNull().default({}),
     enabled: boolean("enabled").notNull().default(true),
     syncStatus: text("sync_status")
-      .$type<MemorySource["syncStatus"]>()
+      .$type<"idle" | "running" | "succeeded" | "error">()
       .notNull()
       .default("idle"),
     syncError: text("sync_error"),

@@ -137,8 +137,8 @@ so an uninstall does not take the key that every stored credential was encrypted
 
 ### Pin the image by digest
 
-A tag can be moved; a digest cannot. Each release's `container-images.json` names the digest CI
-tested, and `image.digest` deploys exactly that:
+A tag can be moved; a digest cannot. A published release's `container-images.json` names each image's
+digest, and `image.digest` deploys exactly that:
 
 ```sh
 gh release download v0.2.0 --pattern container-images.json
@@ -196,24 +196,7 @@ The application role must own its schema and be able to create tables, indexes a
 
 `initialization.enabled` controls the one-off job that runs `scripts/initialize.ts`. It creates this version's fresh schema; it does not import or upgrade earlier application data.
 
-## The five targets
-
-`ci/` holds a values file per target, and each is the shortest thing that expresses what is different
-about that cluster:
-
-| File | What it shows |
-| --- | --- |
-| `self-hosted-values.yaml` | Nothing turned on. If this file needs to grow, a default is wrong. |
-| `eks-values.yaml` | IRSA, Secrets Manager, ALB, zone spread, autoscaling. |
-| `eks-sandbox-values.yaml` | The same, with a computer each rather than one shared browser. `shared` and `sandbox` render a different Deployment, different RBAC and a different pod template, so a target that renders only one checks half the chart. |
-| `gke-values.yaml` | Workload Identity, Secret Manager, Gateway API instead of an Ingress. |
-| `aks-values.yaml` | Workload identity, Key Vault, the AKS web app routing class. |
-
-Render any of them without a cluster:
-
-```sh
-helm template openbot charts/openbot -f charts/openbot/ci/eks-values.yaml
-```
+## Cluster configuration
 
 ### Identity, in one map
 
@@ -240,8 +223,7 @@ kubectl get sc
 ```
 
 Either create a default class backed by `ebs.csi.aws.com`, or set `computers.persistence.storageClass`
-and `postgresql.primary.persistence.storageClass` to one that exists. `ci/eks-values.yaml` does the
-second.
+and `postgresql.primary.persistence.storageClass` to one that exists.
 
 `volumeBindingMode: WaitForFirstConsumer` matters on every cloud: without it the volume is created in
 a zone chosen before the pod is scheduled, and pods stick unschedulable with a node-affinity conflict.
@@ -298,16 +280,6 @@ Left empty, this deployment has the Bots its tenant package declares as built-in
 somebody creates in the app without an endpoint runs here on its role description. A package entry
 pointing at an endpoint that resolves to nothing is dropped rather than registered as a coworker
 nobody can talk to.
-
-## Memory and background research
-
-Both are on by default: when a person talks to one of their Bots in a conversation with that Bot
-alone, OpenBot switches on read-only background research by that Bot, and from any turn by a Bot it
-makes each app the person connected in their own account a memory source for it (not on a Team Bot
-somebody else published, where their accounts need consent). A person who turns either off, or
-removes it, keeps it that way, through a Bot reset too.
-`config.memory.sourceDefaults: false` and `config.memory.researchDefaults: false` stop new defaults
-for the whole deployment.
 
 ## Slack, Teams, text messages, push, SCIM, inbound email and OpenTelemetry
 
