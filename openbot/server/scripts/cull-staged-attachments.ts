@@ -169,11 +169,7 @@ if (import.meta.main) {
    * no escape, a URL with no host, a URL naming no database — lives in `addressOf` inside
    * `createDatabase`, below, and applies to exactly this call.
    *
-   * REJECTED: teaching `config.ts` a narrower loader. `loadConfig` is the API server's boot
-   * contract and the two sibling cron scripts genuinely want it — `fire-routines.ts` needs
-   * `workerSharedSecret`, `cull-idle-computers.ts` needs `computer.idleAfterMs`. The convention this
-   * follows instead is `scripts/migrate.ts`, the other script whose whole need is a database: it
-   * reads `DATABASE_URL` from the environment and says so in one sentence when it is missing.
+   * This standalone sweep needs only DATABASE_URL, not the API server's full boot configuration.
    */
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {

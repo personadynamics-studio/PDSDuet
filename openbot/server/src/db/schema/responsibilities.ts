@@ -43,7 +43,7 @@ export const responsibilities = pgTable(
     progress: text("progress").notNull().default(""),
     lastResult: text("last_result"),
     subscriptions: jsonb("subscriptions")
-      
+      .$type<unknown[]>()
       .notNull()
       .default([]),
     completedAt: timestamp("completed_at", { withTimezone: true }),

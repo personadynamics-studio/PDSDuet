@@ -1,4 +1,4 @@
-import type { RunAgentInput } from "@ag-ui/client";
+import { EventType, type RunAgentInput } from "@ag-ui/client";
 import { projectThreadEvent, type ThreadEvent, type ThreadMessage, type ThreadRun } from "@openbot/shared/thread-events";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
@@ -14,6 +14,7 @@ export class ConversationError extends Error {
   constructor(message: string, readonly status: 400 | 404 | 409) { super(message); }
 }
 const UPDATES = "local_thread_updated";
+// Bun's raw-query adapter drops row generics; this projection supplies ExecutionRecord rows.
 const fields = sql`id,thread_id as "threadId",user_id as "userId",bot_ids as "botIds",bot_index as "botIndex",
   parent_run_id as "parentRunId",instruction,initiator,status,error,waiting,stop_requested as "stopRequested",model_states as "modelStates"`;
 const humanWaiting = (waiting: ThreadRun["waiting"]) => (waiting ?? []).filter(item =>
@@ -45,7 +46,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
     return { messages: rows.map(row => row.body) };
   }
   async function run(runId: string): Promise<ExecutionRecord | undefined> {
-    const rows = await database.execute<ExecutionRecord>(sql`select ${fields} from local_runs where id=${runId}`);
+    const rows = await database.execute(sql`select ${fields} from local_runs where id=${runId}`) as ExecutionRecord[];
     return rows[0];
   }
   const notify = (tx: Executor, threadId: string) => tx.execute(sql`select pg_notify(${UPDATES},${threadId})`);
@@ -109,8 +110,8 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       for (const message of added) {
         if (message.role === "user") continue;
         if (message.role !== "tool") throw new ConversationError("Only human messages and actual waiting answers may be submitted.", 400);
-        const matches = await database.execute<ExecutionRecord>(sql`select ${fields} from local_runs where thread_id=${input.threadId}
-          and status='waiting' and stop_requested=false and waiting @> ${JSON.stringify([{ toolCallId: message.toolCallId, answerable: true }])}::text::jsonb`);
+        const matches = await database.execute(sql`select ${fields} from local_runs where thread_id=${input.threadId}
+          and status='waiting' and stop_requested=false and waiting @> ${JSON.stringify([{ toolCallId: message.toolCallId, answerable: true }])}::text::jsonb`) as ExecutionRecord[];
         if (matches.length !== 1 || (resumed && resumed.id !== matches[0].id)) throw new ConversationError("The answer does not identify one waiting execution.", 409);
         resumed = matches[0];
       }
@@ -151,7 +152,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await save(tx, record, prepared.added);
       for (const message of prepared.added) await event(tx, record.threadId, record.id, { type: "CUSTOM", name: "thread.message", value: message } as ThreadEvent);
       await event(tx, record.threadId, record.id, { type: "RUN_STARTED", threadId: record.threadId, runId: record.id } as ThreadEvent);
-      if (record.parentRunId) await event(tx, record.threadId, prepared.ancestors[0]!, { type: "CUSTOM", name: "thread.updated", value: null });
+      if (record.parentRunId) await event(tx, record.threadId, prepared.ancestors[0]!, { type: EventType.CUSTOM, name: "thread.updated", value: null });
       if (!record.parentRunId) await announce(tx, record.threadId, prepared.added.findLast(message => message.role === "user"));
       await notify(tx, record.threadId);
     });
@@ -176,7 +177,7 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       context: async botIndex => ({...(await context(record.threadId, database, record.id)),state:record.modelStates?.[record.botIds[botIndex]]??null}),
       async record(raw) {
         if (raw.type === "RUN_STARTED" || raw.type === "RUN_FINISHED" || raw.type === "RUN_ERROR") return;
-        if (raw.type === "CUSTOM" && ["thread.message", "thread.updated"].includes(raw.name)) { console.warn("An agent emitted a reserved transcript event.", record.id); return; }
+        if (raw.type === "CUSTOM" && typeof raw.name === "string" && ["thread.message", "thread.updated"].includes(raw.name)) { console.warn("An agent emitted a reserved transcript event.", record.id); return; }
         const botId = record.botIds[record.botIndex];
         let body = { ...raw, senderBotId: botId } as ThreadEvent;
         if (body.type === "TOOL_CALL_START" && typeof body.parentMessageId !== "string") body = { ...body, parentMessageId: String(body.toolCallId) };
@@ -210,16 +211,16 @@ export function createSettlement(database: Database, options: { actorFor(id: str
     const record = prepared.run;
     const terminal = await database.transaction(async tx => {
       await save(tx, record, output.outputs);
-      const [saved] = await tx.execute<ExecutionRecord>(sql`update local_runs set
+      const [saved] = await tx.execute(sql`update local_runs set
         status=case when stop_requested then 'stopped' else ${outcome.status} end,
         error=case when stop_requested then 'The work was cancelled.' else ${outcome.error ?? null} end,
         waiting=case when stop_requested then '[]'::jsonb else ${JSON.stringify(outcome.waiting ?? [])}::text::jsonb end,
-        bot_index=${record.botIndex},model_states=${JSON.stringify(record.modelStates)}::text::jsonb,updated_at=now() where id=${record.id} returning ${fields}`);
+        bot_index=${record.botIndex},model_states=${JSON.stringify(record.modelStates)}::text::jsonb,updated_at=now() where id=${record.id} returning ${fields}`) as ExecutionRecord[];
       if (!saved) throw new ConversationError("The execution is unavailable for settlement.", 409);
       await tx.execute(sql`update local_threads set updated_at=now() where id=${record.threadId}`);
       await event(tx, record.threadId, record.id, { type: "RUN_FINISHED", threadId: record.threadId, runId: record.id,
         status: saved.status, ...(saved.error ? { error: saved.error } : {}) } as ThreadEvent);
-      if (record.parentRunId) await event(tx, record.threadId, prepared.ancestors[0]!, { type: "CUSTOM", name: "thread.updated", value: null });
+      if (record.parentRunId) await event(tx, record.threadId, prepared.ancestors[0]!, { type: EventType.CUSTOM, name: "thread.updated", value: null });
       if (!record.parentRunId) await announce(tx, record.threadId, output.outputs.findLast(message => message.role === "assistant" && typeof message.content === "string" && message.content.length > 0), saved.status === "waiting");
       await notify(tx, record.threadId); return saved;
     });
@@ -230,12 +231,12 @@ export function createSettlement(database: Database, options: { actorFor(id: str
 
   async function cancel(threadId: string, runId: string, activeRunIds: readonly string[]) {
     return database.transaction(async tx => {
-      const family = await tx.execute<ExecutionRecord>(sql`with recursive ancestors as (
+      const family = await tx.execute(sql`with recursive ancestors as (
         select id,parent_run_id from local_runs where id=${runId} and thread_id=${threadId}
         union all select p.id,p.parent_run_id from local_runs p join ancestors c on c.parent_run_id=p.id
       ), family as (select id from ancestors where parent_run_id is null
         union all select c.id from local_runs c join family p on c.parent_run_id=p.id)
-      select ${fields} from local_runs where id in(select id from family) for update`);
+      select ${fields} from local_runs where id in(select id from family) for update`) as ExecutionRecord[];
       for (const record of family) {
         const ended=record.status==="waiting"||(record.status==="running"&&!activeRunIds.includes(record.id));
         await tx.execute(sql`update local_runs set stop_requested=true,status=case when ${ended} then 'stopped' else status end,
@@ -262,8 +263,8 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await tx.execute(sql`set transaction isolation level repeatable read`);
       const stored = await context(threadId, tx);
       const [cursor] = await tx.execute<{ seq: number }>(sql`select coalesce(max(seq),0) as seq from local_events where thread_id=${threadId}`);
-      const records = await tx.execute<ExecutionRecord>(sql`select ${fields} from local_runs where thread_id=${threadId} and parent_run_id is null
-        order by case status when 'running' then 0 when 'waiting' then 1 else 2 end,updated_at desc,created_at desc`);
+      const records = await tx.execute(sql`select ${fields} from local_runs where thread_id=${threadId} and parent_run_id is null
+        order by case status when 'running' then 0 when 'waiting' then 1 else 2 end,updated_at desc,created_at desc`) as ExecutionRecord[];
       const last = records[0];
       const family = last && (last.status === "running" || last.status === "waiting")
         ? await tx.execute<{ waiting: ThreadRun["waiting"] }>(sql`with recursive family as (
