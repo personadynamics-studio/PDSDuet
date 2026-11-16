@@ -7,7 +7,6 @@ import { from, switchMap } from "rxjs";
 import { PlanModel, type PlanModelConfig, planModelForEnvironment } from "./plan-model";
 import type { AgentActor } from "./profile-types";
 import { attachmentIdsIn, newInlineBudget, resolveAttachmentParts, type StoredAttachment } from "../channels/attachment-parts";
-import type { AgentFetch } from "../channels/stall-guard";
 import { UNTRUSTED_GUIDANCE } from "../untrusted-content";
 import { limitModelContext } from "./model-context";
 
@@ -232,14 +231,13 @@ export type AgentBuildOptions = {
   loadInstructions?: LoadInstructions;
   loadAttachment?: LoadAttachment;
   markAttachmentsSent?: MarkAttachmentsSent;
-  agentFetch?: AgentFetch;
 };
 
 /** Agent construction supplies the model and real transport boundaries. Execution supplies every tool. */
 export async function buildAgent(agent: RegisteredAgent, options: AgentBuildOptions): Promise<AbstractAgent> {
   if (agent.type === "unavailable") return new UnavailableAgent(agent);
   if (agent.type !== "built_in") {
-    const remote = await remoteTransport(agent, options.agentFetch);
+    const remote = await remoteTransport(agent);
     return new CloningRemoteAgent(remote, target => {
       target.use((input, next) => {
         const instructions: Message[] = input.context.map((entry, index) => ({
@@ -273,14 +271,13 @@ export async function buildAgent(agent: RegisteredAgent, options: AgentBuildOpti
 }
 
 type MastraClientForBridge = Parameters<typeof import("@ag-ui/mastra").getRemoteAgents>[0]["mastraClient"];
-async function remoteTransport(agent: RegisteredRemoteAgent, agentFetch?: AgentFetch): Promise<AbstractAgent> {
+async function remoteTransport(agent: RegisteredRemoteAgent): Promise<AbstractAgent> {
   if (agent.type === "remote_ag_ui") return new HttpAgent({
     url: agent.endpoint, agentId: agent.id,
     ...(agent.headers ? { headers: agent.headers } : {}),
-    ...(agentFetch ? { fetch: agentFetch } : {}),
   });
   const [{ MastraClient }, { getRemoteAgents }] = await Promise.all([import("@mastra/client-js"), import("@ag-ui/mastra")]);
-  const client = new MastraClient({ baseUrl: agent.endpoint, ...(agent.headers ? { headers: agent.headers } : {}), ...(agentFetch ? { fetch: agentFetch as unknown as typeof fetch } : {}) });
+  const client = new MastraClient({ baseUrl: agent.endpoint, ...(agent.headers ? { headers: agent.headers } : {}) });
   const roster = await getRemoteAgents({ mastraClient: client as unknown as MastraClientForBridge, resourceId: agent.id });
   return roster[pickFromRoster(Object.keys(roster), agent)] as AbstractAgent;
 }

@@ -19,7 +19,6 @@ import { createChannelEventHub, startChannelActivityListener } from "./channels/
 import { createGroupConversations } from "./channels/group";
 import { createChannelStore } from "./channels/routes";
 import { headlessComponentCatalog } from "./components/headless";
-import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import { createComputerGateway } from "./computer/gateway";
 import { createHeadlessComputerTools } from "./computer/headless-tools";
@@ -211,7 +210,7 @@ const app = createApp(config, {
   packageStatusReader: createPackageStatusReader(database),
   execution, settlement, computerGateway: computer, agentProfileStore: profiles,
   channelStore: channels, channelEvents, auditStore: audit, componentStore, pluginStore: plugins,
-  sandboxedStore: createSandboxedStore(database, audit), peopleStore: people,
+  peopleStore: people,
   identityProviders, userInstructions: instructions,
   attachmentDatabase: database, hostAccessBroker: host, desktopHostToken: process.env.OPENBOT_DESKTOP_HOST_TOKEN,
   composio,

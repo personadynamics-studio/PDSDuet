@@ -2,7 +2,6 @@ import {
   IconBuildingBank,
   IconChecks,
   IconChevronRight,
-  IconCode,
   IconDeviceDesktop,
   IconFileText,
   IconKey,
@@ -98,12 +97,6 @@ const SECTIONS: {
         icon: IconLayoutGrid,
         linkOptions: { to: "/admin/components" },
       },
-      {
-        title: "Playground",
-        description: "Write a component and watch it render as you type.",
-        icon: IconCode,
-        linkOptions: { to: "/admin/playground" },
-      },
     ],
   },
   {
@@ -116,13 +109,6 @@ const SECTIONS: {
           "Everybody who has signed in, who the admins are, and whose access was removed.",
         icon: IconUsers,
         linkOptions: { to: "/admin/people" },
-      },
-      {
-        title: "Enterprise controls",
-        description:
-          "Roles and groups, required SSO, SCIM, network policy, MCP and model allowlists, Action Recording.",
-        icon: IconShieldCheck,
-        linkOptions: { to: "/admin/enterprise" },
       },
       {
         title: "Identity providers",

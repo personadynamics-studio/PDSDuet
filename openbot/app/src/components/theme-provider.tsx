@@ -8,13 +8,11 @@ import {
 } from "react";
 import {
   applyTheme,
-  isSandboxThemeAsk,
   LEGACY_THEME_STORAGE_KEY,
   parseThemePreference,
   type ResolvedTheme,
   resolveTheme,
   SYSTEM_DARK_QUERY,
-  sandboxThemeMessage,
   THEME_STORAGE_KEY,
   type ThemePreference,
 } from "@/lib/theme";
@@ -70,22 +68,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         document.documentElement.style.colorScheme = scheme;
       },
     });
-  }, [resolved]);
-
-  /*
-   * A generated interface draws in a sandboxed frame that cannot see this theme. It asks, and is
-   * answered; and every frame is told again when the theme changes. See `SANDBOX_THEME_ASK`.
-   */
-  useEffect(() => {
-    const answer = (event: MessageEvent) => {
-      if (!isSandboxThemeAsk(event.data) || !event.source) return;
-      (event.source as Window).postMessage(sandboxThemeMessage(resolved), "*");
-    };
-    window.addEventListener("message", answer);
-    for (const frame of document.querySelectorAll("iframe")) {
-      frame.contentWindow?.postMessage(sandboxThemeMessage(resolved), "*");
-    }
-    return () => window.removeEventListener("message", answer);
   }, [resolved]);
 
   // Written only when the person chooses, so following the phone stays the default until they do.

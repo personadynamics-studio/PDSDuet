@@ -21,7 +21,7 @@ docker compose --env-file .env up -d --build "${services[@]}"
 docker compose --env-file .env run --rm --build initialize
 bun run --cwd app build
 
-for name in api app worker; do
+for name in api app; do
   if [ -f "$LOGS/pds-$name.pid" ]; then
     kill "$(cat "$LOGS/pds-$name.pid")" 2>/dev/null || true
     rm -f "$LOGS/pds-$name.pid"

@@ -3,7 +3,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { GroupChat } from "@/components/channels/group-chat";
 import { GroupPeopleButton } from "@/components/channels/group-people";
-import { SidebarToggle } from "@/components/layout/sidebar-toggle";
 import { useMarkOpenChannelRead } from "@/lib/channels/mark-read";
 import { channelQueryOptions } from "@/lib/channels/queries";
 
@@ -19,7 +18,6 @@ function RouteComponent() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="sticky top-0 flex min-h-12 flex-row items-center gap-1.5 border-b border-border px-3 py-2">
-        <SidebarToggle />
         <ChannelAvatar
           participantIds={channel.data?.agentIds ?? []}
           size={22}

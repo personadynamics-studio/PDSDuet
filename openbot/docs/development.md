@@ -22,9 +22,9 @@ bash scripts/start.sh
 
 ## Running services
 
-Use `bash scripts/start.sh` for the full local stack. It starts Docker services, applies migrations, starts the API server, the app, and the routine worker, and verifies health routes.
+Use `bash scripts/start.sh` for the local stack. It starts the selected Docker services, runs database initialization, builds the frontend, and starts the API and frontend servers.
 
-Use `bash scripts/stop.sh` to take it down: the app, the routine worker, the API server, the Docker services, and each Bot's computer, which the supervisor makes rather than compose and which therefore outlives `docker compose down`. Pass `--keep-computers` to leave those browsers signed in. Nothing is deleted either way.
+Use `bash scripts/stop.sh` to stop the app, API, Docker services, and this deployment's Bot computers. Pass `--keep-computers` to leave the Bot computers running. Database and browser-profile volumes remain.
 
 Use `bun run dev` only when you want the app and API server without starting the Docker Bots and computers.
 
@@ -44,7 +44,7 @@ sign-in, because whoever reaches them is the administrator; to open them to your
 host name other than `localhost`, rather than at an IP address, the app loads but every change it
 asks for is refused until that origin is in `TRUSTED_ORIGINS`.
 
-`start.sh` hands every selected Docker service to `docker compose up -d` on every run, so one whose configuration changed is recreated and an unchanged one is left as it is. It leaves an API server or app that already answers as OpenBot alone, restarts the API server when it refuses the worker's secret or has no routines route, and reports when a port is held by another process.
+`start.sh` applies the selected Docker services, rebuilds the frontend, and replaces the API and frontend processes recorded by the previous local start.
 
 **Nothing here sweeps staged attachments.** A file dropped into the composer is stored before the
 message is sent, and the only thing that reclaims the ones never sent is

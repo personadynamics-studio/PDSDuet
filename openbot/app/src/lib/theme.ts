@@ -66,19 +66,3 @@ export function applyTheme(theme: ResolvedTheme, effects: ThemeEffects) {
 }
 
 
-export const SANDBOX_THEME_ASK = "openduet:theme?";
-export const SANDBOX_THEME_MESSAGE = "openduet:theme";
-
-/** The message that tells a frame which theme to draw. */
-export function sandboxThemeMessage(theme: ResolvedTheme) {
-  return { type: SANDBOX_THEME_MESSAGE, theme } as const;
-}
-
-/** Whether a message is a frame asking which theme to draw. */
-export function isSandboxThemeAsk(data: unknown): boolean {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { type?: unknown }).type === SANDBOX_THEME_ASK
-  );
-}

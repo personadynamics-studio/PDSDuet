@@ -278,12 +278,7 @@ This template renders nothing.
 {{- end }}
 
 {{- /*
-  Delivery, the directory and OpenTelemetry export: the refusals the server makes at boot.
-
-  Each mirrors a throw in `configuredDeliveryProviders` (server/src/delivery/routes.ts), so the value
-  to change is named by `helm install` rather than by a pod's crash loop. Nothing is refused here that
-  the server would accept: inbound email with one half set is not mounted rather than refused, and
-  is left alone here too.
+  Optional delivery and directory values declared by this chart.
 */}}
 {{- $opentag := .Values.config.opentag | default dict }}
 {{- if and (not $opentag.enabled) (or $opentag.url $opentag.botIconUrlTemplate) }}

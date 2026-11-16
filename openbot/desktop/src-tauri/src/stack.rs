@@ -1,9 +1,9 @@
-//! Raising the stack: the Compose services, then the three processes that are not containers.
+//! Raising the stack: the Compose services, then the server and frontend processes.
 //!
-//! `docker-compose.yml` has no `app`, `server` or `worker` service, and the root `Dockerfile` leaves
+//! `docker-compose.yml` has no `app` or `server` service, and the root `Dockerfile` leaves
 //! out the supervisor because it needs a socket no serverless platform grants. So the shape is not a
 //! choice: containers for postgres, the supervisor, `agent-computer`, the Bots and a one-shot
-//! `initialize`, and three host processes for the rest. `scripts/start.sh` does exactly this for a
+//! `initialize`, and two host processes for the rest. `scripts/start.sh` does exactly this for a
 //! developer. This does it for somebody who double-clicked.
 //!
 
@@ -92,12 +92,8 @@ pub fn selected_services(harness: bool, bots: BundledBots) -> Vec<&'static str> 
     services
 }
 
-/// The three that are not containers, in the order they are started.
-///
-/// The server first, because the app serves a page that talks to it and the worker claims routines
-/// it owns. Nothing here waits on the others: each is supervised on its own and reports its own
-/// state, so a worker that dies does not take the window with it.
-pub const HOST_PROCESSES: [HostProcess; 3] = [
+/// The server and built frontend, in the order they are started.
+pub const HOST_PROCESSES: [HostProcess; 2] = [
     HostProcess {
         name: "server",
         cwd: "server",
@@ -109,15 +105,10 @@ pub const HOST_PROCESSES: [HostProcess; 3] = [
         cwd: "app",
         script: "serve.ts",
     },
-    HostProcess {
-        name: "worker",
-        cwd: "worker",
-        script: "src/index.ts",
-    },
 ];
 
 #[derive(Clone, Copy, Debug)]
-/// One of the three processes Compose does not run.
+/// One of the host processes Compose does not run.
 ///
 /// The app is started through the package's own `dev` script, which runs Vite through bun rather
 /// than through its shebang. `node_modules/.bin/vite` begins `#!/usr/bin/env node`, so a machine

@@ -10,8 +10,8 @@
  * - Group membership there becomes `users.groups` here, which is what per-group capability switches
  *   and per-group network policies read (and what `channels.allowed_groups` was always waiting for).
  * - Deactivating or deleting the user there ends their sessions (the plugin does that) and, here,
- *   deny-lists the address, retires every connector credential they granted, and stops their Bots'
- *   computers. Reactivating them lifts a deny-list entry SCIM wrote, never one an administrator did.
+ *   deny-lists the address. Reactivating them lifts a deny-list entry SCIM wrote, never one an
+ *   administrator did.
  *
  * `SCIM_BEARER_TOKEN_NEXT` is accepted alongside the current token for rotation. Off entirely when
  * `SCIM_BEARER_TOKEN` is unset.
@@ -21,7 +21,6 @@ import { eq } from "drizzle-orm";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { Database } from "../db/client";
 import { revokedAccess, users } from "../db/schema";
-import { enterpriseControls } from "../admin/controls";
 
 export const SCIM_REVOKED_BY_PREFIX = "scim:";
 
@@ -75,7 +74,6 @@ export async function reconcileDirectoryState(
       .returning({ email: revokedAccess.email });
     setTimeout(() => {
       void (async () => {
-        await enterpriseControls()?.offboard(state.userId, by);
         if (deps.auditStore && inserted.length > 0) {
           await recordAuditEvent(deps.auditStore, {
             eventType: "person.deprovisioned",
@@ -84,7 +82,7 @@ export async function reconcileDirectoryState(
             payload: {
               email,
               via: "SCIM",
-              note: "Sessions ended, address deny-listed, connector credentials retired, computers stopped.",
+              note: "Directory deactivation recorded and address deny-listed.",
             },
           });
         }

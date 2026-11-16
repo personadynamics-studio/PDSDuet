@@ -17,13 +17,11 @@
     "format": "bunx biome format --write .",
     "format:check": "bunx biome format .",
     "lint": "bunx biome lint --error-on-warnings .",
-    "typecheck": "bun run --filter '*' typecheck",
-    "diagram": "bun scripts/architecture-diagram.ts"
+    "typecheck": "bun run --filter '*' typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
     "@types/bun": "^1.3.3",
-    "roughjs": "^4.6.6",
     "typescript": "^5.9.3",
     "yaml": "^2.9.0"
   },

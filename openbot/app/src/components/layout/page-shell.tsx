@@ -4,7 +4,6 @@ import type * as React from "react";
 import { useInPageChrome, usePageChrome } from "@/components/shell/page-chrome";
 import { cn } from "@/lib/utils";
 import { Button } from "../ui/button";
-import { SidebarToggle, useSidebarToggleVisible } from "./sidebar-toggle";
 
 /**
  * The frame every configuration screen sits in.
@@ -60,22 +59,6 @@ export function PageShell({
   };
 }) {
   /*
-   * The bar carries the toggle and the Back link, and is drawn when it has at least one of them.
-   * The screens with a Back link already drew exactly this bar, so for them nothing changes; what
-   * changed is that a sidebar is now reason enough on its own, because the toggle has to sit at the
-   * pane's left edge in both states and the prose column is centred — a control inside it would be
-   * 400px from the edge it belongs to on a wide screen. Drawing it with neither would be a 56px
-   * band holding nothing, which reads as a layout bug rather than as chrome.
-   *
-   * The question is whether the toggle will DRAW, not whether a sidebar exists: it hides itself on
-   * a desktop-width window while the sidebar is already open, which is most of the time on these
-   * screens. Asking `useSidebarToggleVisible` rather than re-deriving the condition here is what
-   * keeps the two from drifting apart and reintroducing that empty band. It also still answers false
-   * on `/assist` and `/link/slack`, which draw PageShell directly under `_authed` with no sidebar
-   * provider at all, so there is nothing for a toggle to act on there.
-   */
-  const showToggle = useSidebarToggleVisible();
-  /*
    * UNDER THE APP'S PAGE CHROME the shell draws the back disc and the title (parity-spec 2.9), so
    * this draws neither: no bar, and the heading kept for screen readers only. The Back link this page
    * was given becomes where the disc goes when there is no history to go back through.
@@ -85,13 +68,12 @@ export function PageShell({
     title,
     ...(backButton ? { backTo: backButton.linkProps } : {}),
   });
-  const bar = !inChrome && (showToggle || !!backButton);
+  const bar = !inChrome && !!backButton;
 
   return (
     <>
       {bar ? (
         <div className="max-w-7xl w-full h-14 flex items-center gap-1 px-3">
-          {showToggle ? <SidebarToggle /> : null}
           {!!backButton && (
             <Button
               variant="ghost"

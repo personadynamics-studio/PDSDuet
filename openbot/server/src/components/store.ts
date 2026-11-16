@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { Database } from "../db/client";
 import {
   componentExclusions,
@@ -46,21 +46,6 @@ export class ComponentNotFoundError extends Error {
   constructor(name: string) {
     super(`No component is called ${name}.`);
     this.name = "ComponentNotFoundError";
-  }
-}
-
-/**
- * The generic publication path found a playground component.
- *
- * Its source is not in this table and a generic write would publish the governance half alone. The
- * route catches this and delegates to the sandboxed store, which owns the two-row transaction.
- */
-export class SandboxedPublicationRequiredError extends Error {
-  constructor(name: string) {
-    super(
-      `${name} is a playground component and must be published from its source.`,
-    );
-    this.name = "SandboxedPublicationRequiredError";
   }
 }
 
@@ -123,7 +108,7 @@ export function createComponentStore(database: Database): ComponentStore {
     const [row] = await database
       .select()
       .from(components)
-      .where(eq(components.name, name))
+      .where(and(eq(components.name, name), ne(components.kind, "sandboxed")))
       .limit(1);
     if (!row) throw new ComponentNotFoundError(name);
     return row;
@@ -172,6 +157,7 @@ export function createComponentStore(database: Database): ComponentStore {
       const rows = await database
         .select()
         .from(components)
+        .where(ne(components.kind, "sandboxed"))
         .orderBy(asc(components.kind), asc(components.title));
       if (rows.length === 0) return [];
 
@@ -243,6 +229,7 @@ export function createComponentStore(database: Database): ComponentStore {
         .where(
           and(
             eq(components.published, true),
+            ne(components.kind, "sandboxed"),
             isNull(componentExclusions.agentId),
           ),
         )
@@ -273,7 +260,7 @@ export function createComponentStore(database: Database): ComponentStore {
             eq(componentExclusions.agentId, agentId),
           ),
         )
-        .where(eq(components.name, name))
+        .where(and(eq(components.name, name), ne(components.kind, "sandboxed")))
         .limit(1);
 
       // Every refusal says which one it is. "Not allowed" sends a model round the same loop; naming
@@ -322,9 +309,6 @@ export function createComponentStore(database: Database): ComponentStore {
 
     async publish(name, by) {
       const row = await requireComponent(name);
-      if (row.kind === "sandboxed") {
-        throw new SandboxedPublicationRequiredError(name);
-      }
       await database
         .update(components)
         .set({
@@ -339,10 +323,7 @@ export function createComponentStore(database: Database): ComponentStore {
     },
 
     async unpublish(name, by) {
-      const row = await requireComponent(name);
-      if (row.kind === "sandboxed") {
-        throw new SandboxedPublicationRequiredError(name);
-      }
+      await requireComponent(name);
       await database
         .update(components)
         .set({ published: false, updatedBy: by, updatedAt: new Date() })

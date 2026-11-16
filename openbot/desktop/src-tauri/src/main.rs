@@ -477,7 +477,7 @@ async fn start_stack_inner<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: Pa
         std::sync::Arc::new(desktop_host_access::NativeApproval(app.clone())),
     ).map_err(|error| Problem::from(error.to_string()))?;
     *shell.host_access.lock().unwrap() = Some(broker);
-    report(&app, "started", true, "API, app and worker started.");
+    report(&app, "started", true, "API and app started.");
     Ok(())
 }
 

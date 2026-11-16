@@ -6,12 +6,25 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type {
-  DemonstrationAction,
-  DemonstrationDraft,
-} from "../../demonstrations/types";
 import { agents, users } from "./core";
 import { jsonb } from "./json";
+type DemonstrationAction = {
+  kind: "click" | "type" | "key" | "scroll";
+  url: string;
+  target: { role: string; name: string; sensitive: boolean };
+  key?: "Enter" | "Tab" | "Escape" | "Backspace" | "Delete" | "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageDown" | "PageUp";
+  deltaY?: number;
+};
+type DemonstrationDraft = {
+  slug: string;
+  title: string;
+  summary: string;
+  instructions: string;
+  tools: string[];
+  requiredTools: string[];
+  sourceRecordingId: string;
+};
+
 export const demonstrations = pgTable(
   "demonstrations",
   {

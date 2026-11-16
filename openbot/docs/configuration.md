@@ -1,6 +1,6 @@
 # Configuration
 
-The active Browser/Bot core is configured with environment variables and a tenant package. See architecture.md for the source extraction of 2026-11-14. Inherited sections about proactive work, Responsibility, generic approvals and delivery describe services no longer assembled by the core; ordinary routines and manual mail/calendar connectors remain.
+The active Browser/Bot core is configured with environment variables and a tenant package. Manual mail/calendar connectors remain; retired background scheduling, enterprise controls, authoring playgrounds and telemetry exporters are not configured by this core.
 
 ## Environment setup
 
@@ -58,18 +58,9 @@ There is no environment, tenant, harness or first-row fallback, and opening Chat
 | `AGENT_BOT_MODEL`    | `gpt-5.5`                          | Model for the proof-of-concept Bot (`agent-bot`), kept separate because it speaks `/v1/chat/completions` directly and refuses a model it cannot use. |
 | `BOT_RESPONSES_API`  | `false`                            | Makes `agent-langgraph` use the OpenAI Responses API.               |
 | `BOT_REASONING_EFFORT` | unset (provider default)         | OpenAI and the Responses API only: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `agent-langgraph` refuses to start on any other value, on a non-`openai` provider, or without the Responses API. |
-| `AGENT_STALL_TIMEOUT_MS` | unset (off)                    | How long a Bot's stream may produce nothing before the turn is ended for it. |
 | `AGENT_TOOL_TOKEN`   | unset; `start.sh` generates one    | The secret a framework Bot presents when it calls a granted tool back through this server. |
 | `APP_DIST_DIR`       | unset                              | Where the built app is, when this process serves it. Set inside the container image; unset in development, where Vite serves the app. |
-| `AUDIT_RETENTION_DAYS` | unset                            | Whole number of days to keep audit rows; older ones are removed. Unset keeps the trail forever. |
-| `WORKER_SHARED_SECRET` | unset; `start.sh` uses a fixed local default | The secret the routines worker presents to fire a due routine. Without it the server refuses every handoff, whether or not a worker exists to send one. |
 | `COMPOSIO_API_KEY`   | unset                              | One key for the whole deployment, for the broker that holds people's accounts for a few hundred apps. Unset, there is nothing to connect, nothing to grant and no Composio tool for a Bot to call; what remains is one row that goes nowhere, under **More apps** on the admin Plugins page, naming this variable. See [Composio](plugins/composio.md). |
-
-**`AGENT_STALL_TIMEOUT_MS`** watches for the failure a Bot has that nothing else in the trail can
-show: a stream that stops producing anything. Every other audit row is something that happened, and
-this one is the absence of anything happening, which leaves no trace of its own. Ending the turn
-writes `agent.stream_stalled`. Unset or `0` switches it off and nothing is watched. `.env.example`
-ships `60000`, so a new clone has it on and an upgraded deployment does not acquire it unasked.
 
 **`AGENT_TOOL_TOKEN`** exists because a framework Bot runs its own loop in its own process and still
 may not reach a vendor directly. It calls the deployment that granted the tool, which is where the
@@ -87,37 +78,7 @@ itself to a Bot, this is a Bot proving itself to the server. Rotating either mea
 holding the old one refuses every call, which is why `start.sh` restarts the server and recreates the
 Bot containers on a run that mints one.
 
-**`WORKER_SHARED_SECRET`** is the same shape of secret for a different pair: it is what the routines
-worker presents to `/internal/routines/run` to prove a routine's dispatch actually came from it. The
-API server refuses a handoff without one configured, and the worker refuses to start without one at
-all. See [routines.md](routines.md) for what a deployment with no worker at all looks like — the
-Routines page says so when nothing has swept.
-
-Unlike `AGENT_TOOL_TOKEN`, `start.sh` does not generate and persist this one. It supplies a fixed
-local default, `openbot-dev-worker-secret`, the same value every clone of this repository gets. That
-is fine here not because of where the server listens — it binds no hostname, so the port itself is
-reachable like any other — but because this is a dev-only default on a machine's own dev stack, and
-the endpoint it guards accepts nothing but an unguessable `routine_run_<uuid>` id: the server
-re-reads the routine, the owner and the channel from its own tables rather than trusting anything
-else the caller says, so a well-known value from a public repository gates nothing sensitive here.
-`AGENT_TOOL_TOKEN` is generated fresh and written to `.env` precisely because it is not that: it is
-copied into every Bot container, and a framework Bot holding it may be running on a machine of its
-own, so a fixed default there would be no boundary at all. Production deployments must set a real
-`WORKER_SHARED_SECRET`.
-
-**`SERVER_INTERNAL_URL`** is read by the worker, not by the API server, so it is not in the table
-above: it says where the worker's own process can reach this deployment's API, which is a fact about
-where the worker runs rather than a fact about the deployment `loadConfig` describes. `start.sh` points
-it at the server's own port on a laptop; the Helm chart's routines CronJob points it at the server's
-in-cluster Service address.
-
-For a worker started directly on this host, set `SERVER_INTERNAL_URL=http://127.0.0.1:3001`
-in `openbot/.env`, using the actual API port. Keep the existing `DATABASE_URL` and
-`WORKER_SHARED_SECRET`; the API and worker must use the same secret. From `openbot/`,
-start the existing worker with `bun --env-file=.env worker/src/index.ts`. Its `dev`
-command also reads this `.env`. The stack start script reads `SERVER_INTERNAL_URL`
-when set and otherwise uses its resolved `SERVER_PORT`. Starting the worker resumes
-dispatch of due routines.
+**`SERVER_INTERNAL_URL`** is the API address used by the frontend server to proxy requests. Set it to the API's reachable address when the frontend and API are served separately; it is not a background-worker setting.
 
 ## The provider spec file
 
@@ -578,23 +539,6 @@ SNS asks.
 Both are needed. With either missing, the email route is not mounted, and an email trigger has no
 address: its page and the Bot both say inbound email is not configured on this deployment.
 
-## OpenTelemetry export
-
-Every audit row is also sent as an OTLP log record over HTTP, so a SIEM or an OpenTelemetry
-Collector receives the same events the **Audit** page shows, as they happen. Each record carries
-`openbot.surface`: `bot`, `identity` or `control_plane`. Export never stops a request: when the
-collector cannot be reached, records are dropped after the SDK's retries, and the row in PostgreSQL
-is still the record.
-
-| Variable                           | Meaning                                                                                                |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Where log records go, used exactly as written. Takes precedence over the next one.                    |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`      | Collector base URL; OpenBot appends `/v1/logs`. Setting either endpoint switches export on.           |
-| `OTEL_EXPORTER_OTLP_LOGS_HEADERS`  | Headers for the logs endpoint, as `key=value` pairs separated by commas (for a collector's API key).  |
-| `OTEL_EXPORTER_OTLP_HEADERS`       | The same, used when `OTEL_EXPORTER_OTLP_LOGS_HEADERS` is unset.                                        |
-| `OTEL_SERVICE_NAME`                | The `service.name` on every record. Defaults to `openbot`.                                             |
-| `OPENBOT_OTEL_EXPORT`              | `off` turns export off while an endpoint is still set.                                                 |
-
 ## Computer and supervisor
 
 | Variable                             | Meaning                                                                                   |
@@ -753,19 +697,7 @@ The file is optional and gitignored. Without it every Bot's browser goes out dir
 default. Both the shared computer and the supervisor are given it: the computer resolves its own
 proxy from these names, and the supervisor forwards them into each computer it creates.
 
-Every computer runs its own filtering proxy on `127.0.0.1`, which applies the network policy an
-administrator sets under **Admin > Enterprise controls**, and it sets `HTTP_PROXY`, `HTTPS_PROXY` and
-`NO_PROXY` for itself and its shell to point at that filter. Do not set those three to reach an
-upstream proxy; use `EGRESS_PROXY_<BOT_ID>` or `EGRESS_PROXY_DEFAULT`, which the filter chains to.
-
-The server pushes each Bot's policy to its computer when the computer wakes and every 30 seconds
-after. Until a policy has arrived, the filter refuses every connection. Metadata and link-local
-addresses (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254` and the like) are refused in every mode,
-including `allow_all`. `EGRESS_POLICY_REQUIRED=0` (or `false`) lets the filter allow everything
-until a policy arrives instead, which only a computer run with no API server should need. It is read
-by the computer: in Compose put it in `egress.env`, which reaches the shared computer, and on
-Kubernetes put it in `computers.extraEnv`. The supervisor forwards only the `EGRESS_PROXY` names, so
-a computer it creates does not receive it.
+Proxy selection is read from the environment when a Bot's browser is created. Restart that browser to apply a changed upstream proxy.
 
 The supervisor also reads:
 

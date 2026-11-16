@@ -12,8 +12,7 @@ import type { Database } from "../db/client";
  * The allow-list is enforced on the server, not in the browser. A compiled React component has
  * the whole application: it can call `fetch` itself, so a list of permitted functions held beside it
  * is documentation, not a control. The only place a permission can be enforced is the place that
- * holds the data. `useSandboxFunctions` is the browser-side equivalent for code running in an
- * isolated frame, which is a different path.
+ * holds the data.
  *
  * Arguments are checked here too, for the same reason: whatever the browser sends is a claim.
  * Bounded rather than merely parsed, a report is a thing somebody watches load, so "how many days"

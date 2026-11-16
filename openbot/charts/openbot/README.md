@@ -154,7 +154,7 @@ pulled. Anything other than `sha256:` and 64 hex characters is refused at instal
 
 The tenant package is a directory (`config.tenantPackageDir`, `/app/examples/openduet` by default).
 To run your own without building an image, put its files in a ConfigMap and mount it with
-`config.extraVolumes` and `config.extraVolumeMounts`. They reach the server and the routines and
+`config.extraVolumes` and `config.extraVolumeMounts`. They reach the server and
 computer-culler CronJobs, the pods that load the package, so the package is the same wherever it is
 read:
 
@@ -252,13 +252,7 @@ asked for inside more than one API replica; `networkPolicy.enabled` is set with 
 and no `networkPolicy.extraEgress`, or with `computers.mode: sandbox` and no
 `networkPolicy.kubernetesApiCidr`; a computer proxy is named that the network policy blocks, or
 `computers.egressProxy` is turned on with policies and no `networkPolicy.computerExtraEgress`, or with
-no `secrets.egressProxyUrl` where this chart writes the Secret; or
-`routines.enabled` is set with no `secrets.workerSharedSecret` — and, on `externalSecrets`, no
-`worker-shared-secret` key named for it to read instead. One combination gets no refusal at all:
-`secrets.existingSecret` with `routines.enabled`, because the Secret this chart would otherwise
-validate is somebody else's to create — put `worker-shared-secret` in it yourself, or every pod that
-mounts it fails to start — the routines CronJob, the culler, and the API server itself — with nothing
-at install time to say so.
+no `secrets.egressProxyUrl` where this chart writes the Secret.
 
 ## Your own Bot
 
@@ -281,7 +275,7 @@ somebody creates in the app without an endpoint runs here on its role descriptio
 pointing at an endpoint that resolves to nothing is dropped rather than registered as a coworker
 nobody can talk to.
 
-## Slack, Teams, text messages, push, SCIM, inbound email and OpenTelemetry
+## Slack, Teams, text messages, push, SCIM and inbound email
 
 Each is off until its values are set, and each is the same setting [docs/configuration.md](../../docs/configuration.md)
 describes for a `.env`. Secrets go under `secrets`; with an existing Secret or an external store, use
@@ -295,7 +289,6 @@ the key in the last column.
 | Where Twilio calls back          | `config.deliveryPublicUrl`                        | defaults to `config.publicUrl`                            |                                                                |
 | SCIM provisioning                | `config.scim.enabled`                             | `connectionId`                                            | `scim-bearer-token` (required), `scim-bearer-token-next` (optional) |
 | Inbound email triggers           | `config.inboundEmail.domain` and `snsTopicArns`   | both needed, or the route is not mounted                  |                                                                |
-| OpenTelemetry export             | `config.otel.endpoint` or `logsEndpoint`          | `serviceName`, `paused`                                   | `otel-logs-headers`, `otel-headers` (optional)                 |
 | Composio app catalogue           | `secrets.composioApiKey` (the key is the switch)  |                                                           | `composio-api-key` (server only; see [Composio](../../docs/plugins/composio.md)) |
 
 ```yaml
@@ -314,8 +307,7 @@ The install refuses what the server would refuse at boot: a switch with no secre
 `externalSecrets`, no key named for it), an OpenTag secret under 32 characters, an OpenTag URL or icon
 with the pairing off, an OpenTag URL that is not http(s) or an icon that is not https, a partial set
 of Twilio settings, a push project id that is not a UUID, and a `deliveryPublicUrl` that is not
-http(s). With `networkPolicy.enabled`, a collector inside the cluster has to be named in
-`networkPolicy.extraEgress`; the providers themselves are reached on 443.
+http(s). The providers themselves are reached on 443.
 
 ## Upgrading the server without the computers
 
@@ -368,21 +360,14 @@ PostgreSQL with `select ... for update skip locked`, so whichever pod runs the s
 nobody else holds, and one that dies mid-suspend hands its work back when the lease expires. The
 decision is re-checked at the moment of acting, because somebody may have come back in between.
 
-A second CronJob shares that same mechanism for a different job: `routines.enabled` turns on the
-sweep that fires standing instructions a Bot was asked to carry out on a schedule, on
-`routines.schedule`. It needs `secrets.workerSharedSecret` — the credential it presents to the API
-server to be recognised as the worker rather than an arbitrary caller — and is off by default because
-turning it on with no secret set is a CronJob whose every run is refused. See the routines refusal
-below, and [docs/routines.md](../../docs/routines.md).
-
-A third CronJob **deletes data, is on by default, and is the only one of the three that does**:
+A separate CronJob **deletes data and is on by default**:
 `attachments.culler` sweeps staged attachments that were never sent. A file uploaded into the
 composer is stored the moment it is pasted or dropped, before anybody presses send — so closing the
 tab, or changing your mind, leaves bytes in the database that no message will ever point at. The
 sweep removes those, hourly (`attachments.culler.schedule`), once they are older than
 `attachments.culler.olderThanHours` — **24 hours by default**.
 
-It is on by default where the other two are off, because it needs nothing but the database that
+It is on by default because it needs nothing but the database that
 every deployment already has, and because the alternative is a table of blobs that only grows. What
 it will never remove is an attachment that was sent: those are stamped when the message they ride on
 goes out, and the sweep asks only for unstamped rows. The window matters, though — a person who

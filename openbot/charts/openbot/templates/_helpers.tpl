@@ -408,8 +408,7 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
       key: computer-token
       optional: {{ eq .Values.computers.mode "external" }}
 {{- /*
-  Delivery (Slack and Teams through OpenTag, text messages, push), SCIM, inbound email and
-  OpenTelemetry export.
+  Delivery (Slack and Teams through OpenTag, text messages, push), SCIM and inbound email.
 
   PARENTHESISED, every map, for the reason `config.handoff` is above: these are keys this chart did
   not have before, and `helm upgrade --reuse-values` leaves them absent on an existing deployment.
@@ -489,37 +488,6 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
 {{- with $inboundEmail.snsTopicArns }}
 - name: OPENBOT_INBOUND_EMAIL_SNS_TOPIC_ARNS
   value: {{ . | quote }}
-{{- end }}
-{{- $otel := .Values.config.otel | default dict }}
-{{- if or $otel.endpoint $otel.logsEndpoint }}
-{{- with $otel.endpoint }}
-- name: OTEL_EXPORTER_OTLP_ENDPOINT
-  value: {{ . | quote }}
-{{- end }}
-{{- with $otel.logsEndpoint }}
-- name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-  value: {{ . | quote }}
-{{- end }}
-{{- with $otel.serviceName }}
-- name: OTEL_SERVICE_NAME
-  value: {{ . | quote }}
-{{- end }}
-{{- if $otel.paused }}
-- name: OPENBOT_OTEL_EXPORT
-  value: "off"
-{{- end }}
-- name: OTEL_EXPORTER_OTLP_LOGS_HEADERS
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "openbot.secretName" . }}
-      key: otel-logs-headers
-      optional: true
-- name: OTEL_EXPORTER_OTLP_HEADERS
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "openbot.secretName" . }}
-      key: otel-headers
-      optional: true
 {{- end }}
 {{- with .Values.config.extraEnv }}
 {{ toYaml . }}

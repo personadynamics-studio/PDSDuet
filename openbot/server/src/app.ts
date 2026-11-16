@@ -32,8 +32,6 @@ import type { ChannelEventHub } from "./channels/events";
 import { createGroupRoutes, type GroupConversations } from "./channels/group";
 import { type ChannelStore, createChannelRoutes } from "./channels/routes";
 import { createComponentRoutes } from "./components/routes";
-import type { SandboxedStore } from "./components/sandboxed";
-import { createSandboxedRoutes } from "./components/sandboxed-routes";
 import type { ComponentStore } from "./components/store";
 import type { ComputerGateway } from "./computer/gateway";
 import { createComputerRoutes } from "./computer/routes";
@@ -155,7 +153,6 @@ export function createApp(
   auditStore?: AuditStore,
   componentStore?: ComponentStore,
   pluginStore?: PluginStore,
-  sandboxedStore?: SandboxedStore,
   peopleStore?: PeopleStore,
   identityProviders?: IdentityProviderStore,
   userInstructions?: UserInstructionsStore,
@@ -182,7 +179,7 @@ export function createApp(
   identityGithubCallback?: Hono<{ Variables: AppVariables }>,
   },
 ) {
-  const {auth,auditReader,credentialService,packageStatusReader,execution,settlement,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,sandboxedStore,peopleStore,identityProviders,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,coworker,identity,identityGithubCallback} = services;
+  const {auth,auditReader,credentialService,packageStatusReader,execution,settlement,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,peopleStore,identityProviders,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,coworker,identity,identityGithubCallback} = services;
   const app = new Hono<{ Variables: AppVariables }>();
   mountDesktopConnectionFailure(app, desktopHostToken);
   mountProviderOAuthProxy(app, modelProviderProxy);
@@ -904,7 +901,6 @@ export function createApp(
         componentStore,
         requireUser,
         auditStore,
-        sandboxedStore,
       ),
     );
   }
@@ -941,13 +937,6 @@ export function createApp(
         composio,
         coworker?.shared,
       ),
-    );
-  }
-
-  if (sandboxedStore) {
-    app.route(
-      "/api/sandboxed",
-      createSandboxedRoutes(sandboxedStore, requireUser),
     );
   }
 

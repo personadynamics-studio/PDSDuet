@@ -765,32 +765,6 @@ function initiatorColumns(initiator: AuditInitiator | undefined) {
   return { initiatorKind: initiator.kind, initiatorId: initiator.id };
 }
 
-/** One row as written, handed to anything that streams the trail elsewhere. */
-export type AuditTapEvent = {
-  eventType: string;
-  targetType: string;
-  targetId?: string;
-  actorUserId?: string;
-  initiatorKind: string;
-  initiatorId: string | null;
-  payload: Record<string, unknown>;
-};
-
-export type AuditTap = (event: AuditTapEvent) => void;
-
-const auditTaps = new Set<AuditTap>();
-
-/**
- * Hear every row after it is written: the OpenTelemetry/SIEM exporter and Action Recording.
- *
- * After the insert, and only when it succeeded, so nothing is streamed that the trail does not hold.
- * A tap that throws is logged and ignored: streaming a row must never fail writing it.
- */
-export function addAuditTap(tap: AuditTap): () => void {
-  auditTaps.add(tap);
-  return () => auditTaps.delete(tap);
-}
-
 export function createAuditStore(database: Database): AuditStore {
   return {
     insert: async ({ initiator, ...event }) => {
@@ -800,19 +774,6 @@ export function createAuditStore(database: Database): AuditStore {
         payload: redactAuditPayload(event.payload) as Record<string, unknown>,
       };
       await database.insert(auditEvents).values(row);
-      for (const tap of auditTaps) {
-        try {
-          tap(row);
-        } catch (error) {
-          console.error(
-            JSON.stringify({
-              type: "audit-tap-failed",
-              eventType: row.eventType,
-              error: String(error),
-            }),
-          );
-        }
-      }
     },
   };
 }

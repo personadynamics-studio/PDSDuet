@@ -204,21 +204,6 @@ config:
     # Comma-separated ARNs of the SNS topics allowed to deliver mail.
     snsTopicArns: ""
 
-  # Every audit row as an OTLP log record over HTTP, for a SIEM or an OpenTelemetry Collector.
-  #
-  # Setting either endpoint switches export on. Headers, which usually carry a collector's API key,
-  # are secrets: `secrets.otelHeaders` and `secrets.otelLogsHeaders`, as `key=value` pairs separated
-  # by commas. With `networkPolicy.enabled`, a collector inside the cluster has to be named in
-  # `networkPolicy.extraEgress`.
-  otel:
-    # Collector base URL; the server appends `/v1/logs`.
-    endpoint: ""
-    # Where log records go, used exactly as written. Takes precedence over `endpoint`.
-    logsEndpoint: ""
-    # The `service.name` on every record. Empty means the server's default, `openbot`.
-    serviceName: ""
-    # Stops export while an endpoint is still set.
-    paused: false
   logLevel: ""
   # Free-form additions, for anything this chart has no opinion about.
   extraEnv: []
@@ -523,10 +508,6 @@ secrets:
   # Required when `config.scim.enabled`; the next one is optional, for rotation.
   scimBearerToken: ""
   scimBearerTokenNext: ""
-  # Optional, with `config.otel`. Headers for the logs endpoint, and the general ones used when the
-  # logs ones are unset.
-  otelLogsHeaders: ""
-  otelHeaders: ""
   # Required when `computers.egressProxy.enabled` and no `existingSecret` is named there.
   egressProxyUrl: ""
 

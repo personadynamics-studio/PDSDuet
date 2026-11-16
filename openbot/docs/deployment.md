@@ -48,30 +48,13 @@ do on a laptop with no supervisor configured. A shared browser means shared logi
 shared session between Bots, which is fine for a deployment where one team trusts its own Bots and
 is not fine as a boundary between tenants.
 
-**The routines schedule.** Nothing in this image is scheduled to fire a routine — there is no
-worker service beside the API, and `worker/` (the looping local variant) is not in the image. The
-sweep itself is: `bun scripts/fire-routines.ts` from `/app/server`, one pass then exit, which is what
-the Helm chart's CronJob runs from this same image. So a one-container deployment needs something
-outside the container to run it on a schedule — an external cron, a platform scheduled job, or a
-second container of this image started with `--entrypoint sh` (without it the command arrives as a
-`CMD`, and this image's entrypoint boots a whole second server before it runs one; see
-[Database initialization](#database-initialization)) — with `SERVER_INTERNAL_URL` and
-`WORKER_SHARED_SECRET` set **on top of this server's whole environment**, not instead of it. That
-sweep builds the same configuration the API server does before it looks for a due routine, so it
-refuses to start without the encryption key and an identity provider,
-exactly as the server does: give it the same env file and add those two. Until something does, a
-routine is stored, its next run time is computed, the Routines page shows it, and it never fires.
-See [routines.md](routines.md).
-
-**The staged-attachment sweep.** Same shape as the routines schedule, with a consequence worth
-stating on its own: a file dropped into the composer is stored before it is sent, and nothing in
+**The staged-attachment sweep.** A file dropped into the composer is stored before it is sent, and nothing in
 this image reclaims the ones that never were. The sweep is `bun scripts/cull-staged-attachments.ts`
 from `/app/server`, one pass then exit, which the Helm chart runs hourly and which deletes unsent
 attachments older than 24 hours — the window is the script's one positional argument, so
 `bun scripts/cull-staged-attachments.ts 72` keeps them for three days, and a fraction is a fraction
 of an hour. It needs only `DATABASE_URL` — no encryption key, no identity provider, nothing else
-this image is configured with — so unlike the routines sweep above, an external cron can run it
-with one variable set. A second container of this image still needs `--entrypoint sh`, for the
+this image is configured with — so an external cron can run it with one variable set. A second container of this image still needs `--entrypoint sh`, for the
 reason under [Database initialization](#database-initialization).
 
 Until something does, abandoned uploads accumulate in `attachments` up to a ceiling that is one
@@ -172,9 +155,8 @@ in ECR, and is what AWS points App Runner users at now that App Runner takes no 
 Plain ECS on Fargate behind an ALB is the answer if you want task definitions and fine-grained IAM.
 No shared-memory configuration is needed or possible.
 
-**Kubernetes.** Everything above describes one container run by hand. A cluster is the other shape,
-and it is the only one that gives a Bot a computer of its own, runs the routines schedule without
-something outside the container, and scales the API past a single replica. That is the Helm chart:
+**Kubernetes.** The Helm chart runs Bot computers separately from its single API pod and can schedule
+staged-attachment cleanup:
 [charts/openbot/README.md](../charts/openbot/README.md), which covers EKS, GKE, AKS and a plain
 self-hosted cluster from the same templates.
 

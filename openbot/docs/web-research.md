@@ -49,19 +49,7 @@ The provider receives model-selected objectives, search queries, requested publi
 
 For a safer setup, use a separate research Bot with only public-web tools, like the fintech package's **Research Desk**. Do not grant it mail, calendar or private-document tools, and do not pass private content to it in requests or handoffs.
 
-An administrator can also add a deny rule under **Boundaries** (`/admin/boundaries`). For example, this policy refuses calls to all six research catalogue entries when a routine starts the run:
-
-```json
-{
-  "mode": "enforce",
-  "deny": [
-    "initiator.kind == \"routine\" && mcp.server in [\"parallel\", \"parallel-authenticated\", \"exa\", \"exa-authenticated\", \"firecrawl\", \"firecrawl-authenticated\"]"
-  ],
-  "allow": ["true"]
-}
-```
-
-Add the deny expression to your existing policy rather than replacing other restrictions. A saved policy takes precedence over `AGENT_COMPUTER_POLICY`; that variable supplies the initial policy when no saved policy exists. This example blocks scheduled research, including both search and fetch. It does not prevent disclosure in a person-started run or a handoff, and it does not restrict other outbound tools such as the browser. Isolation and grants still matter.
+Existing action policies and per-Bot grants still apply to research requests.
 
 ## Adding a provider
 

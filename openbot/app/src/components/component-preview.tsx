@@ -1,36 +1,5 @@
-import { LocalComponentFrame } from "./local-component-frame";
-import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { galleryComponent } from "@/lib/chat/gallery-registry";
-import {
-  type SandboxedRecord,
-  sandboxedListQueryOptions,
-} from "@/lib/sandboxed/queries";
-
-/** Sample arguments belong to the administrator's working copy, so only Admin fetches them. */
-export function AdminComponentPreview({
-  name,
-  kind,
-}: {
-  name: string;
-  kind: string;
-}) {
-  const sandboxed = useQuery({
-    ...sandboxedListQueryOptions(),
-    enabled: kind === "sandboxed",
-  });
-  if (kind === "sandboxed" && sandboxed.isPending) return null;
-  if (kind === "sandboxed" && sandboxed.error) {
-    return <PreviewNotice>Preview could not be loaded.</PreviewNotice>;
-  }
-  return (
-    <ComponentPreview
-      kind={kind}
-      name={name}
-      sandboxed={sandboxed.data?.find((component) => component.name === name)}
-    />
-  );
-}
 
 function PreviewNotice({ children }: { children: ReactNode }) {
   return (
@@ -43,13 +12,9 @@ function PreviewNotice({ children }: { children: ReactNode }) {
 
 export function ComponentPreview({
   name,
-  kind,
-  sandboxed,
   fill = PREVIEW_FILL,
 }: {
   name: string;
-  kind?: string;
-  sandboxed?: SandboxedRecord;
   fill?: number;
 }) {
   const entry = galleryComponent(name);
@@ -61,33 +26,11 @@ export function ComponentPreview({
     );
   }
 
-  if (sandboxed?.name === name) {
-    if (!sandboxed.published || sandboxed.publishedHtml === null) {
-      return (
-        <PreviewNotice>
-          Publish in the playground to see a preview.
-        </PreviewNotice>
-      );
-    }
-    return (
-      <FittedPreview fill={fill}>
-        <div
-          className="w-full"
-          title="Published component with saved sample arguments"
-        >
-          <LocalComponentFrame html={sandboxed.publishedHtml} css={sandboxed.publishedCss ?? ""} js={sandboxed.publishedJsFunctions ?? ""} args={sandboxed.sampleArguments} />
-        </div>
-      </FittedPreview>
-    );
-  }
-
   return (
     <PreviewNotice>
       {entry
         ? "This one is only drawn in a conversation."
-        : kind === "sandboxed"
-          ? "Published in the playground."
-          : "This build cannot draw this."}
+        : "This build cannot draw this."}
     </PreviewNotice>
   );
 }

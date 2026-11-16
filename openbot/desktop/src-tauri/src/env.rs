@@ -3,10 +3,8 @@
 //! `scripts/start.sh` writes the same file for a developer. This writes it for somebody who will
 //! never open a terminal, which changes three things:
 //!
-//! - **No dev fallbacks.** `start.sh` falls back to fixed strings for `COMPUTER_TOKEN`,
-//!   `SUPERVISOR_TOKEN` and `WORKER_SHARED_SECRET`, which are published in this repository. They are
-//!   fine on a laptop somebody is debugging and they are not fine as the default a product ships.
-//!   Every one of them is generated here.
+//! - **Generated secrets.** Installation credentials are generated here rather than copied from
+//!   published development values.
 //! - **A real `KEY_ENCRYPTION_KEY`.** `.env.example` carries a valid public key, and
 //!   `server/src/config.ts` only throws on it under `NODE_ENV=production`. A desktop install is not
 //!   production, so it would land in the warn branch and encrypt the credential vault with a key
@@ -434,9 +432,7 @@ pub fn compose(
         format!("http://127.0.0.1:{}", ports.supervisor),
     );
 
-    // The worker refuses to start without this, by design: it is a fact about where this process
-    // runs, and it would rather stop than guess. `start.sh` sets it at run time, so a `.env` copied
-    // from a developer's machine does not carry it either.
+    // The frontend server proxies API requests to this address.
     env.insert(
         "SERVER_INTERNAL_URL".into(),
         format!("http://127.0.0.1:{}", ports.server),
@@ -602,17 +598,15 @@ pub const NO_KEY_NEEDED: &str = "no-key-needed";
 const BANNER: &str = "# Written by OpenBot Desktop. Anything else in this file is left alone.";
 
 /// The secrets this deployment mints for itself, once.
-pub const MINTED: [&str; 3] = [
+pub const MINTED: [&str; 2] = [
     "AGENT_TOOL_TOKEN",
     "KEY_ENCRYPTION_KEY",
-    "WORKER_SHARED_SECRET",
 ];
 
-const PUBLISHED: [&str; 4] = [
+const PUBLISHED: [&str; 3] = [
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "openbot-dev-supervisor-token",
     "openbot-dev-computer-token",
-    "openbot-dev-worker-secret",
 ];
 
 /// Whether an original installation key can be reused without replacement.

@@ -26,10 +26,8 @@ import { Route as AuthedAdminApprovalsRouteImport } from './routes/_authed/admin
 import { Route as AuthedAdminAuditRouteImport } from './routes/_authed/admin/audit'
 import { Route as AuthedAdminComputersRouteImport } from './routes/_authed/admin/computers'
 import { Route as AuthedAdminCredentialsRouteImport } from './routes/_authed/admin/credentials'
-import { Route as AuthedAdminEnterpriseRouteImport } from './routes/_authed/admin/enterprise'
 import { Route as AuthedAdminIdentityProvidersRouteImport } from './routes/_authed/admin/identity-providers'
 import { Route as AuthedAdminPeopleRouteImport } from './routes/_authed/admin/people'
-import { Route as AuthedAdminPlaygroundRouteImport } from './routes/_authed/admin/playground'
 import { Route as AuthedAdminSkillsRouteImport } from './routes/_authed/admin/skills'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed/settings/index'
 import { Route as AuthedSettingsMemoryRouteImport } from './routes/_authed/settings/memory'
@@ -151,11 +149,6 @@ const AuthedAdminCredentialsRoute = AuthedAdminCredentialsRouteImport.update({
   path: '/credentials',
   getParentRoute: () => AuthedAdminRouteRoute,
 } as any)
-const AuthedAdminEnterpriseRoute = AuthedAdminEnterpriseRouteImport.update({
-  id: '/enterprise',
-  path: '/enterprise',
-  getParentRoute: () => AuthedAdminRouteRoute,
-} as any)
 const AuthedAdminIdentityProvidersRoute =
   AuthedAdminIdentityProvidersRouteImport.update({
     id: '/identity-providers',
@@ -165,11 +158,6 @@ const AuthedAdminIdentityProvidersRoute =
 const AuthedAdminPeopleRoute = AuthedAdminPeopleRouteImport.update({
   id: '/people',
   path: '/people',
-  getParentRoute: () => AuthedAdminRouteRoute,
-} as any)
-const AuthedAdminPlaygroundRoute = AuthedAdminPlaygroundRouteImport.update({
-  id: '/playground',
-  path: '/playground',
   getParentRoute: () => AuthedAdminRouteRoute,
 } as any)
 const AuthedAdminSkillsRoute = AuthedAdminSkillsRouteImport.update({
@@ -393,10 +381,8 @@ export interface FileRoutesByFullPath {
   '/admin/audit': typeof AuthedAdminAuditRoute
   '/admin/computers': typeof AuthedAdminComputersRoute
   '/admin/credentials': typeof AuthedAdminCredentialsRoute
-  '/admin/enterprise': typeof AuthedAdminEnterpriseRoute
   '/admin/identity-providers': typeof AuthedAdminIdentityProvidersRoute
   '/admin/people': typeof AuthedAdminPeopleRoute
-  '/admin/playground': typeof AuthedAdminPlaygroundRoute
   '/admin/skills': typeof AuthedAdminSkillsRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/passwords': typeof AuthedSettingsPasswordsRoute
@@ -448,10 +434,8 @@ export interface FileRoutesByTo {
   '/admin/audit': typeof AuthedAdminAuditRoute
   '/admin/computers': typeof AuthedAdminComputersRoute
   '/admin/credentials': typeof AuthedAdminCredentialsRoute
-  '/admin/enterprise': typeof AuthedAdminEnterpriseRoute
   '/admin/identity-providers': typeof AuthedAdminIdentityProvidersRoute
   '/admin/people': typeof AuthedAdminPeopleRoute
-  '/admin/playground': typeof AuthedAdminPlaygroundRoute
   '/admin/skills': typeof AuthedAdminSkillsRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/passwords': typeof AuthedSettingsPasswordsRoute
@@ -508,10 +492,8 @@ export interface FileRoutesById {
   '/_authed/admin/audit': typeof AuthedAdminAuditRoute
   '/_authed/admin/computers': typeof AuthedAdminComputersRoute
   '/_authed/admin/credentials': typeof AuthedAdminCredentialsRoute
-  '/_authed/admin/enterprise': typeof AuthedAdminEnterpriseRoute
   '/_authed/admin/identity-providers': typeof AuthedAdminIdentityProvidersRoute
   '/_authed/admin/people': typeof AuthedAdminPeopleRoute
-  '/_authed/admin/playground': typeof AuthedAdminPlaygroundRoute
   '/_authed/admin/skills': typeof AuthedAdminSkillsRoute
   '/_authed/settings/memory': typeof AuthedSettingsMemoryRoute
   '/_authed/settings/passwords': typeof AuthedSettingsPasswordsRoute
@@ -569,10 +551,8 @@ export interface FileRouteTypes {
     | '/admin/audit'
     | '/admin/computers'
     | '/admin/credentials'
-    | '/admin/enterprise'
     | '/admin/identity-providers'
     | '/admin/people'
-    | '/admin/playground'
     | '/admin/skills'
     | '/settings/memory'
     | '/settings/passwords'
@@ -624,10 +604,8 @@ export interface FileRouteTypes {
     | '/admin/audit'
     | '/admin/computers'
     | '/admin/credentials'
-    | '/admin/enterprise'
     | '/admin/identity-providers'
     | '/admin/people'
-    | '/admin/playground'
     | '/admin/skills'
     | '/settings/memory'
     | '/settings/passwords'
@@ -683,10 +661,8 @@ export interface FileRouteTypes {
     | '/_authed/admin/audit'
     | '/_authed/admin/computers'
     | '/_authed/admin/credentials'
-    | '/_authed/admin/enterprise'
     | '/_authed/admin/identity-providers'
     | '/_authed/admin/people'
-    | '/_authed/admin/playground'
     | '/_authed/admin/skills'
     | '/_authed/settings/memory'
     | '/_authed/settings/passwords'
@@ -854,13 +830,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAdminCredentialsRouteImport
       parentRoute: typeof AuthedAdminRouteRoute
     }
-    '/_authed/admin/enterprise': {
-      id: '/_authed/admin/enterprise'
-      path: '/enterprise'
-      fullPath: '/admin/enterprise'
-      preLoaderRoute: typeof AuthedAdminEnterpriseRouteImport
-      parentRoute: typeof AuthedAdminRouteRoute
-    }
     '/_authed/admin/identity-providers': {
       id: '/_authed/admin/identity-providers'
       path: '/identity-providers'
@@ -873,13 +842,6 @@ declare module '@tanstack/react-router' {
       path: '/people'
       fullPath: '/admin/people'
       preLoaderRoute: typeof AuthedAdminPeopleRouteImport
-      parentRoute: typeof AuthedAdminRouteRoute
-    }
-    '/_authed/admin/playground': {
-      id: '/_authed/admin/playground'
-      path: '/playground'
-      fullPath: '/admin/playground'
-      preLoaderRoute: typeof AuthedAdminPlaygroundRouteImport
       parentRoute: typeof AuthedAdminRouteRoute
     }
     '/_authed/admin/skills': {
@@ -1149,10 +1111,8 @@ interface AuthedAdminRouteRouteChildren {
   AuthedAdminAuditRoute: typeof AuthedAdminAuditRoute
   AuthedAdminComputersRoute: typeof AuthedAdminComputersRoute
   AuthedAdminCredentialsRoute: typeof AuthedAdminCredentialsRoute
-  AuthedAdminEnterpriseRoute: typeof AuthedAdminEnterpriseRoute
   AuthedAdminIdentityProvidersRoute: typeof AuthedAdminIdentityProvidersRoute
   AuthedAdminPeopleRoute: typeof AuthedAdminPeopleRoute
-  AuthedAdminPlaygroundRoute: typeof AuthedAdminPlaygroundRoute
   AuthedAdminSkillsRoute: typeof AuthedAdminSkillsRoute
   AuthedAdminIndexRoute: typeof AuthedAdminIndexRoute
   AuthedAdminComponentsNameRoute: typeof AuthedAdminComponentsNameRoute
@@ -1170,10 +1130,8 @@ const AuthedAdminRouteRouteChildren: AuthedAdminRouteRouteChildren = {
   AuthedAdminAuditRoute: AuthedAdminAuditRoute,
   AuthedAdminComputersRoute: AuthedAdminComputersRoute,
   AuthedAdminCredentialsRoute: AuthedAdminCredentialsRoute,
-  AuthedAdminEnterpriseRoute: AuthedAdminEnterpriseRoute,
   AuthedAdminIdentityProvidersRoute: AuthedAdminIdentityProvidersRoute,
   AuthedAdminPeopleRoute: AuthedAdminPeopleRoute,
-  AuthedAdminPlaygroundRoute: AuthedAdminPlaygroundRoute,
   AuthedAdminSkillsRoute: AuthedAdminSkillsRoute,
   AuthedAdminIndexRoute: AuthedAdminIndexRoute,
   AuthedAdminComponentsNameRoute: AuthedAdminComponentsNameRoute,

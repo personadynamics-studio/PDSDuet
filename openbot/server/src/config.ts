@@ -191,23 +191,6 @@ export type DeploymentConfig = {
   appUrl: string | undefined;
   tenantPackageDirectory: string;
   runtime: RuntimeCapabilities;
-  /**
-   * How long a Bot's stream may say nothing before this deployment ends the turn, in milliseconds.
-   *
-   * Zero means no watchdog, and an unset variable means zero. A turn that is ended is a turn
-   * somebody loses, so a deployment that has not said it wants that gets the behaviour it already
-   * had. `.env.example` ships a value, so a new clone starts with the watch on and an upgraded
-   * deployment does not acquire it without being asked.
-   */
-  agentStallTimeoutMs: number;
-  /**
-   * How many days of audit trail this deployment keeps, or undefined to keep everything.
-   *
-   * Undefined by default. Deleting somebody's audit trail because a default said so is the worse of
-   * the two failures, and a deployment that has not thought about retention should keep everything
-   * until it has.
-   */
-  auditRetentionDays: number | undefined;
   oauth: {
     google?: { clientId: string; clientSecret: string };
   };
@@ -568,41 +551,6 @@ function computerConfig(environment: Environment): ComputerConfig | undefined {
 
 
 
-/**
- * How long the audit trail is kept.
- *
- * Refused rather than coerced, like everything else here. "We accepted your retention policy but not
- * the one you wrote" is a bad answer about a control an auditor will ask to see, and a typo that
- * silently became 0 would delete the trail rather than keep it.
- */
-function auditRetentionDays(environment: Environment): number | undefined {
-  const raw = optional(environment, "AUDIT_RETENTION_DAYS");
-  if (!raw) return undefined;
-
-  const days = Number(raw);
-  if (!Number.isInteger(days) || days < 1) {
-    throw new Error(
-      "AUDIT_RETENTION_DAYS must be a whole number of days, at least 1. Leave it unset to keep the audit trail forever.",
-    );
-  }
-  return days;
-}
-
-function agentStallTimeoutMs(environment: Environment): number {
-  const raw = optional(environment, "AGENT_STALL_TIMEOUT_MS");
-  if (!raw) {
-    return 0;
-  }
-
-  const milliseconds = Number(raw);
-  if (!Number.isInteger(milliseconds) || milliseconds < 0) {
-    throw new Error(
-      "AGENT_STALL_TIMEOUT_MS must be a whole number of milliseconds, or 0 to switch the watchdog off",
-    );
-  }
-  return milliseconds;
-}
-
 /** Where the API listens when nothing says otherwise: what `.env.example` and the image ship. */
 const DEFAULT_PORT = 3001;
 
@@ -665,8 +613,6 @@ export function loadConfig(
     tenantPackageDirectory:
       optional(environment, "TENANT_PACKAGE_DIR") ?? "../examples/openduet",
     runtime: { mode: "local" as const, durableHistory: true as const },
-    agentStallTimeoutMs: agentStallTimeoutMs(environment),
-    auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
     singleUser: !auth,

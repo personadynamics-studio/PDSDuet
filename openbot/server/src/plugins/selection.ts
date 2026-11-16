@@ -138,8 +138,7 @@ export function readChosenSkills(
    * sentence. Parsed whole, every such answer read as a selector that could not say, and a Bot on
    * that model was offered its entire catalogue on every run. A greedy brace match also swallows
    * two adjacent objects into invalid JSON. Unioning their lists avoids dropping a skill when the
-   * model revises its selection. The router at `server/src/routing/classify.ts` still uses the
-   * greedy match; this scanner is local to skill selection. An answer with no usable object is null.
+   * model revises its selection. An answer with no usable object is null.
    */
   const known = new Set(skills.map((skill) => skill.slug));
   const selected = new Set<string>();

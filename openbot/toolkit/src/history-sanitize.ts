@@ -1,11 +1,8 @@
 /**
  * The one filter that keeps a broken conversation from being replayed at a model provider for ever.
  *
- * IT LIVES HERE BECAUSE BOTH TURN PATHS NEED IT. A routine's headless turn seeds history itself
- * (`toolkit/run-turn.ts`) and a chat turn is handed history by the browser (`copilot.ts`). Both
- * hand that history to a `BuiltInAgent`, which converts it and lets the model provider validate the
- * call/result pairing. A module of its own, in the toolkit, so the chat path can use it without
- * importing the headless turn runner.
+ * Execution and the headless tool loop use the same call/result pairing before sending history
+ * to a model provider.
  */
 import type { Message, ToolCall } from "@ag-ui/client";
 

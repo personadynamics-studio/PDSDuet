@@ -5,14 +5,8 @@ import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { DATA_FUNCTIONS, dataFunction } from "./functions";
 import {
-  SandboxedNotFoundError,
-  SandboxedPublicationRefusedError,
-  type SandboxedStore,
-} from "./sandboxed";
-import {
   ComponentNotFoundError,
   type ComponentStore,
-  SandboxedPublicationRequiredError,
 } from "./store";
 
 /**
@@ -40,14 +34,6 @@ export function createComponentRoutes(
   store: ComponentStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
   auditStore: AuditStore | undefined,
-  /**
-   * The source half of a playground component's publication.
-   *
-   * The generic switch is the only publication UI for both kinds, so this route owns the choice to
-   * delegate. The component store still refuses a generic write for a sandboxed row, which keeps a
-   * caller that reaches `publish` directly from creating the same half-published state.
-   */
-  sandboxedStore?: SandboxedStore,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -475,7 +461,6 @@ export function createComponentRoutes(
     }
     const published = body.published;
 
-    let recordedBySource = false;
     try {
       if (published) {
         await store.publish(name, context.var.actor.email);
@@ -483,40 +468,12 @@ export function createComponentRoutes(
         await store.unpublish(name, context.var.actor.email);
       }
     } catch (error) {
-      if (error instanceof SandboxedPublicationRequiredError) {
-        if (!sandboxedStore) {
-          return context.json(
-            {
-              error:
-                "The playground source is unavailable, so the component was not published.",
-            },
-            409,
-          );
-        }
-        try {
-          if (published) {
-            await sandboxedStore.publish(name, context.var.actor.email);
-          } else {
-            await sandboxedStore.unpublish(name, context.var.actor.email);
-          }
-          recordedBySource = true;
-        } catch (sourceError) {
-          if (sourceError instanceof SandboxedPublicationRefusedError) {
-            return context.json({ error: sourceError.message }, 409);
-          }
-          if (sourceError instanceof SandboxedNotFoundError) {
-            return context.json({ error: sourceError.message }, 404);
-          }
-          throw sourceError;
-        }
-      } else if (error instanceof ComponentNotFoundError) {
+      if (error instanceof ComponentNotFoundError) {
         return context.json({ error: error.message }, 404);
       } else {
         throw error;
       }
     }
-
-    if (recordedBySource) return context.json({ published });
 
     await audit(
       context,

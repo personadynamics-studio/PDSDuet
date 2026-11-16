@@ -4,7 +4,6 @@ import type { AppVariables } from "../auth/guards";
 import { afterExposureChange } from "../plugins/exposure-change";
 import type { SharedUseStore } from "../plugins/shared-use-store";
 import {
-  TeamBotForbiddenError,
   TeamBotNotFoundError,
   TeamBotRefusedError,
   type TeamBots,
@@ -20,13 +19,11 @@ export function createTeamBotRoutes(
   routes.onError((error, context) =>
     context.json(
       { error: error.message },
-      error instanceof TeamBotForbiddenError
-        ? 403
-        : error instanceof TeamBotNotFoundError
-          ? 404
-          : error instanceof TeamBotRefusedError || error instanceof z.ZodError
-            ? 400
-            : 500,
+      error instanceof TeamBotNotFoundError
+        ? 404
+        : error instanceof TeamBotRefusedError || error instanceof z.ZodError
+          ? 400
+          : 500,
     ),
   );
   routes.get("/", async (context) =>

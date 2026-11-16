@@ -17,7 +17,7 @@ setting() {
 }
 info() { printf '%s\n' "$1"; }
 green() { printf '%s\n' "$1"; }
-for name in app worker api; do
+for name in app api; do
   file="$ROOT/.logs/pds-$name.pid"
   if [ -f "$file" ]; then
     kill "$(cat "$file")" 2>/dev/null || true
