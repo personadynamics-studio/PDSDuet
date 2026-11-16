@@ -1,4 +1,3 @@
-import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
@@ -21,6 +20,7 @@ import {
   type AppVariables,
   type AuthService,
   type ResolveRequestActor,
+  createRequireAdmin,
   createRequireUser,
 } from "./auth/guards";
 import type { IdentityProviderStore } from "./auth/identity-provider-store";
@@ -216,20 +216,23 @@ export function createApp(
 
     }),
   );
+  const requireUser = createRequireUser(resolveRequestActor);
+  const requireAdmin = createRequireAdmin(requireUser);
+  app.use("/api/admin/*", requireAdmin);
+  // These are the SSO plugin's deployment configuration endpoints, not its sign-in callbacks.
+  for (const path of [
+    "/api/auth/sso/register",
+    "/api/auth/sso/providers",
+    "/api/auth/sso/get-provider",
+    "/api/auth/sso/update-provider",
+    "/api/auth/sso/delete-provider",
+    "/api/auth/sso/request-domain-verification",
+    "/api/auth/sso/verify-domain",
+  ]) app.use(path, requireAdmin);
+
   app.on(["GET", "POST"], "/api/auth/*", (context) => auth
     ? auth.handler(context.req.raw)
     : context.json({ error: "No identity provider is configured." }, 503));
-
-  const requireUser = createRequireUser(resolveRequestActor);
-  const requireComputer: MiddlewareHandler<{ Variables: AppVariables }> = async (context, next) =>
-    requireUser(context, async () => {
-      const botId = context.req.param("botId");
-      if (botId && (!agentProfileStore || !(await agentProfileStore.get(context.var.actor, botId)))) {
-        context.res = context.json({ error: "Computer not found." }, 404);
-        return;
-      }
-      await next();
-    });
 
   app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/*", (context) =>
     auth
@@ -382,10 +385,10 @@ export function createApp(
 
     return context.json({ instructions: saved });
   });
-  app.get("/api/admin/status", requireUser, (context) => {
+  app.get("/api/admin/status", (context) => {
     return context.json({ status: "ok" });
   });
-  app.get("/api/admin/audit-events", requireUser, async (context) => {
+  app.get("/api/admin/audit-events", async (context) => {
     if (!auditReader) {
       return context.json({ error: "Audit logging is not configured." }, 503);
     }
@@ -449,9 +452,9 @@ export function createApp(
   /*
    * Who is here, and what they may do.
    *
-   * Available to signed-in users, like the other routes in this group.
+   * Available to administrators, like the other routes in this group.
    */
-  app.get("/api/admin/people", requireUser, async (context) => {
+  app.get("/api/admin/people", async (context) => {
     if (!peopleStore) {
       return context.json({ error: "People are not available." }, 503);
     }
@@ -493,7 +496,7 @@ export function createApp(
     );
   });
 
-  app.post("/api/admin/people/:userId/role", requireUser, async (context) => {
+  app.post("/api/admin/people/:userId/role", async (context) => {
     if (!peopleStore) {
       return context.json({ error: "People are not available." }, 503);
     }
@@ -561,7 +564,7 @@ export function createApp(
     return context.json({ person: await peopleStore.find(userId) });
   });
 
-  app.post("/api/admin/people/:userId/access", requireUser, async (context) => {
+  app.post("/api/admin/people/:userId/access", async (context) => {
     if (!peopleStore) {
       return context.json({ error: "People are not available." }, 503);
     }
@@ -625,7 +628,7 @@ export function createApp(
    * one to open this screen found it empty and registered a provider that was already there. What is
    * registered is a fact about the deployment, so every administrator sees the same list.
    */
-  app.get("/api/admin/identity-providers", requireUser, async (context) => {
+  app.get("/api/admin/identity-providers", async (context) => {
     if (!identityProviders) {
       return context.json(
         { error: "Identity providers are not available." },
@@ -645,7 +648,6 @@ export function createApp(
    */
   app.delete(
     "/api/admin/identity-providers/:providerId",
-    requireUser,
     async (context) => {
       if (!identityProviders) {
         return context.json(
@@ -676,7 +678,7 @@ export function createApp(
     },
   );
 
-  app.get("/api/admin/credentials", requireUser, async (context) => {
+  app.get("/api/admin/credentials", async (context) => {
     if (!credentialService) {
       return context.json(
         { error: "Credential storage is not configured." },
@@ -686,7 +688,7 @@ export function createApp(
 
     return context.json({ credentials: await credentialService.list() });
   });
-  app.post("/api/admin/credentials", requireUser, async (context) => {
+  app.post("/api/admin/credentials", async (context) => {
     if (!credentialService) {
       return context.json(
         { error: "Credential storage is not configured." },
@@ -707,7 +709,6 @@ export function createApp(
   });
   app.post(
     "/api/admin/credentials/:credentialId/rotate",
-    requireUser,
     async (context) => {
       if (!credentialService) {
         return context.json(
@@ -739,7 +740,6 @@ export function createApp(
   );
   app.post(
     "/api/admin/credentials/:credentialId/revoke",
-    requireUser,
     async (context) => {
       if (!credentialService) {
         return context.json(
@@ -764,7 +764,7 @@ export function createApp(
       }
     },
   );
-  app.get("/api/admin/package", requireUser, async (context) => {
+  app.get("/api/admin/package", async (context) => {
     if (!packageStatusReader) {
       return context.json({ error: "Tenant package is not configured." }, 503);
     }
@@ -772,9 +772,8 @@ export function createApp(
   });
   if (execution && settlement) app.route("/api/threads", createExecutionRoutes({ execution, settlement, requireUser }));
 
-  if (computerGateway) {
-    app.route("/api/computers", createComputerRoutes(computerGateway, requireComputer,
-      async actor => agentProfileStore ? (await agentProfileStore.list(actor)).map(bot => bot.id) : []));
+  if (computerGateway && agentProfileStore) {
+    app.route("/api/computers", createComputerRoutes(computerGateway, requireUser, agentProfileStore));
   }
 
   if (hostAccessBroker) {
@@ -853,7 +852,7 @@ export function createApp(
   if (coworker?.shared && auditStore)
     app.route(
       "/api/approvals/shared-use",
-      createSharedUseRoutes(coworker.shared.use, requireUser, auditStore),
+      createSharedUseRoutes(coworker.shared.use, requireUser, auditStore, agentProfileStore),
     );
   if (coworker?.passwords) {
     app.route(
@@ -890,6 +889,7 @@ export function createApp(
         componentStore,
         requireUser,
         auditStore,
+        agentProfileStore,
       ),
     );
   }
@@ -900,6 +900,7 @@ export function createApp(
       createPluginRoutes(
         pluginStore,
         requireUser,
+        agentProfileStore,
         {
           encryptionKey: config.keyEncryptionKey,
           /*

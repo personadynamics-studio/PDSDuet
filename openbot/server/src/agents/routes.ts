@@ -295,8 +295,8 @@ export function createAgentRoutes(
        * The endpoint, because that is where conversation content will be sent, and whether a key was
        * attached, because "this Bot authenticates" is a fact and the key itself never is.
        *
-       * And who may reach it. `visibility` is not a display preference: `accessFilter` admits a
-       * `public` coworker to every signed-in person, and `canRunAgent` is `canAccessAgent`, so public
+       * And who may reach it. `visibility` is not a display preference: `visibleTo` admits a
+       * `public` coworker to every signed-in person for both profile access and runtime loading, so public
        * means everybody in the deployment may act as this Bot and spend the grants it holds. A row
        * that cannot say which it was cannot reconstruct who could use this coworker at the time.
        */
@@ -331,7 +331,7 @@ export function createAgentRoutes(
        *
        * `visibility` is carried the way `name` is — on every row, whether or not this edit moved it —
        * because it is the second dangerous edit and the route has no before to compare against.
-       * Public admits every signed-in person to this coworker, and `canRunAgent` is `canAccessAgent`,
+       * Public admits every signed-in person to this coworker in both the profile and runtime queries,
        * so it hands them the right to act as it and spend what it was granted. Without the value on
        * each row, an edit that opened a coworker to the whole deployment is byte-identical to one
        * that corrected its title, and the trail cannot say when it was opened or by whom. Recorded on
@@ -490,6 +490,8 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     builtIn: agent.builtIn,
     // Whether one exists, never what it is.
     mine: agent.ownerUserId === actor.id,
+    canManage: agent.canManage,
+    canControlComputer: agent.canControlComputer,
     assignedToMe: agent.assignedToMe ?? false,
   };
 }

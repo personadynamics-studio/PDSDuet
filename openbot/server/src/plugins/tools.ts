@@ -22,10 +22,7 @@ import {
 /**
  * The tools a Bot may call, as the runtime's own tool definitions, executed on the server.
  *
- * The loop used to run in the browser: every MCP tool was registered with `useFrontendTool` and its
- * handler posted back to `/api/plugins/call`. That made a browser a hard requirement for a Bot to do
- * anything, which rules out an embedded widget, a run nobody is watching, and any surface that is
- * not our own app.
+ * The loop runs without a browser, including embedded widgets and unattended runs.
  *
  * Nothing about governance moves with it. `callTool` is still the only path to a vendor: it checks
  * the grant, evaluates the policy, writes the audit row, and only then calls out. This module hands

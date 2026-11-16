@@ -18,6 +18,7 @@ export function mountServerRoutes({
   routes,
   store,
   requireUser,
+  requireAdmin,
   connect,
   composio,
   shared,
@@ -121,7 +122,7 @@ export function mountServerRoutes({
   );
 
   /** Add a curated server. The URL comes from the catalogue, never from the request. */
-  routes.post("/servers", requireUser, async (context) => {
+  routes.post("/servers", requireAdmin, async (context) => {
 
     const body = (await context.req.json().catch(() => null)) as {
       key?: unknown;
@@ -205,7 +206,7 @@ export function mountServerRoutes({
    * deployment at an address of their own" is a distinct act in the code, in the audit trail and in
    * anything that reads either.
    */
-  routes.post("/servers/custom", requireUser, async (context) => {
+  routes.post("/servers/custom", requireAdmin, async (context) => {
 
     const body = (await context.req.json().catch(() => null)) as {
       id?: unknown;
@@ -274,7 +275,7 @@ export function mountServerRoutes({
    * should not require re-typing a client. An administrator's, like everything else that decides what
    * a Bot can reach.
    */
-  routes.post("/servers/:id/oauth-client", requireUser, async (context) => {
+  routes.post("/servers/:id/oauth-client", requireAdmin, async (context) => {
 
     const body = (await context.req.json().catch(() => null)) as {
       clientId?: unknown;
@@ -354,7 +355,7 @@ export function mountServerRoutes({
    * what makes pressing it safe: nothing here is deleted until the withdrawals have been asked
    * for, so a second press asks only for what is left.
    */
-  routes.delete("/servers/:id", requireUser, async (context) => {
+  routes.delete("/servers/:id", requireAdmin, async (context) => {
 
     const serverId = context.req.param("id");
     try {
@@ -402,7 +403,7 @@ export function mountServerRoutes({
    * Personal ⇄ Shared. Without `confirm`, a preview of what the switch would end and approve; with
    * it, the switch itself, which changes nothing unless every old account was ended at the vendor.
    */
-  routes.put("/servers/:id/account-mode", requireUser, async (context) => {
+  routes.put("/servers/:id/account-mode", requireAdmin, async (context) => {
     if (!shared) {
       return context.json(
         { error: "Shared accounts are not available on this deployment." },
@@ -478,7 +479,7 @@ export function mountServerRoutes({
   });
 
   /** Ask a server what it offers now. Reported rather than thrown, so the page can say what broke. */
-  routes.post("/servers/:id/refresh", requireUser, async (context) => {
+  routes.post("/servers/:id/refresh", requireAdmin, async (context) => {
 
     try {
       const result = await store.refreshTools(

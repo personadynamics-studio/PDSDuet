@@ -1,7 +1,7 @@
 import { DICTATION_HTTP_IDLE_SECONDS } from "@openbot/shared/dictation";
 import { listenAddress } from "@openbot/shared/listen-host";
 import { serve } from "bun";
-import type { OpenBotRole } from "./auth/roles";
+import type { AgentActor } from "./agents/profile-types";
 import type { ResolveRequestActor } from "./auth/guards";
 import { websocket as channelSocket } from "./channels/socket";
 import type { ComputerGateway } from "./computer/gateway";
@@ -11,15 +11,11 @@ import type { DeploymentConfig } from "./config";
 /**
  * The server's front door: one Bun server that hands ordinary requests to the Hono app, proxies the
  * computer's live stream, and carries channel activity over websockets.
- *
- * Moved out of index.ts verbatim, with what it reads passed in.
  */
 
 /** What each proxied socket carries: where to connect inward, and the socket once opened. */
 type StreamData = {
   upstream: string;
-  ownerUserId: string;
-  botId: string;
   inward?: WebSocket;
 };
 
@@ -38,7 +34,7 @@ export function startHttpServer(deps: {
   config: DeploymentConfig;
   resolveRequestActor: ResolveRequestActor;
   computerGateway: ComputerGateway | undefined;
-  canUseComputer(actor: {id:string;role:OpenBotRole}, botId:string):Promise<boolean>;
+  canUseComputer(actor: AgentActor, botId: string): Promise<boolean>;
   app: {
     fetch: (
       request: Request,
@@ -114,8 +110,6 @@ export function startHttpServer(deps: {
           server.upgrade(request, {
             data: {
               upstream,
-              ownerUserId: actor.id,
-              botId: streamBotId,
             },
           })
         ) {

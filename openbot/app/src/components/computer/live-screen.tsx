@@ -59,24 +59,6 @@ function isPasteShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && keyOf(event) === "v";
 }
 
-/**
- * Whether a keystroke is aimed at a field on this page rather than at the Bot's browser.
- *
- * The canvas cannot hold focus, so a keystroke meant for the remote page arrives targeted at the
- * body (or whatever non-editable element last took a click). One targeted at an input, textarea,
- * select or contenteditable is someone typing into this page while driving: the recorder's
- * workflow name, the secret box under the screen. Taking those keys left the fields dead.
- */
-function isLocalField(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable ||
-      target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "SELECT")
-  );
-}
-
 type Props = {
   /**
    * Computer identity is part of the stream URL so input and frames stay scoped to the active Bot.
@@ -326,21 +308,20 @@ export function LiveScreen({
   /**
    * Keystrokes, forwarded while driving.
    *
-   * Listen on window because canvas cannot hold focus. `preventDefault` keeps Tab and typing directed
-   * at the remote page while takeover is active.
+   * Capture on window before the app's shortcuts, but only while the canvas has focus.
    *
    * The keydown in the capture phase, and stopped as well as prevented, because a keystroke sent to
-   * the Bot's browser is not also this page's. The app's own shortcuts listen on this window too,
-   * and they were bound first, when the signed-in app mounted, so they saw every keystroke before
-   * this did: a capital N typed into the remote page started a new chat, and Ctrl+B there toggled
-   * the sidebar here. Escape and the paste shortcut are not stopped, because both are meant for this
-   * page, and neither is a keystroke typed into one of this page's own fields.
+   * the Bot's browser is not also this page's. Escape returns keyboard navigation to the local
+   * toolbar; paste is sent by its own event.
    */
   useEffect(() => {
     if (!driving || !connected) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") return; // Escape still closes the view.
-      if (isPasteShortcut(event) || isLocalField(event.target)) {
+      if (event.key === "Escape") {
+        if (event.target === canvasRef.current) canvasRef.current?.blur();
+        return;
+      }
+      if (event.target !== canvasRef.current || isPasteShortcut(event)) {
         localKeyUps.current.add(event.code);
         return;
       }
@@ -371,7 +352,7 @@ export function LiveScreen({
     };
     /** Paste arrives as one block; CDP inserts it as text rather than key events. */
     const onPaste = (event: ClipboardEvent) => {
-      if (isLocalField(event.target)) return;
+      if (event.target !== canvasRef.current) return;
       const text = event.clipboardData?.getData("text");
       if (!text) return;
       event.preventDefault();
@@ -419,11 +400,15 @@ export function LiveScreen({
   return (
     <canvas
       ref={canvasRef}
-      className={`block h-auto w-full ${driving ? "cursor-crosshair" : ""}`}
+      tabIndex={driving ? 0 : undefined}
+      className={`block h-auto w-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${driving ? "cursor-crosshair" : ""}`}
       // Only forward input during takeover.
       {...(driving
         ? {
-            onMouseDown: onMouse("pressed"),
+            onMouseDown: (event: React.MouseEvent<HTMLCanvasElement>) => {
+              canvasRef.current?.focus({ preventScroll: true });
+              onMouse("pressed")(event);
+            },
             onMouseUp: onMouse("released"),
             onMouseMove: onMouse("moved"),
             onContextMenu: (event: React.MouseEvent) => event.preventDefault(),
@@ -431,7 +416,7 @@ export function LiveScreen({
         : {})}
       aria-label={
         driving
-          ? "機械人的畫面。你已取得控制權，可在這裏按下項目及輸入。"
+          ? "機械人的畫面。你已取得控制權，可在這裏按下項目及輸入。按 Escape 返回本機控制項。"
           : "機械人的即時畫面"
       }
       data-connected={connected}

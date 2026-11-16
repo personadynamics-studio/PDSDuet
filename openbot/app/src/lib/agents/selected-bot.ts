@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createContext, createElement, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
-import { agentListQueryOptions } from "./queries";
+import { agentListQueryOptions, agentQueryOptions } from "./queries";
 
 type Selection = { userId: string; selectedId: string | null; selectBot(id: string): void };
 const SelectedBotContext = createContext<Selection | null>(null);
@@ -27,13 +27,20 @@ export function useSelectedBot() {
   const selection = useContext(SelectedBotContext);
   if (!selection) throw new Error("Bot selection requires ChatProvider.");
   const agents = useQuery(agentListQueryOptions());
+  const listedBot = agents.data?.find((agent) => agent.id === selection.selectedId);
+  // Hidden is a roster preference. An explicit selection still resolves through its own profile.
+  const profile = useQuery({
+    ...agentQueryOptions(selection.selectedId ?? ""),
+    enabled: Boolean(selection.selectedId) && !listedBot && !agents.isPending,
+  });
+  const bot = listedBot ?? profile.data;
   return {
     userId: selection.userId,
-    bot: agents.data?.find((agent) => agent.id === selection.selectedId),
+    bot,
     agents,
     selectBot: selection.selectBot,
-    loading: agents.isPending,
-    error: agents.data ? null : agents.error,
+    loading: agents.isPending || Boolean(selection.selectedId && !listedBot && profile.isPending),
+    error: bot ? null : profile.error ?? agents.error,
   };
 }
 

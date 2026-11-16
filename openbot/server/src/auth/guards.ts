@@ -48,3 +48,15 @@ export function createRequireUser(
   };
 }
 
+export function createRequireAdmin(
+  requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+): MiddlewareHandler<{ Variables: AppVariables }> {
+  return (context, next) => requireUser(context, async () => {
+    if (context.var.actor.role !== "admin") {
+      context.res = context.json({ error: "Administrator access required." }, 403);
+      return;
+    }
+    await next();
+  });
+}
+

@@ -39,18 +39,28 @@ The message is ordinary AG-UI system content, so it works with any AG-UI-compati
 
 | Visibility | Who can see and run it      |
 | ---------- | --------------------------- |
-| `private`  | Owner and administrators.   |
+| `private`  | Owner, administrators and the audience of an active Team Bot publication. |
 | `public`   | Everyone in the deployment. |
 
-Filtering happens in server/database queries. Package-provided agents cannot be edited or deleted through the product.
+Profile reads and runtime loading share the same server/database predicate. Only the owner or an administrator can edit or delete a Bot; an administrator manages ownerless package Bots. Hiding, pinning and duplicating a visible Bot affect the person's own roster or create their own copy.
 
 An owner can also publish a Bot as a Team Bot, to everybody signed in or to named people and groups
 (`/api/team-bots`, the Bot's **Sharing** page). Publishing is a separate, revocable record; the Bot's own
-visibility is unchanged by it. A published Bot stays invisible to teammates until it has a role
-description and a name other than a placeholder such as "New Bot".
+visibility is unchanged by it. Publication grants its audience access only once the Bot has a role
+description and a name other than a placeholder such as "New Bot". A public Bot remains visible to
+everyone regardless of those publication requirements.
+
+Only the owner may publish or withdraw a Team Bot, including when an administrator is managing its
+profile. Administrators may assign a published Bot to groups. The publication list uses the same
+visibility predicate as the roster; the publication candidates are the owner's own unpublished Bots.
+
+Direct computer access (REST, live WebSocket screen and sign-in form actions) is available to the
+owner, administrators and users of a public Bot. A private Team Bot's audience may ask it to work,
+but cannot directly take over its signed-in browser. A public Bot keeps its shared-browser behavior.
+Stopping, resetting or updating a Bot's computer requires the owner or an administrator.
 
 A Team Bot reaches a Personal app through its **owner's own account** when the owner has connected
-it — for everyone it is published to, triggers included — and otherwise through the asker's own
+it — for everyone it is published to — and otherwise through the asker's own
 account, with their consent. A Shared app is the governed alternative: one account that belongs to
 the deployment, with an administrator approving who may use it through each Bot. See
 [Composio → Shared apps](plugins/composio.md#shared-apps).

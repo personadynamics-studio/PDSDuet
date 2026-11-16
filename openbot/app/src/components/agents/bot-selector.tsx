@@ -19,6 +19,9 @@ export function BotSelector() {
         onChange={(event) => { setDismissed(false); selectBot(event.target.value); }}
       >
         <option value="">請選擇機械人</option>
+        {bot && !agents.data?.some((agent) => agent.id === bot.id) ? (
+          <option value={bot.id}>{bot.name} — {bot.title}</option>
+        ) : null}
         {(agents.data ?? []).map((agent) => (
           <option key={agent.id} value={agent.id}>{agent.name} — {agent.title}</option>
         ))}

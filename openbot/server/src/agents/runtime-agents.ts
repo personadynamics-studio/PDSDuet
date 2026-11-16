@@ -11,6 +11,7 @@ import {
 } from "../db/schema";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
 import type { AgentActor } from "./profile-types";
+import { visibleTo } from "./access";
 
 /** Load active agents and the deleted agents present in the caller's history. */
 export function createRuntimeAgentLoader(
@@ -20,7 +21,7 @@ export function createRuntimeAgentLoader(
 ) {
   return async (actor: AgentActor, selectedBotId?: string): Promise<RegisteredAgent[]> => {
     const [active, tombstones] = await Promise.all([
-      selectActiveAgents(database, selectedBotId),
+      selectActiveAgents(database, actor, selectedBotId),
       selectTombstoneAgents(database, actor, selectedBotId),
     ]);
 
@@ -58,7 +59,7 @@ export function createRuntimeAgentLoader(
   };
 }
 
-function selectActiveAgents(database: Database, selectedBotId?: string) {
+function selectActiveAgents(database: Database, actor: AgentActor, selectedBotId?: string) {
   return database
     .select({
       id: agents.id,
@@ -70,7 +71,7 @@ function selectActiveAgents(database: Database, selectedBotId?: string) {
     })
     .from(agents)
     .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-    .where(and(isNull(agentProfiles.deletedAt), selectedBotId === undefined ? undefined : eq(agents.id, selectedBotId)));
+    .where(and(isNull(agentProfiles.deletedAt), visibleTo(actor), selectedBotId === undefined ? undefined : eq(agents.id, selectedBotId)));
 }
 
 

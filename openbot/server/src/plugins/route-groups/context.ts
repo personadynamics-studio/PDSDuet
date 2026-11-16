@@ -1,4 +1,5 @@
 import type { Hono, MiddlewareHandler } from "hono";
+import type { AgentProfileStore } from "../../agents/profile-store";
 import type { AppVariables } from "../../auth/guards";
 import { BROKERED_PROFILE, type BrokerProvider } from "../access";
 import type { AccountModeSwitch } from "../account-mode";
@@ -373,6 +374,8 @@ export type PluginRouteContext = {
   routes: Hono<{ Variables: AppVariables }>;
   store: PluginStore;
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
+  requireAdmin: MiddlewareHandler<{ Variables: AppVariables }>;
+  profiles: Pick<AgentProfileStore, "get"> | undefined;
   connect: PluginConnectOptions | undefined;
   composio: { broker: ComposioBroker; provider: BrokerProvider } | undefined;
   shared: { modes: AccountModeSwitch; use: SharedUseStore } | undefined;

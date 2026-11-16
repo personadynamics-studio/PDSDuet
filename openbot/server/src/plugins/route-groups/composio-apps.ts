@@ -26,6 +26,7 @@ export function mountComposioAppRoutes({
   routes,
   store,
   requireUser,
+  requireAdmin,
   composio,
   activeProvider,
   activeVendor,
@@ -146,7 +147,7 @@ export function mountComposioAppRoutes({
    * The title comes off the directory entry too. The caller chose an app; they did not choose a
    * name for it.
    */
-  routes.post("/composio/apps", requireUser, async (context) => {
+  routes.post("/composio/apps", requireAdmin, async (context) => {
 
     const body = (await context.req.json().catch(() => null)) as {
       slug?: unknown;

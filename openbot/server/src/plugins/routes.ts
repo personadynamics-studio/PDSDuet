@@ -1,5 +1,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
-import type { AppVariables } from "../auth/guards";
+import type { AgentProfileStore } from "../agents/profile-store";
+import { type AppVariables, createRequireAdmin } from "../auth/guards";
 import { BROKERED_PROFILE, type BrokerProvider, toolkitOfFor } from "./access";
 import type { AccountModeSwitch } from "./account-mode";
 import { mountAppAccessRoutes } from "./route-groups/app-access";
@@ -35,14 +36,12 @@ export { AUTHORIZATION_REFUSALS } from "./route-groups/context";
  * Reading is open to any signed-in person either way: what a Bot can reach is not a secret from the
  * person talking to it.
  *
- * The call endpoint asks again. The list of tools a run was offered is a snapshot taken when the run
- * started, so a grant revoked a second later is still in the model's hands. Deciding at call time is
- * what makes revocation immediate rather than nearly immediate, and it is where a refusal becomes a
- * row somebody can read.
+ * Tool execution runs on the server; the store applies grants and account consent at call time.
  */
 export function createPluginRoutes(
   store: PluginStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+  profiles: Pick<AgentProfileStore, "get"> | undefined,
   /**
    * What the connect flow needs that the store does not hold: the key its state is sealed with, the
    * address a vendor sends people back to, and who still has access when they come back.
@@ -190,6 +189,8 @@ export function createPluginRoutes(
     routes,
     store,
     requireUser,
+    requireAdmin: createRequireAdmin(requireUser),
+    profiles,
     connect,
     composio,
     shared,

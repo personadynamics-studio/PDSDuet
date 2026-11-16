@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import type { CredentialStore } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -13,6 +13,7 @@ import {
   storeAgentAuth,
 } from "./auth-header";
 import { assignedToActor } from "../team-bots/access";
+import { computerAccessibleTo, managedBy, visibleTo } from "./access";
 import type {
   AgentActor,
   AgentProfile,
@@ -28,6 +29,9 @@ export type ProfileReadExecutor = DatabaseExecutor;
 export type AgentProfileStore = {
   list(actor: AgentActor, hidden?: boolean): Promise<AgentProfile[]>;
   get(actor: AgentActor, id: string): Promise<AgentProfile | null>;
+  getForManagement(actor: AgentActor, id: string): Promise<AgentProfile | null>;
+  getForComputer(actor: AgentActor, id: string): Promise<AgentProfile | null>;
+  listForComputer(actor: AgentActor): Promise<AgentProfile[]>;
   getWithin(
     executor: ProfileReadExecutor,
     actor: AgentActor,
@@ -80,6 +84,8 @@ function joinedProfiles(executor: DatabaseExecutor, actor: AgentActor) {
       ...joinedProjection,
       // A Team Bot an administrator put in this person's sidebar.
       assignedToMe: sql<boolean>`${assignedToActor(actor.id, agents.id)}`,
+      canManage: sql<boolean>`${managedBy(actor)}`,
+      canControlComputer: sql<boolean>`${computerAccessibleTo(actor)}`,
     })
     .from(agents)
     .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
@@ -110,6 +116,8 @@ function mapProfile(
     hidden: row.hiddenAt !== null,
     pinned: row.pinnedAt !== null,
     assignedToMe: Boolean(row.assignedToMe),
+    canManage: Boolean(row.canManage),
+    canControlComputer: Boolean(row.canControlComputer),
     deletedAt: row.deletedAt,
     endpoint: endpointOf(row.configuration),
     // Whether a key is set, never which. The form needs to show "a key is set" so a person does not
@@ -179,11 +187,13 @@ async function findProfile(
   executor: DatabaseExecutor,
   actor: AgentActor,
   id: string,
+  access: SQL = visibleTo(actor),
 ): Promise<AgentProfile | null> {
   const [row] = await joinedProfiles(executor, actor).where(
     and(
       eq(agents.id, id),
       isNull(agentProfiles.deletedAt),
+      access,
     ),
   );
   return row ? mapProfile(row) : null;
@@ -206,6 +216,7 @@ export function createAgentProfileStore(
       const rows = await joinedProfiles(database, actor).where(
         and(
           isNull(agentProfiles.deletedAt),
+          visibleTo(actor),
           hidden
             ? isNotNull(agentPreferences.hiddenAt)
             : isNull(agentPreferences.hiddenAt),
@@ -216,6 +227,23 @@ export function createAgentProfileStore(
 
     get(actor, id) {
       return findProfile(database, actor, id);
+    },
+
+    getForManagement(actor, id) {
+      return findProfile(database, actor, id, managedBy(actor));
+    },
+
+    getForComputer(actor, id) {
+      return findProfile(database, actor, id, computerAccessibleTo(actor));
+    },
+
+    async listForComputer(actor) {
+      const rows = await joinedProfiles(database, actor).where(and(
+        isNull(agentProfiles.deletedAt),
+        isNull(agentPreferences.hiddenAt),
+        computerAccessibleTo(actor),
+      ));
+      return rows.map(mapProfile);
     },
 
     async getWithin(executor, actor, id) {
@@ -279,7 +307,7 @@ export function createAgentProfileStore(
     update(actor, id, input) {
       return database.transaction(
         async (transaction) => {
-          const profile = await findProfile(transaction, actor, id);
+          const profile = await findProfile(transaction, actor, id, managedBy(actor));
           if (!profile) throw new AgentNotFoundError(id);
 
           const updatedAt = new Date();
@@ -449,7 +477,7 @@ export function createAgentProfileStore(
     softDelete(actor, id) {
       return database.transaction(
         async (transaction) => {
-          const profile = await findProfile(transaction, actor, id);
+          const profile = await findProfile(transaction, actor, id, managedBy(actor));
           if (!profile) throw new AgentNotFoundError(id);
 
           const deletedAt = new Date();

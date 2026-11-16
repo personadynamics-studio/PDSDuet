@@ -23,6 +23,19 @@ export function cancelControl(computerId: string, requestId?: string) {
   return callControl(computerId, "/control/cancel", { requestId });
 }
 
+export type HumanInput =
+  | { kind: "type"; text: string }
+  | { kind: "key"; key: string }
+  | { kind: "scroll"; deltaY: number };
+
+/** Direct human input uses the existing takeover routes, outside conversation history. */
+export async function sendHumanInput(computerId: string, input: HumanInput): Promise<void> {
+  const { kind, ...body } = input;
+  await client(`/api/computers/${encodeURIComponent(computerId)}/human/${kind}`, {
+    method: "POST", body, fallback: "未能操作網頁。",
+  });
+}
+
 /** The page receives the value; conversation history receives only the successful outcome. */
 export async function supplySecret(computerId: string, text: string): Promise<void> {
   const response = await client(`/api/computers/${encodeURIComponent(computerId)}/human/secret`, {

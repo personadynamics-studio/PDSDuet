@@ -4,6 +4,7 @@ import { useConversationSession } from "@/lib/chat/active-bot";
 import { supplySecret, type ControlState } from "@/lib/computers/control";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { LiveScreen } from "./live-screen";
+import { HumanInputControls } from "./human-input-controls";
 
 type Acknowledgement = {
   threadId: string;
@@ -62,7 +63,8 @@ export function ComputerView({ computerId, name }: { computerId: string; name?: 
         <LiveScreen computerId={computerId} driving={driving} onProblem={setScreenProblem} retryKey={retry} />
       </div>
       {screenProblem ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><span>{screenProblem}</span><Button size="sm" variant="outline" onClick={() => { setScreenProblem(null); setRetry((value) => value + 1); }}>重新連線</Button></div> : null}
-      <p className="text-sm text-muted-foreground">{driving ? "你已接管，可直接在畫面按下、捲動及輸入。" : "正在顯示瀏覽器；接管後即可操作。"}</p>
+      <p className="text-sm text-muted-foreground">{driving ? "你已接管，可在畫面操作，或使用下方的文字、按鍵與捲動控制。" : "正在顯示瀏覽器；接管後即可操作。"}</p>
+      {driving ? <HumanInputControls computerId={computerId} disabled={busy} /> : null}
       {control?.requested ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted p-3"><span>{control.reason || "機械人需要你操作瀏覽器。"}</span><Button variant="outline" size="sm" disabled={busy} onClick={() => { void controlAction("cancel"); }}>取消要求</Button></div> : null}
       {control?.secretWanted ? <form className="grid gap-2 border-t pt-3" onSubmit={async (event) => {
         event.preventDefault();

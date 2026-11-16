@@ -1,6 +1,6 @@
-import { IconX } from "@tabler/icons-react";
+import { IconArrowsMaximize, IconArrowsMinimize, IconX } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { EASE_OUT } from "@/lib/motion";
@@ -34,6 +34,7 @@ export function DetailPanel({
   title,
   detail,
   detailWidth = DEFAULT_DETAIL_WIDTH,
+  expandable = false,
   children,
 }: {
   open: boolean;
@@ -43,12 +44,29 @@ export function DetailPanel({
   detail?: ReactNode;
   /** Open width of the detail pane, in pixels. */
   detailWidth?: number;
+  /** Let the desktop detail use the whole workspace without remounting its content. */
+  expandable?: boolean;
   children: ReactNode;
 }) {
   // Reduced motion keeps the fade, which explains the change, and drops the movement.
   const shouldReduceMotion = useReducedMotion();
   const container = useRef<HTMLDivElement>(null);
+  const detailId = useId();
   const [overlay, setOverlay] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const maximized = open && expandable && expanded && !overlay;
+  const paneWidth = maximized ? "100%" : detailWidth;
+  useEffect(() => { if (!open) setExpanded(false); }, [open]);
+  useEffect(() => {
+    if (!maximized) return;
+    const restore = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setExpanded(false);
+    };
+    window.addEventListener("keydown", restore);
+    return () => window.removeEventListener("keydown", restore);
+  }, [maximized]);
   useLayoutEffect(() => {
     const element = container.current;
     if (!element) return;
@@ -64,7 +82,7 @@ export function DetailPanel({
 
   return (
     <div ref={container} className="flex h-full min-h-0">
-      <div className="flex flex-1 min-w-0 flex-col">{children}</div>
+      <div className={maximized ? "hidden" : "flex flex-1 min-w-0 flex-col"}>{children}</div>
       {overlay ? (
         <Sheet
           open={open}
@@ -73,8 +91,8 @@ export function DetailPanel({
           }}
         >
           <SheetContent
-            className="gap-0"
-            style={{ width: `min(${detailWidth}px, 100vw)`, maxWidth: "100vw" }}
+            className="gap-0 pb-[env(safe-area-inset-bottom)]"
+            style={{ width: expandable ? "100vw" : `min(${detailWidth}px, 100vw)`, maxWidth: "100vw" }}
           >
             <SheetTitle className="h-12 shrink-0 px-4 pr-12 flex items-center">
               {title ?? "詳情"}
@@ -86,7 +104,7 @@ export function DetailPanel({
         </Sheet>
       ) : (
         <motion.div
-          animate={{ width: open ? detailWidth : 0 }}
+          animate={{ width: open ? paneWidth : 0 }}
           className="shrink-0 overflow-hidden"
           // No entry animation on first paint: URL-opened panels should appear as initial state.
           initial={false}
@@ -96,8 +114,9 @@ export function DetailPanel({
           }}
         >
           <div
+            id={detailId}
             className="flex h-full flex-col bg-sidebar border-l border-border"
-            style={{ width: detailWidth }}
+            style={{ width: paneWidth }}
           >
             {/* Rendered for the whole animation, so the way out is available immediately. */}
             <div className="h-12 shrink-0 sticky top-0 flex flex-row items-center justify-between px-2 gap-2">
@@ -105,6 +124,16 @@ export function DetailPanel({
                 {title}
               </div>
               <div className="flex flex-row gap-1.5">
+                {expandable && open ? <Button
+                  aria-label={maximized ? "還原畫面大小" : "放大畫面"}
+                  aria-expanded={maximized}
+                  aria-controls={detailId}
+                  onClick={() => setExpanded((current) => !current)}
+                  variant="ghost"
+                  size="icon"
+                >
+                  {maximized ? <IconArrowsMinimize className="size-4.5" /> : <IconArrowsMaximize className="size-4.5" />}
+                </Button> : null}
                 <Button
                   aria-label="Close details"
                   onClick={onClose}

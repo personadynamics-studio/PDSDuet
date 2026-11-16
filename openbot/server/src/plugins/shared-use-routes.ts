@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
+import type { AgentProfileStore } from "../agents/profile-store";
 import { type AuditStore, recordAuditEvent } from "../audit";
-import { type AppVariables } from "../auth/guards";
+import { type AppVariables, createRequireAdmin } from "../auth/guards";
 import { covers, exposureOf } from "./shared-use";
 import {
   SharedUseRequestDecidedError,
@@ -10,7 +11,7 @@ import {
 /**
  * Where a Bot's use of a Shared app is asked for and answered.
  *
- * THE PROPOSAL IS ALWAYS THE SERVER'S. An owner asks; what they ask FOR is the Bot's exposure as
+ * THE PROPOSAL IS ALWAYS THE SERVER'S. A Bot's user asks; what they ask FOR is its exposure as
  * this deployment reads it, so a request cannot be worded wider than the Bot actually is, and an
  * administrator approving it approves exactly what will be checked on the next call.
  */
@@ -18,16 +19,17 @@ export function createSharedUseRoutes(
   store: SharedUseStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
   audit: AuditStore,
+  profiles: Pick<AgentProfileStore, "get"> | undefined,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireUser);
+  const requireAdmin = createRequireAdmin(requireUser);
 
-  routes.get("/", async (context) => {
+  routes.get("/", requireAdmin, async (context) => {
     return context.json({ requests: await store.listRequests("pending") });
   });
 
   for (const decision of ["approve", "decline"] as const) {
-    routes.post(`/:id/${decision}`, async (context) => {
+    routes.post(`/:id/${decision}`, requireAdmin, async (context) => {
       try {
         const request = await store.decide({
           id: context.req.param("id"),
@@ -59,7 +61,7 @@ export function createSharedUseRoutes(
     });
   }
 
-  routes.post("/", async (context) => {
+  routes.post("/", requireUser, async (context) => {
     const body = (await context.req.json().catch(() => null)) as {
       botId?: unknown;
       serverId?: unknown;
@@ -75,6 +77,8 @@ export function createSharedUseRoutes(
           : null;
     if (!botId || !serverId || !reason)
       return context.json({ error: "Name the Bot, the app and why." }, 400);
+    if (!(await profiles?.get(context.var.actor, botId)))
+      return context.json({ error: "Bot not found." }, 404);
     const held = await store.sharedAppsHeldBy(botId);
     if (!held.some((app) => app.serverId === serverId))
       return context.json(
@@ -100,8 +104,10 @@ export function createSharedUseRoutes(
     return context.json(filed);
   });
 
-  routes.get("/bot/:botId", async (context) => {
+  routes.get("/bot/:botId", requireUser, async (context) => {
     const botId = context.req.param("botId");
+    if (!(await profiles?.get(context.var.actor, botId)))
+      return context.json({ error: "Bot not found." }, 404);
     const needed = exposureOf(await store.botFacts(botId));
     const apps = await Promise.all(
       (await store.sharedAppsHeldBy(botId)).map(async (app) => {

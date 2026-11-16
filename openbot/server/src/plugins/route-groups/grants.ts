@@ -1,16 +1,10 @@
-import { PERSON_INITIATOR } from "../../audit";
 import type { AppVariables } from "../../auth/guards";
 import {
   asSharedUseApproval,
   exposureOf,
   type SharedUseApproval,
 } from "../shared-use";
-import {
-  CatalogueEntryUnknownError,
-  isDeploymentFault,
-  type PluginKind,
-  PluginRefusedError,
-} from "../store";
+import type { PluginKind } from "../store";
 import type { PluginRouteContext } from "./context";
 
 /**
@@ -53,11 +47,12 @@ export async function sharedGrantApproval(
   };
 }
 
-/** Granting and revoking MCP tools and skills, and a Bot's tool calls back. */
+/** Granting and revoking MCP tools and skills. */
 export function mountGrantRoutes({
   routes,
   store,
   requireUser,
+  profiles,
   shared,
   actorEmail,
   skillActor,
@@ -292,120 +287,9 @@ export function mountGrantRoutes({
   /** What one Bot holds. The runtime reads this to decide what to offer a model. */
   routes.get("/for/:agentId", requireUser, async (context) => {
     const agentId = context.req.param("agentId");
-    // A grant list is a fact about the Bot it belongs to. Left open it says which tools somebody
-    // else's private coworker has been given.
-        return context.json(await store.listForAgent(agentId));
+    if (!(await profiles?.get(context.var.actor, agentId)))
+      return context.json({ error: "Bot not found." }, 404);
+    return context.json(await store.listForAgent(agentId));
   });
 
-  /**
-   * Call a tool, as a Bot.
-   *
-   * The grant, the policy and the audit row all happen inside the store, so this endpoint cannot
-   * accidentally satisfy one of them and skip another. A refusal comes back as 403 with the reason
-   * the model and the person are both shown, which is the same sentence written to the trail.
-   *
-   * NOTHING IN THIS REPOSITORY CALLS IT. It is what the browser used to post to when a Bot's tool
-   * loop ran client-side; that loop moved to the server, and the client helper for this went with it.
-   * Kept rather than removed, because #37 hardened it with `canUseBot` after that move — so removing
-   * it belongs in a change that says so, not in a merge resolution.
-   */
-  routes.post("/call", requireUser, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as {
-      ref?: string;
-      args?: Record<string, unknown>;
-      agentId?: string;
-    } | null;
-    // Same shape lie as `/grants` above: JSON numbers, objects and arrays are truthy, so they
-    // must be refused here rather than inside `canUseBot` or the tool call.
-    if (
-      typeof body?.ref !== "string" ||
-      !body.ref.trim() ||
-      typeof body.agentId !== "string" ||
-      !body.agentId.trim()
-    ) {
-      return context.json({ error: "A tool and a Bot are required." }, 400);
-    }
-    // `args` reaches `Object.entries` inside the store, where a string fans out into indexed
-    // entries, a number becomes no entries, and an array passes as an object — all escaping as
-    // a vendor 502 instead of a 400 for a malformed call.
-    if (
-      body.args !== undefined &&
-      (typeof body.args !== "object" ||
-        body.args === null ||
-        Array.isArray(body.args) ||
-        Object.getPrototypeOf(body.args) !== Object.prototype)
-    ) {
-      return context.json({ error: "Tool arguments must be an object." }, 400);
-    }
-
-    // Asked before the grant is looked up, and before anything reaches a vendor. The grant says this
-    // Bot may use the tool; it says nothing about whether this person may act as this Bot, and the
-    // call goes out on the deployment's own credential either way.
-    
-    try {
-      const result = await store.callTool({
-        ref: body.ref,
-        args: body.args ?? {},
-        botId: body.agentId,
-        /*
-         * The user id, not the address.
-         *
-         * `callTool` keys a per-person connection on `users.id`, so an address here finds nothing and
-         * every call through this route would be answered "you have not connected your account" —
-         * about a connector the person has connected. It never surfaced because a Bot's own tool loop
-         * runs on the server and does not come through here.
-         *
-         * The other uses of `actorEmail` in this file are `by:` on configuration changes, where an
-         * address is the useful thing to record. This one is an identity being resolved, not a name
-         * being written down, and the two are not interchangeable.
-         */
-        actorId: context.var.actor.id,
-        // A signed-in person calling the tool themselves: say so, because a shared account refuses a
-        // call that does not say what started it.
-        initiator: PERSON_INITIATOR,
-      });
-      return context.json(result);
-    } catch (error) {
-      if (error instanceof PluginRefusedError) {
-        return context.json({ error: error.message, rule: error.rule }, 403);
-      }
-      if (error instanceof CatalogueEntryUnknownError) {
-        return context.json({ error: error.message }, 404);
-      }
-      /*
-       * Ours, and so neither the vendor's fault nor this caller's business.
-       *
-       * CRITERION. A fault on the `isDeploymentFault` shelf is not reported through the branch
-       * below, and its sentence does not leave this process by this route.
-       *
-       * REASON. Two things would be wrong at once. `failed: true` and 502 say somebody else's
-       * software did not answer, which is a false statement about a call that never went out —
-       * and this route is `requireUser`, not `requireAdmin`, so the sentence naming our columns
-       * and the correction to make would be readable by anybody with a session. The operator who
-       * can act on it reads it on the refresh route above, which is admin-gated; here the honest
-       * answer is that the deployment cannot make this call as it stands.
-       */
-      if (isDeploymentFault(error)) {
-        return context.json(
-          {
-            error:
-              "That tool isn't set up correctly. Ask an admin to check the server it belongs to.",
-          },
-          500,
-        );
-      }
-      // A server that failed is not a refusal, and saying so matters: one means the deployment
-      // decided against it, the other means somebody else's software did not answer.
-      return context.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "The server did not answer.",
-          failed: true,
-        },
-        502,
-      );
-    }
-  });
 }

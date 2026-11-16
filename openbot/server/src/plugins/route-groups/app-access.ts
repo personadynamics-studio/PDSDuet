@@ -101,6 +101,8 @@ export function mountAppAccessRoutes({
   routes,
   store,
   requireUser,
+  requireAdmin,
+  profiles,
   composio,
   shared,
   actorEmail,
@@ -159,7 +161,9 @@ export function mountAppAccessRoutes({
    */
   routes.get("/for/:agentId/apps", requireUser, async (context) => {
     const agentId = context.req.param("agentId");
-        return context.json({
+    if (!(await profiles?.get(context.var.actor, agentId)))
+      return context.json({ error: "Bot not found." }, 404);
+    return context.json({
       apps: await store.appAccessForBot({
         userId: context.var.actor.id,
         agentId,
@@ -176,7 +180,9 @@ export function mountAppAccessRoutes({
    */
   routes.get("/for/:agentId/apps/:app", requireUser, async (context) => {
     const agentId = context.req.param("agentId");
-        const app = context.req.param("app");
+    if (!(await profiles?.get(context.var.actor, agentId)))
+      return context.json({ error: "Bot not found." }, 404);
+    const app = context.req.param("app");
     const inspected =
       app.length > MAX_NAME
         ? null
@@ -223,7 +229,9 @@ export function mountAppAccessRoutes({
         },
         400,
       );
-        const found = await store.inspectApp({
+    if (!(await profiles?.get(context.var.actor, agentId)))
+      return context.json({ error: "Bot not found." }, 404);
+    const found = await store.inspectApp({
       app,
       agentId,
       userId: context.var.actor.id,
@@ -332,7 +340,7 @@ export function mountAppAccessRoutes({
    * Every pending request, for an administrator: one app's with `?app=`, or all of them, and a
    * count per app either way so the Plugins list can badge each app without a second read.
    */
-  routes.get("/access-requests", requireUser, async (context) => {
+  routes.get("/access-requests", requireAdmin, async (context) => {
     const all = await store.pendingAppAccessRequests({});
     const byApp: Record<string, number> = {};
     for (const request of all)
@@ -362,7 +370,7 @@ export function mountAppAccessRoutes({
    * with that sentence rather than granted everything. A ref outside the app is refused rather than
    * dropped.
    */
-  routes.post("/access-requests/:id/approve", requireUser, async (context) => {
+  routes.post("/access-requests/:id/approve", requireAdmin, async (context) => {
     const id = context.req.param("id");
     const body = (await context.req.json().catch(() => null)) as {
       refs?: unknown;
@@ -587,7 +595,7 @@ export function mountAppAccessRoutes({
   });
 
   /** Dismiss a request: nothing changes but the request, which stops waiting. */
-  routes.post("/access-requests/:id/dismiss", requireUser, async (context) => {
+  routes.post("/access-requests/:id/dismiss", requireAdmin, async (context) => {
     const id = context.req.param("id");
     const closed: AppAccessRequestRecord | null =
       await store.closeAppAccessRequest({

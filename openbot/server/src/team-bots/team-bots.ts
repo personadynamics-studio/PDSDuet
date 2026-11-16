@@ -1,10 +1,9 @@
 /**
  * Team Bots: one Bot, published by its owner, used by teammates in chats of their own.
  *
- * WHO SEES IT. `teamBotAccess` is the one rule, added to the same SQL gate that already admits public
- * Bots and a person's own (`profile-store.ts` `accessFilter`, `runtime-agents.ts`), so the roster, the
- * runtime, handoffs and groups all see a Team Bot exactly where its publication says. No publication
- * row, no access: unpublishing is one delete.
+ * WHO SEES IT. `agents/access.ts` combines the publication audience with public Bots, ownership and
+ * administrators, so the roster, runtime, handoffs and groups use the same scope. Unpublishing
+ * removes the extra access its publication gave teammates; public visibility still applies.
  *
  * PRIVATE CHATS. A teammate's conversation is an ordinary channel of their own, and channels are
  * membership-scoped, so the owner cannot read it and it cannot read theirs. Nothing here changes that.
@@ -15,6 +14,7 @@
  * call (grant, policy, approvals, audit) is still decided as the teammate who is asking.
  */
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { visibleTo } from "../agents/access";
 import type { AgentActor } from "../agents/profile-types";
 import type { Database } from "../db/client";
 import { agents, users } from "../db/schema/core";
@@ -31,10 +31,7 @@ import {
   assignedCondition,
   describedForTeam,
   PLACEHOLDER_BOT_NAMES,
-  teamBotAccess,
 } from "./access";
-
-export { teamBotAccess } from "./access";
 
 /** Prefix a consent refusal carries, so a chat can draw the card instead of the sentence. */
 export const TEAM_BOT_CONSENT_MARKER = "[team-bot-consent]";
@@ -52,29 +49,11 @@ export class TeamBotNotFoundError extends Error {
   }
 }
 
-export type TeamBotSummary = {
-  id: string;
-  name: string;
-  title: string;
-  roleDescription: string;
-  ownerUserId: string | null;
-  audience: "team" | "people";
-  publishedAt: string;
-  assigned: boolean;
-};
-
 export type TeamBotConsentDecision =
   | "allow_once"
   | "allow_always"
   | "allow_all_team_bots"
   | "skip";
-
-/** One consent card a run raised: which Team Bot, which of the person's own accounts, and why. */
-export type TeamBotConsentAsk = {
-  botId: string;
-  serverId: string;
-  message: string;
-};
 
 /** Which servers a person has connected an account on, as the plugin store records it. */
 export type ConnectionReader = (userId: string) => Promise<Set<string>>;
@@ -85,18 +64,9 @@ export function createTeamBots(options: {
   connectedServers: ConnectionReader;
 }) {
   const { database, connectedServers } = options;
-  /**
-   * Cards raised while a server-run turn was listening for them, keyed by person and Bot. A browser
-   * chat draws the card from the tool result itself; a group turn has no browser, so it collects
-   * them here and puts the card in the shared transcript.
-   */
-  const listening = new Map<string, TeamBotConsentAsk[]>();
-
   async function publication(botId: string) {
     const [row] = await database
       .select({
-        agentId: teamBotPublications.agentId,
-        audience: teamBotPublications.audience,
         ownerUserId: agentProfiles.ownerUserId,
       })
       .from(teamBotPublications)
@@ -114,26 +84,26 @@ export function createTeamBots(options: {
     return row ?? null;
   }
 
-  /** Read the Bot used by publish and unpublish. */
-  async function owned(botId: string) {
+  /** Only the owner may publish their Bot and share its connected accounts. */
+  async function owned(actor: AgentActor, botId: string) {
     const [row] = await database
       .select({
-        id: agents.id,
         name: agents.name,
         roleDescription: agentProfiles.roleDescription,
-        ownerUserId: agentProfiles.ownerUserId,
       })
       .from(agents)
       .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-      .where(and(eq(agents.id, botId), isNull(agentProfiles.deletedAt)))
+      .where(and(
+        eq(agents.id, botId),
+        eq(agentProfiles.ownerUserId, actor.id),
+        isNull(agentProfiles.deletedAt),
+      ))
       .limit(1);
     if (!row) throw new TeamBotNotFoundError();
     return row;
   }
 
   return {
-    teamBotAccess,
-
     /**
      * Whose account a Team Bot's call to `ref` goes out on, for the person asking.
      *
@@ -189,33 +159,9 @@ export function createTeamBots(options: {
           if (spent.length) return actorId;
         }
         const message = `This Team Bot wants to use your own ${serverId} account. Choose Allow once, Always allow, or Skip, then ask again.`;
-        listening
-          .get(`${actorId}\n${botId}`)
-          ?.push({ botId, serverId, message });
         throw new PluginRefusedError(
           `${TEAM_BOT_CONSENT_MARKER}${JSON.stringify({ botId, serverId })} ${message}`,
           null,
-        );
-      };
-    },
-
-    /**
-     * Listen for consent cards this person's turns with this Bot raise, until the returned function
-     * is called; it returns them once each.
-     */
-    listenForConsent(
-      actorId: string,
-      botId: string,
-    ): () => TeamBotConsentAsk[] {
-      const key = `${actorId}\n${botId}`;
-      const asks: TeamBotConsentAsk[] = [];
-      listening.set(key, asks);
-      return () => {
-        if (listening.get(key) === asks) listening.delete(key);
-        return asks.filter(
-          (ask, index) =>
-            asks.findIndex((other) => other.serverId === ask.serverId) ===
-            index,
         );
       };
     },
@@ -277,7 +223,7 @@ export function createTeamBots(options: {
         groups: string[];
       },
     ) {
-      const bot = await owned(botId);
+      const bot = await owned(actor, botId);
       // A teammate cannot tell an undescribed Bot from any other, so it is not published.
       if (
         !bot.roleDescription.trim() ||
@@ -345,13 +291,14 @@ export function createTeamBots(options: {
 
     /** Teammates lose access until it is published again. Assignments wait, inert. */
     async unpublish(actor: AgentActor, botId: string) {
-      await owned(botId);
+      await owned(actor, botId);
       await database
         .delete(teamBotPublications)
         .where(eq(teamBotPublications.agentId, botId));
     },
 
     async assign(actor: AgentActor, botId: string, groupName: string) {
+      if (actor.role !== "admin") throw new TeamBotRefusedError("Only administrators may assign Team Bots.");
       if (!(await publication(botId)))
         throw new TeamBotRefusedError("Publish this Bot before assigning it.");
       const group = groupName.trim();
@@ -363,6 +310,7 @@ export function createTeamBots(options: {
     },
 
     async unassign(actor: AgentActor, botId: string, groupName: string) {
+      if (actor.role !== "admin") throw new TeamBotRefusedError("Only administrators may assign Team Bots.");
       await database
         .delete(teamBotAssignments)
         .where(
@@ -371,27 +319,6 @@ export function createTeamBots(options: {
             eq(teamBotAssignments.groupName, groupName),
           ),
         );
-    },
-
-    /** Whether this is a Team Bot somebody else published, where this person's accounts need their consent. */
-    async publishedByAnother(actorId: string, botId: string): Promise<boolean> {
-      const owner = (await publication(botId))?.ownerUserId;
-      return Boolean(owner) && owner !== actorId;
-    },
-
-    /** Whether this Bot is in this person's sidebar by assignment, which they cannot hide. */
-    async isAssignedTo(actorId: string, botId: string): Promise<boolean> {
-      const [row] = await database
-        .select({ agentId: teamBotPublications.agentId })
-        .from(teamBotPublications)
-        .where(
-          and(
-            eq(teamBotPublications.agentId, botId),
-            assignedCondition(actorId),
-          ),
-        )
-        .limit(1);
-      return Boolean(row);
     },
 
     /** The Team Bots this person may use, their own publications, and each one's settings. */
@@ -411,7 +338,7 @@ export function createTeamBots(options: {
         .from(teamBotPublications)
         .innerJoin(agents, eq(agents.id, teamBotPublications.agentId))
         .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
-        .where(isNull(agentProfiles.deletedAt))
+        .where(and(isNull(agentProfiles.deletedAt), visibleTo(actor)))
         .orderBy(agents.name);
       const ids = rows.map((row) => row.id);
       const [audience, assignments] = ids.length
@@ -479,6 +406,7 @@ export function createTeamBots(options: {
         )
         .where(
           and(
+            eq(agentProfiles.ownerUserId, actor.id),
             isNull(agentProfiles.deletedAt),
             isNull(teamBotPublications.agentId),
           ),

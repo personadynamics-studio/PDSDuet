@@ -153,14 +153,14 @@ export function SharingSections({ agent }: { agent: AgentProfile }) {
             {agent.visibility === "public"
               ? `尚未向團隊發佈。它屬公開機械人，${appConfig.brand.productName} 所有成員均已可使用。`
               : agent.mine
-                ? "尚未發佈，只有你可使用。"
+                ? "尚未發佈，只有你和管理員可使用。"
                 : "尚未發佈。"}
           </PageEmpty>
         )}
       </PageSection>
       {agent.mine && (published || publishable) ? (
         <PageSection
-          description="發佈不會改變可見範圍，你可隨時取消發佈。"
+          description="向指定對象開放使用，你可隨時取消發佈；公開機械人仍可由所有成員使用。"
           title={published ? "發佈對象" : "發佈"}
         >
           {/* More than one value — an audience, then people and groups — so a summary row and a

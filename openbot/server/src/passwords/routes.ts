@@ -1,16 +1,16 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../auth/guards";
-import type { ActionActor } from "../computer/gateway";
-import type { SignInService } from "./service";
+import type { SignInActor, SignInService } from "./service";
 import { SignInRefusedError } from "./types";
 
 /** Same rule as the computer routes: the local development actor is not a users row. */
 const DEV_ACTOR_EMAIL = "dev@openbot.local";
 
-function actorOf(context: { var: AppVariables }): ActionActor {
+function actorOf(context: { var: AppVariables }): SignInActor {
   const record = context.var.actor;
   return {
     id: record.id,
+    role: record.role,
     ...(record.email === DEV_ACTOR_EMAIL ? {} : { userId: record.id }),
     initiator: { kind: "person" },
   };
@@ -72,7 +72,7 @@ export function createSignInRoutes(
   routes.post("/", async (context) => {
     const body = await readBody(context.req.raw);
     const botId = field(body, "botId", { required: true, max: 200 }) as string;
-        const request = await service.request({
+    const request = await service.request({
       ownerUserId: context.var.actor.id,
       botId,
       site: field(body, "site", { required: true, max: 2048 }) as string,

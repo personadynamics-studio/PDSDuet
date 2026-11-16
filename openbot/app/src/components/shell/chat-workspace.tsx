@@ -11,41 +11,45 @@ export function ChatWorkspace({
   bot,
   children,
   requestedCallId,
+  initiallyOpen,
 }: {
   bot?: { id: string; name: string } | null;
-  children: (computerAction: ReactNode) => ReactNode;
+  children: (computerAction: ReactNode, onOpenComputer?: () => void) => ReactNode;
   requestedCallId?: string;
+  initiallyOpen: boolean;
 }) {
   const [open, setOpen] = useState(
     () =>
-      typeof window !== "undefined" && window.matchMedia(DESKTOP_QUERY).matches,
+      initiallyOpen && typeof window !== "undefined" && window.matchMedia(DESKTOP_QUERY).matches,
   );
   useEffect(() => {
     const media = window.matchMedia(DESKTOP_QUERY);
-    const change = (event: MediaQueryListEvent) => setOpen(event.matches);
+    const change = (event: MediaQueryListEvent) => { if (!event.matches) setOpen(false); };
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
   useEffect(() => { if (requestedCallId) setOpen(true); }, [requestedCallId]);
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       <DetailPanel
         open={Boolean(bot) && open}
         onClose={() => setOpen(false)}
         title="電腦畫面"
         detailWidth={512}
+        expandable
         detail={
           bot ? <ComputerViewPanel agentId={bot.id} name={bot.name} /> : null
         }
       >
         {children(
-          <ComputerChatControls
-            computerId={bot?.id}
-            open={Boolean(bot) && open}
+          bot ? <ComputerChatControls
+            computerId={bot.id}
+            open={open}
             onOpenChange={setOpen}
-            label="電腦"
-          />,
+            label="瀏覽器"
+          /> : null,
+          bot ? () => setOpen(true) : undefined,
         )}
       </DetailPanel>
     </div>

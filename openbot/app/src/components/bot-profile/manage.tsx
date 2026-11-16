@@ -146,7 +146,7 @@ export function ManageSection({
             </ItemDescription>
           </ItemContent>
         </Item>
-          <>
+        {agent.canManage ? <>
             <Separator />
             <Item
               render={
@@ -167,9 +167,9 @@ export function ManageSection({
                 <IconChevronRight className="size-4 text-muted-foreground" />
               </ItemActions>
             </Item>
-          </>
+          </> : null}
       </PageRows>
-      <Dialog onOpenChange={setDeleteOpen} open={deleteOpen}>
+      <Dialog onOpenChange={setDeleteOpen} open={agent.canManage && deleteOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>刪除 {agent.name}？</DialogTitle>

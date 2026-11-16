@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { downloadHeaders } from "@openbot/shared/file-download";
+import type { AgentProfileStore } from "../agents/profile-store";
 import type { AppVariables } from "../auth/guards";
 import {
   type ComputerGateway,
@@ -16,24 +17,35 @@ import {
 
 export function createComputerRoutes(
   gateway: ComputerGateway,
-  requireComputer: MiddlewareHandler<{ Variables: AppVariables }>,
-  listVisibleBots: (actor: AppVariables["actor"]) => Promise<readonly string[]>,
+  requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+  profiles: AgentProfileStore,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireComputer);
+  routes.use("*", requireUser);
+
+  function requireAccess(load: AgentProfileStore["get"]): MiddlewareHandler<{ Variables: AppVariables }, "/:botId/*"> {
+    return async (context, next) => {
+      if (!(await load(context.var.actor, context.req.param("botId")))) {
+        return context.json({ error: "Computer not found." }, 404);
+      }
+      await next();
+    };
+  }
+  const requireControl = requireAccess(profiles.getForComputer);
+  const requireManagement = requireAccess(profiles.getForManagement);
 
   async function visibleComputers(actor: AppVariables["actor"]) {
-    const visible = new Set(await listVisibleBots(actor));
+    const visible = new Set((await profiles.listForComputer(actor)).map(bot => bot.id));
     const fleet = await gateway.computers();
     return { ...fleet, computers: fleet.computers.filter((computer) => visible.has(computer.botId)) };
   }
 
-  routes.get("/:botId/status", async (context) => {
+  routes.get("/:botId/status", requireControl, async (context) => {
     const botId = context.req.param("botId");
     return context.json(await gateway.status(botId));
   });
 
-  routes.get("/:botId/screenshot", async (context) => {
+  routes.get("/:botId/screenshot", requireControl, async (context) => {
     try {
       return context.json(await gateway.screenshot(context.req.param("botId"), context.req.raw.signal));
     } catch (error) {
@@ -41,7 +53,7 @@ export function createComputerRoutes(
     }
   });
 
-  routes.get("/:botId/read", async (context) => {
+  routes.get("/:botId/read", requireControl, async (context) => {
     try {
       return context.json(await gateway.read(context.req.param("botId"), context.req.raw.signal));
     } catch (error) {
@@ -49,7 +61,7 @@ export function createComputerRoutes(
     }
   });
 
-  routes.post("/:botId/navigate", async (context) => {
+  routes.post("/:botId/navigate", requireControl, async (context) => {
     const body = (await context.req.json().catch(() => null)) as {
       url?: unknown;
       toolCallId?: unknown;
@@ -62,7 +74,7 @@ export function createComputerRoutes(
       typeof body.toolCallId === "string" ? body.toolCallId : "";
 
     try {
-      const botId = context.req.param("botId") ?? "default";
+      const botId = context.req.param("botId");
       const result = await gateway.navigate(
         botId,
         body.url.trim(),
@@ -76,7 +88,7 @@ export function createComputerRoutes(
     }
   });
 
-  routes.post("/:botId/snapshot", async (context) => {
+  routes.post("/:botId/snapshot", requireControl, async (context) => {
     try {
       return context.json(await gateway.snapshot(context.req.param("botId"), context.req.raw.signal));
     } catch (error) {
@@ -85,7 +97,7 @@ export function createComputerRoutes(
   });
 
   
-  routes.post("/:botId/click", (context) =>
+  routes.post("/:botId/click", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       const ref = asRef(body);
       if (!ref) return badRef;
@@ -93,7 +105,7 @@ export function createComputerRoutes(
     }),
   );
 
-  routes.post("/:botId/type", (context) =>
+  routes.post("/:botId/type", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       const ref = asRef(body);
       if (!ref) return badRef;
@@ -112,7 +124,7 @@ export function createComputerRoutes(
     }),
   );
 
-  routes.post("/:botId/key", (context) =>
+  routes.post("/:botId/key", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (typeof body?.key !== "string" || !body.key) {
         return { error: "A key name is required, such as Enter or Tab." };
@@ -129,7 +141,7 @@ export function createComputerRoutes(
     }),
   );
 
-  routes.post("/:botId/scroll", (context) =>
+  routes.post("/:botId/scroll", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (!usableDeltaY(body?.deltaY)) return badDeltaY;
       return gateway.scroll(botId, {
@@ -139,7 +151,7 @@ export function createComputerRoutes(
   );
 
   
-  routes.get("/:botId/control", async (context) => {
+  routes.get("/:botId/control", requireControl, async (context) => {
     try {
       return context.json(
         await gateway.control(
@@ -153,7 +165,7 @@ export function createComputerRoutes(
     }
   });
 
-  routes.post("/:botId/control/request", (context) =>
+  routes.post("/:botId/control/request", requireControl, (context) =>
     act(context, (botId, body, signal) =>
       gateway.requestHelp(
         botId,
@@ -175,7 +187,7 @@ export function createComputerRoutes(
     }
   });
 
-  routes.get("/:botId/computers", async (context) => {
+  routes.get("/:botId/computers", requireControl, async (context) => {
     try {
       return context.json(await visibleComputers(context.var.actor));
     } catch (error) {
@@ -184,40 +196,40 @@ export function createComputerRoutes(
   });
 
   
-  routes.post("/:botId/computers/stop", (context) =>
+  routes.post("/:botId/computers/stop", requireManagement, (context) =>
     act(context, (botId) => gateway.stopComputer(botId)),
   );
 
   
-  routes.post("/:botId/computers/reset", (context) =>
+  routes.post("/:botId/computers/reset", requireManagement, (context) =>
     act(context, (botId) => gateway.resetComputer(botId)),
   );
 
   
-  routes.post("/:botId/computers/update", (context) =>
+  routes.post("/:botId/computers/update", requireManagement, (context) =>
     act(context, (botId) => gateway.updateComputer(botId)),
   );
 
-  routes.post("/:botId/control/take", (context) =>
+  routes.post("/:botId/control/take", requireControl, (context) =>
     act(context, (botId, body, signal) =>
       gateway.takeControl(botId, body?.requestId as string | undefined, signal),
     ),
   );
 
-  routes.post("/:botId/control/release", (context) =>
+  routes.post("/:botId/control/release", requireControl, (context) =>
     act(context, (botId, body, signal) =>
       gateway.releaseControl(botId, body?.requestId as string | undefined, signal),
     ),
   );
 
-  routes.post("/:botId/control/cancel", (context) =>
+  routes.post("/:botId/control/cancel", requireControl, (context) =>
     act(context, (botId, body, signal) =>
       gateway.cancelControl(botId, body?.requestId as string | undefined, signal),
     ),
   );
 
   
-  routes.post("/:botId/control/secret", (context) =>
+  routes.post("/:botId/control/secret", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (typeof body?.ref !== "string" || !body.ref) {
         return {
@@ -237,7 +249,7 @@ export function createComputerRoutes(
   );
 
   
-  routes.post("/:botId/human/secret", (context) =>
+  routes.post("/:botId/human/secret", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (typeof body?.text !== "string" || !body.text) {
         return { error: "A value is required." };
@@ -247,7 +259,7 @@ export function createComputerRoutes(
   );
 
   
-  routes.post("/:botId/human/:kind", async (context) => {
+  routes.post("/:botId/human/:kind", requireControl, async (context) => {
     const kind = context.req.param("kind");
     if (
       kind !== "click" &&
@@ -306,7 +318,7 @@ export function createComputerRoutes(
     }
   });
 
-  routes.post("/:botId/files/list", (context) =>
+  routes.post("/:botId/files/list", requireControl, (context) =>
     act(context, (botId, body, signal) =>
       gateway.listFiles(botId, {
         ...(typeof body?.path === "string" && body.path.trim()
@@ -316,7 +328,7 @@ export function createComputerRoutes(
     ),
   );
 
-  routes.post("/:botId/files/read", (context) =>
+  routes.post("/:botId/files/read", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (typeof body?.path !== "string" || !body.path.trim()) {
         return { error: "A file path is required." };
@@ -326,7 +338,7 @@ export function createComputerRoutes(
   );
 
   
-  routes.get("/:botId/files/download", async (context) => {
+  routes.get("/:botId/files/download", requireControl, async (context) => {
     const path = context.req.query("path");
     if (!path?.trim()) {
       return context.json({ error: "A file path is required." }, 400);
@@ -347,7 +359,7 @@ export function createComputerRoutes(
   });
 
   
-  routes.post("/:botId/exec", (context) =>
+  routes.post("/:botId/exec", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (typeof body?.command !== "string" || !body.command.trim()) {
         return { error: "A command is required." };
@@ -381,7 +393,7 @@ export function createComputerRoutes(
     }),
   );
 
-  routes.post("/:botId/files/write", (context) =>
+  routes.post("/:botId/files/write", requireControl, (context) =>
     act(context, (botId, body, signal) => {
       if (typeof body?.path !== "string" || !body.path.trim()) {
         return { error: "A file path is required." };
@@ -400,7 +412,7 @@ export function createComputerRoutes(
   return routes;
 }
 
-type ComputerContext = Context<{ Variables: AppVariables }>;
+type ComputerContext = Context<{ Variables: AppVariables }, "/:botId/*">;
 
 
 type BadRequest = { error: string };
@@ -426,10 +438,7 @@ async function act(
     signal: AbortSignal,
   ) => Promise<unknown> | BadRequest,
 ) {
-  // Always present on these routes, which all declare `:botId`. The fallback exists because this
-  // helper is typed against a generic context that cannot know that, and a thrown "undefined bot"
-  // would be a worse outcome than naming the one shared computer.
-  const botId = context.req.param("botId") ?? "default";
+  const botId = context.req.param("botId");
   const body = (await context.req.json().catch(() => null)) as Record<
     string,
     unknown

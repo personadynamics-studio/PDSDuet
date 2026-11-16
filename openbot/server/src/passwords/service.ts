@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentActor } from "../agents/profile-types";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { ActionActor, ComputerGateway } from "../computer/gateway";
 import type { SignInCodeResult, SignInFillResult } from "../computer/schema";
@@ -38,10 +39,12 @@ import {
  * site, which request and how it was answered; they carry no username, password or code.
  */
 export type SignInService = ReturnType<typeof createSignInService>;
+export type SignInActor = ActionActor & AgentActor;
 
 export type SignInServiceDependencies = {
   store: PasswordStore;
   gateway: Pick<ComputerGateway, "signIn" | "signInCode" | "requestHelp">;
+  canUseComputer: (actor: AgentActor, botId: string) => Promise<boolean>;
   /** The deployment's KEY_ENCRYPTION_KEY, the same one `credentials.ts` encrypts under. */
   encryptionKey: string;
   auditStore?: AuditStore;
@@ -124,6 +127,12 @@ export function createSignInService(deps: SignInServiceDependencies) {
   const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
   const managerOn = async (owner: string) =>
     deps.passwordManagerEnabled ? deps.passwordManagerEnabled(owner) : true;
+
+  async function requireComputer(actor: AgentActor, botId: string) {
+    if (!(await deps.canUseComputer(actor, botId))) {
+      throw new SignInRefusedError("Computer not found.", 404);
+    }
+  }
 
   async function audit(
     eventType:
@@ -258,10 +267,11 @@ export function createSignInService(deps: SignInServiceDependencies) {
   async function enterCode(
     owner: string,
     id: string,
-    actor: ActionActor,
+    actor: SignInActor,
     code: string,
   ): Promise<SignInRequestRecord> {
     const request = await load(owner, id);
+    await requireComputer(actor, request.botId);
     if (request.status !== "code_required")
       throw new SignInRefusedError(
         request.status === "filling"
@@ -355,12 +365,13 @@ export function createSignInService(deps: SignInServiceDependencies) {
   async function fill(
     owner: string,
     id: string,
-    actor: ActionActor,
+    actor: SignInActor,
     credential: { username?: string; password: string },
     method: "typed" | "saved",
     extra: { loginId?: string; save?: boolean },
   ): Promise<SignInRequestRecord> {
     const request = await load(owner, id);
+    await requireComputer(actor, request.botId);
     if (request.status !== "pending")
       throw new SignInRefusedError(
         request.status === "filling"
@@ -515,10 +526,11 @@ export function createSignInService(deps: SignInServiceDependencies) {
       botId: string;
       site: string;
       reason?: string;
-      actor: ActionActor;
+      actor: SignInActor;
       threadId?: string;
       toolCallId?: string;
     }): Promise<SignInRequestRecord> {
+      await requireComputer(input.actor, input.botId);
       const origin = originOf(input.site);
       const request = await store.createRequest({
         id: randomUUID(),
@@ -557,7 +569,7 @@ export function createSignInService(deps: SignInServiceDependencies) {
     async submit(
       owner: string,
       id: string,
-      actor: ActionActor,
+      actor: SignInActor,
       input: {
         username?: string;
         password: string;
@@ -577,7 +589,7 @@ export function createSignInService(deps: SignInServiceDependencies) {
     async submitCode(
       owner: string,
       id: string,
-      actor: ActionActor,
+      actor: SignInActor,
       input: { code: string },
     ) {
       const code = input.code?.trim();
@@ -592,7 +604,7 @@ export function createSignInService(deps: SignInServiceDependencies) {
     async useSaved(
       owner: string,
       id: string,
-      actor: ActionActor,
+      actor: SignInActor,
       input: { loginId: string },
     ) {
       if (!(await managerOn(owner)))
@@ -625,8 +637,9 @@ export function createSignInService(deps: SignInServiceDependencies) {
     },
 
     /** Sign in by hand instead: hand the person the Bot's browser. */
-    async takeOver(owner: string, id: string, actor: ActionActor) {
+    async takeOver(owner: string, id: string, actor: SignInActor) {
       const request = await load(owner, id);
+      await requireComputer(actor, request.botId);
       // From the code step too: a person may rather type the code into the site themselves.
       const from: readonly SignInStatus[] = ["pending", "code_required"];
       if (!from.includes(request.status))

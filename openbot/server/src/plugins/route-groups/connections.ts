@@ -947,6 +947,11 @@ export function mountConnectionRoutes({
     if ("refusal" in resolved) {
       return { refusal: { error: resolved.refusal, status: 400 } };
     }
+    if (!options.readOnly && resolved.ref.holder === "deployment" && context.var.actor.role !== "admin") {
+      return {
+        refusal: { error: "Only an administrator can manage the shared account.", status: 403 },
+      };
+    }
     return { toolkit, account: resolved.ref, title: resolved.title };
   };
 

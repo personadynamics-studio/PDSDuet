@@ -96,17 +96,17 @@ export function createHostAccessRoutes(options: {
     const body = (await context.req.json().catch(() => null)) as {
       botId?: unknown;
     } | null;
-    // Whitespace-only is truthy and would pass to `canUseBot` (404) and the broker naming
-    // nothing. Trimmed non-empty here, so malformed reads as malformed.
     const botId = typeof body?.botId === "string" ? body.botId.trim() : "";
     if (!botId) {
       return context.json({ error: "botId is required." }, 400);
     }
     const actor = context.var.actor;
-        try {
+    const botName = await options.botName?.(botId, actor);
+    if (botName == null) return context.json({ error: "Bot not found." }, 404);
+    try {
       const grant = await broker.requestFolderGrant({
         botId,
-        botName: (await options.botName?.(botId, actor)) ?? botId,
+        botName,
         actorId: actor.id,
       });
       await audit(auditStore, {

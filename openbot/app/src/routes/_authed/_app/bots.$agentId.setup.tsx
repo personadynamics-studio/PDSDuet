@@ -14,7 +14,7 @@ function SetupPage() {
       description="Who this Bot is, who can find it, and where it runs."
       title="初始設定"
     >
-      {(agent) => <SetupSections agent={agent} />}
+      {(agent) => agent.canManage ? <SetupSections agent={agent} /> : <p className="mt-6 text-muted-foreground">只有擁有者或管理員可以修改此機械人。</p>}
     </BotSubpage>
   );
 }

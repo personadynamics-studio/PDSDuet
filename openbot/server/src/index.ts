@@ -106,6 +106,7 @@ const computerProvider = config.computer ? createComputerProvider(config.compute
 const computer = computerProvider ? createComputerGateway({ provider: computerProvider }) : undefined;
 const passwords = computer ? createSignInService({
   store: createPasswordStore(database), gateway: computer, encryptionKey: config.keyEncryptionKey, auditStore: audit,
+  canUseComputer: async (actor, botId) => (await profiles.getForComputer(actor, botId)) !== null,
 }) : undefined;
 
 // Connector configuration affects connectors, never whether the browser can start.
@@ -237,7 +238,7 @@ const app = createApp(config, {
 });
 const server = startHttpServer({
   port: config.port, config, resolveRequestActor, computerGateway: computer, app,
-  canUseComputer: async (actor, botId) => (await profiles.get(actor, botId)) !== null,
+  canUseComputer: async (actor, botId) => (await profiles.getForComputer(actor, botId)) !== null,
 });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
   server.stop();

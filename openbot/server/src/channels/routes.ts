@@ -216,14 +216,9 @@ export function createChannelStore(
     actor: AgentActor,
     agentIds: string[],
   ): Promise<AgentChannel> => {
-    // Validated on this transaction, not through `profileStore.get`: the read has to share
-    // the connection this transaction already holds, and has to hold the profile so an agent
-    // cannot be deleted between passing the check and being linked to the new channel.
-    //
-    // Locks are taken in agent-ID order. Two channels selecting the same pair of agents in
-    // opposite orders would otherwise be able to deadlock against each other.
+    // Use the transaction's connection to read each Bot through the shared visibility rule.
     const profilesById = new Map<string, AgentProfile>();
-    for (const agentId of [...agentIds].sort()) {
+    for (const agentId of agentIds) {
       const profile = await profileStore.getWithin(transaction, actor, agentId);
       if (!profile) throw new AgentNotFoundError(agentId);
       profilesById.set(agentId, profile);

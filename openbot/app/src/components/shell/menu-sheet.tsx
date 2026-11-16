@@ -1,5 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { IconDeviceDesktop } from "@tabler/icons-react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -11,7 +12,12 @@ import { cn } from "@/lib/utils";
 const ROW = "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-duet-tile focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-duet-accent";
 
 /** Bot choice and ordinary conversation history are direct navigation. */
-export function MenuSheet({ open, onOpenChange }: { open: boolean; onOpenChange(open: boolean): void }) {
+export function MenuSheet({ open, onOpenChange, onOpenComputer, computerHint }: {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  onOpenComputer?: () => void;
+  computerHint: string;
+}) {
   const { bot, agents, selectBot } = useSelectedBot();
   const conversations = useInfiniteQuery({ ...channelListQueryOptions(), enabled: open });
   const close = () => onOpenChange(false);
@@ -41,6 +47,10 @@ export function MenuSheet({ open, onOpenChange }: { open: boolean; onOpenChange(
             {conversations.hasNextPage ? <Button variant="ghost" disabled={conversations.isFetchingNextPage} onClick={() => { void conversations.fetchNextPage(); }}>更多對話</Button> : null}
           </section>
           <section aria-label="工具與設定" className="border-t pt-3">
+            <button className={cn(ROW, "disabled:cursor-default disabled:opacity-50")} type="button" disabled={!onOpenComputer} onClick={() => { close(); onOpenComputer?.(); }}>
+              <IconDeviceDesktop className="size-5 shrink-0" />
+              <span className="min-w-0"><span className="block">瀏覽器</span><span className="block text-sm text-muted-foreground">{computerHint}</span></span>
+            </button>
             <Link className={ROW} to="/connections" onClick={close}>應用程式連接</Link>
             <Link className={ROW} to="/capabilities/memory" onClick={close}>個人記憶與聯絡人</Link>
             <Link className={ROW} to="/make" onClick={close}>已保存頁面</Link>
