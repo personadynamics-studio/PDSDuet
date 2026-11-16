@@ -26,11 +26,10 @@ pub struct Images {
 ///
 /// A published name on the left, a Compose variable on the right, because the two vocabularies are
 /// different and neither is going to change to suit the other.
-pub const IMAGE_VARIABLES: [(&str, &str); 5] = [
+pub const IMAGE_VARIABLES: [(&str, &str); 4] = [
     ("server", "SERVER_IMAGE"),
     ("supervisor", "SUPERVISOR_IMAGE"),
     ("agent-computer", "COMPUTER_IMAGE"),
-    ("agent-bot", "BOT_IMAGE"),
     ("agent-langgraph", "LANGGRAPH_IMAGE"),
 ];
 

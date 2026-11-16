@@ -43,7 +43,6 @@ pub struct Ports {
     pub server: u16,
     pub postgres: u16,
     pub computer: u16,
-    pub bot: u16,
     pub langgraph: u16,
     pub supervisor: u16,
     pub harness: Option<u16>,
@@ -56,7 +55,6 @@ impl Default for Ports {
             server: 3001,
             postgres: 5432,
             computer: 4100,
-            bot: 4200,
             langgraph: 4201,
             supervisor: 4500,
             harness: None,
@@ -73,7 +71,6 @@ impl Ports {
                 "SERVER_PORT",
                 "POSTGRES_PORT",
                 "COMPUTER_PORT",
-                "BOT_PORT",
                 "LANGGRAPH_PORT",
                 "SUPERVISOR_PORT",
                 "PICKED_HARNESS_HOST_PORT",
@@ -85,7 +82,6 @@ impl Ports {
             ("SERVER_PORT", &mut ports.server),
             ("POSTGRES_PORT", &mut ports.postgres),
             ("COMPUTER_PORT", &mut ports.computer),
-            ("BOT_PORT", &mut ports.bot),
             ("LANGGRAPH_PORT", &mut ports.langgraph),
             ("SUPERVISOR_PORT", &mut ports.supervisor),
         ] {
@@ -106,7 +102,6 @@ impl Ports {
             ("SERVER_PORT", self.server),
             ("POSTGRES_PORT", self.postgres),
             ("COMPUTER_PORT", self.computer),
-            ("BOT_PORT", self.bot),
             ("LANGGRAPH_PORT", self.langgraph),
             ("SUPERVISOR_PORT", self.supervisor),
         ]
@@ -131,8 +126,7 @@ pub fn compose(
     engine: &EngineStatus,
     ports: &Ports,
     images: &[(String, String)],
-    // Absent means no harness was picked, and the package's gated rows stay dropped.
-    harness: Option<&PickedHarness>,
+    bridge: Option<&ModelBridge>,
     // What a previous run of THIS deployment already minted, so it is not minted again. Empty on a
     // machine that has never run OpenBot, which is exactly when generating is right.
     kept: &BTreeMap<String, String>,
@@ -197,9 +191,7 @@ pub fn compose(
             model.credential,
             ModelCredential::Compatible { .. } | ModelCredential::ProviderOAuth { .. }
         ) {
-            for key in ["BOT_MODEL", "AGENT_BOT_MODEL"] {
-                env.remove(key);
-            }
+            env.remove("BOT_MODEL");
         }
     }
     match &model.credential {
@@ -257,7 +249,6 @@ pub fn compose(
             );
             env.insert("BOT_PROVIDER".into(), "openai".into());
             env.insert("BOT_MODEL".into(), model.clone());
-            env.insert("AGENT_BOT_MODEL".into(), model.clone());
         }
         ModelCredential::Compatible {
             base_url,
@@ -288,18 +279,6 @@ pub fn compose(
                 insert_if_given(&mut env, "OPENAI_CONTAINER_BASE_URL", container_base_url);
             }
             insert_if_given(&mut env, "BOT_MODEL", name);
-            /*
-             * The bundled Bot's own model variable, set to the same name.
-             *
-             * It has one because it hand-writes `/v1/chat/completions`, where `gpt-5.6-*` rejects
-             * function tools, so `docker-compose.yml` pins it to `gpt-5.5` rather than letting the
-             * framework Bot's choice take its tools away. That reasoning is about OpenAI's own
-             * models and does not survive a custom endpoint: `gpt-5.5` is not in the catalogue of
-             * an Ollama or a vLLM, so the pin asked somebody's own server for a model it has never
-             * heard of. The person named exactly one model on that screen and meant it for
-             * whichever Bot answers.
-             */
-            insert_if_given(&mut env, "AGENT_BOT_MODEL", name);
         }
     }
 
@@ -337,92 +316,15 @@ pub fn compose(
         "AGENT_COMPUTER_URL".into(),
         format!("http://127.0.0.1:{}", ports.computer),
     );
-    env.insert(
-        "MANAGED_AGENT_AG_UI_URL".into(),
-        if crate::stack::BundledBots::for_credential(&model.credential).agent_langgraph {
-            format!("http://127.0.0.1:{}/ag-ui", ports.langgraph)
-        } else {
-            // An owned empty value also clears a previously advertised API-key Bot on plan switch.
-            // The package loader omits its row while the endpoint is blank.
-            String::new()
-        },
-    );
-
-    /*
-     * The picked harness, if there is one.
-     *
-     * Addressed on loopback rather than by a compose service name, because the server is a host
-     * process here and not a container: it reaches `agent-bot` and `agent-langgraph` the same way,
-     * over the port those services publish.
-     *
-     * One address and one kind. The package's single row drops itself while the address is blank,
-     * so a deployment that picked nothing registers nothing.
-     */
-    // KIND describes the wire protocol, not who runs the endpoint. Always replace this
-    // nonsecret provenance, including when nothing is picked: `write` preserves omitted keys.
-    env.insert(
-        "PICKED_HARNESS_SOURCE".into(),
-        match harness {
-            Some(PickedHarness::Installed { .. }) => "installed",
-            Some(PickedHarness::RemoteAgUi { .. }) => "byo",
-            None => "",
-        }
-        .into(),
-    );
-    if let Some(picked) = harness {
-        match picked {
-            PickedHarness::Installed {
-                image,
-                port,
-                name,
-                mastra,
-                run_path,
-                remote_agent_id,
-            } => {
-                let host_port = ports.harness.unwrap_or(*port);
-                env.insert("PICKED_HARNESS_IMAGE".into(), image.clone());
-                env.insert("PICKED_HARNESS_PORT".into(), port.to_string());
-                env.insert("PICKED_HARNESS_NAME".into(), name.clone());
-                let run_path = run_path.trim();
-                env.insert(
-                    "PICKED_HARNESS_URL".into(),
-                    if run_path.is_empty() {
-                        format!("http://127.0.0.1:{host_port}")
-                    } else if run_path.starts_with('/') {
-                        format!("http://127.0.0.1:{host_port}{run_path}")
-                    } else {
-                        format!("http://127.0.0.1:{host_port}/{run_path}")
-                    },
-                );
-                /*
-                 * The kind, as the package spells it.
-                 *
-                 * Interpolated rather than written as a literal row per kind, because the loader
-                 * refuses an unknown `agent.type` by refusing the whole file: a package carrying a
-                 * literal `remote-mastra` row stops any server predating that kind from starting at
-                 * all, picked or not. Measured, not guessed — it is what a v0.0.8 deployment did.
-                 */
-                env.insert(
-                    "PICKED_HARNESS_KIND".into(),
-                    if *mastra {
-                        "remote-mastra".to_string()
-                    } else {
-                        "remote-ag-ui".to_string()
-                    },
-                );
-                insert_if_given(&mut env, "PICKED_HARNESS_AGENT_ID", remote_agent_id);
-            }
-            PickedHarness::RemoteAgUi {
-                url,
-                name,
-                remote_agent_id,
-            } => {
-                env.insert("PICKED_HARNESS_NAME".into(), name.clone());
-                env.insert("PICKED_HARNESS_URL".into(), url.trim().to_string());
-                env.insert("PICKED_HARNESS_KIND".into(), "remote-ag-ui".into());
-                insert_if_given(&mut env, "PICKED_HARNESS_AGENT_ID", remote_agent_id);
-            }
-        }
+    // These settings belong to the selection; omitted keys would preserve a previous endpoint.
+    for key in ["PICKED_HARNESS_IMAGE", "PICKED_HARNESS_PORT", "PICKED_HARNESS_URL"] {
+        env.insert(key.into(), String::new());
+    }
+    if let Some(bridge) = bridge {
+        let host_port = ports.harness.unwrap_or(bridge.port);
+        env.insert("PICKED_HARNESS_IMAGE".into(), bridge.image.clone());
+        env.insert("PICKED_HARNESS_PORT".into(), bridge.port.to_string());
+        env.insert("PICKED_HARNESS_URL".into(), format!("http://127.0.0.1:{host_port}"));
     }
 
     // Without this the server gives every Bot the same browser. It is the difference between the
@@ -470,56 +372,16 @@ pub fn compose(
     env
 }
 
-/**
-The harness somebody picked, as the deployment has to describe it.
-
-Registration is not an API call in this product: Bots come from the tenant package, whose
-`agents.yaml` interpolates `${...}` and drops any Bot whose endpoint comes out blank. So a picked
-harness becomes these settings, the package's own gated row materialises, and seeding registers it.
-Nothing new had to be built to make a Bot appear.
-
-`None` is a deployment that has not picked one, which writes nothing and leaves those rows dropped.
-*/
+/// A signed-in plan's model bridge, selected from the credential rather than a framework picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PickedHarness {
-    Installed {
-        /// The published image, e.g. `openbot-agent-crewai`. Named by the release, not derived.
-        image: String,
-        /// The port that image listens on, fixed by its own Dockerfile.
-        port: u16,
-        /// What the Bot is called on screen.
-        name: String,
-        /// How it is dialled. A Mastra server has no AG-UI route of its own.
-        mastra: bool,
-        /// The run route on that harness. Empty means the server root.
-        run_path: String,
-        /// Which agent on that server, for a Mastra roster. Empty means the only one there.
-        remote_agent_id: String,
-    },
-    RemoteAgUi {
-        /// The AG-UI endpoint the person already runs.
-        url: String,
-        /// What the Bot is called on screen.
-        name: String,
-        /// Reserved for a future remote roster field. Empty means the only one there.
-        remote_agent_id: String,
-    },
-}
-
-impl PickedHarness {
-    pub fn installed_port(&self) -> Option<u16> {
-        match self {
-            Self::Installed { port, .. } => Some(*port),
-            Self::RemoteAgUi { .. } => None,
-        }
-    }
+pub struct ModelBridge {
+    pub image: String,
+    pub port: u16,
 }
 
 /// The model credential, which belongs to the provider and not to the harness.
 ///
-/// Both Bots the deployment ships refuse to start without one, saying so plainly: "This Bot cannot
-/// answer without a model." Which provider is the person's own screen, and no harness constrains
-/// it: see `provider::catalogue`.
+/// The provider choice comes from the model screen; see `provider::catalogue`.
 #[derive(Clone, Debug, Default)]
 pub struct Model {
     pub credential: ModelCredential,

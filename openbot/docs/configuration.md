@@ -21,8 +21,6 @@ bash scripts/start.sh
 | `DATABASE_URL`                | PostgreSQL connection string.                                                                         |
 | `KEY_ENCRYPTION_KEY`          | Base64-encoded 32-byte key for encrypted stored credentials. Generate with `openssl rand -base64 32`. |
 
-`MANAGED_AGENT_AG_UI_URL` and `MANAGED_AGENT_TOKEN` are optional managed-agent settings. When the URL is configured, its token is required. They do not replace the endpoints declared by a tenant package or saved on an individual Bot.
-
 The default `examples/openduet/agents.yaml` declares the insurance PDF Bot at
 `http://localhost:4201/ag-ui` and a built-in search Bot. The local start script starts the LangGraph
 service for that endpoint. A deployment using another address should declare it in its own tenant
@@ -30,8 +28,8 @@ package; built-in Bots do not need a remote endpoint.
 
 ## General variables
 
-The left menu lists the current person's available Bots. Their explicit selection is used by Chat,
-Tasks and Make. If no Bot is selected or available, Chat opens the selection and creation dialog.
+The left menu lists the current person's available Bots. Their explicit selection is used by Chat
+and Make. If no Bot is selected or available, Chat opens the selection and creation dialog.
 There is no environment, tenant, harness or first-row fallback, and opening Chat starts no model work.
 
 | Variable             | Default                            | Meaning                                                             |
@@ -43,16 +41,15 @@ There is no environment, tenant, harness or first-row fallback, and opening Chat
 | `DEPLOYMENT_ID`      | the tenant package's id            | Names this local deployment and prefixes the identity a Shared app's account is held under at the vendor. That identity is fixed when the app is made Shared, so changing this later does not move it. |
 | `OPENAI_API_KEY`     | unset                              | Default model key for built-in agents and both shipped Bots.        |
 | `OPENAI_BASE_URL`    | unset                              | OpenAI-compatible endpoint that key is spent against. See below.    |
-| `BOT_PROVIDER`       | `openai`                           | Provider the framework Bot (`agent-langgraph`) and the picked harness run on: `openai`, `anthropic`, or `google`. The Python Bots read it too; `agent-bot` does not, it is OpenAI only. |
+| `BOT_PROVIDER`       | `openai`                           | Provider for the retained TypeScript LangGraph backend: `openai`, `anthropic`, or `google`. |
 | `ANTHROPIC_API_KEY`  | unset                              | Anthropic key when `BOT_PROVIDER=anthropic`.                        |
 | `ANTHROPIC_BASE_URL` | unset                              | Anthropic-compatible endpoint that key is spent against.            |
 | `GOOGLE_API_KEY`     | unset                              | Google key when `BOT_PROVIDER=google`.                              |
 | `GOOGLE_GENERATIVE_AI_BASE_URL` | unset                   | Google-compatible endpoint that key is spent against.               |
 | `BOT_MODEL`          | the Bot's row in the spec file   | Model for whichever Bot is starting. Unset, it comes from that Bot's row in [the provider spec file](#the-provider-spec-file); the provider fallbacks are `gpt-5.5`, `claude-sonnet-4-5`, and `gemini-2.5-flash`. |
-| `AGENT_BOT_MODEL`    | `gpt-5.5`                          | Model for the proof-of-concept Bot (`agent-bot`), kept separate because it speaks `/v1/chat/completions` directly and refuses a model it cannot use. |
 | `BOT_RESPONSES_API`  | `false`                            | Makes `agent-langgraph` use the OpenAI Responses API.               |
 | `BOT_REASONING_EFFORT` | unset (provider default)         | OpenAI and the Responses API only: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `agent-langgraph` refuses to start on any other value, on a non-`openai` provider, or without the Responses API. |
-| `AGENT_TOOL_TOKEN`   | unset; `start.sh` generates one    | The secret a framework Bot presents when it calls a granted tool back through this server. |
+| `AGENT_TOOL_TOKEN`   | unset                              | The secret a framework Bot presents when it calls a granted tool back through this server. |
 | `APP_DIST_DIR`       | unset                              | Where the built app is, when this process serves it. Set inside the container image; unset in development, where Vite serves the app. |
 | `COMPOSIO_API_KEY`   | unset                              | One key for the whole deployment, for the broker that holds people's accounts for a few hundred apps. Unset, there is nothing to connect, nothing to grant and no Composio tool for a Bot to call; what remains is one row that goes nowhere, under **More apps** on the admin Plugins page, naming this variable. See [Composio](plugins/composio.md). |
 
@@ -61,26 +58,17 @@ may not reach a vendor directly. It calls the deployment that granted the tool, 
 grant, the policy and the audit row live. Absent, no Bot may call tools back, and it is told so
 rather than quietly allowed.
 
-That default is right for a deployment and wrong for a laptop, where it meant every granted MCP tool
-was refused before it reached the grant, the boundary or the trail — and a refusal at that point is
-not visible in the transcript, so a Bot reported no results rather than an error. `scripts/start.sh`
-therefore generates one and writes it to `.env`, as it already does for `MANAGED_AGENT_TOKEN`. A
-value already set is kept.
-
-It is one of a pair, and they are not interchangeable: `MANAGED_AGENT_TOKEN` is the server proving
-itself to a Bot, this is a Bot proving itself to the server. Rotating either means the process
-holding the old one refuses every call, which is why `start.sh` restarts the server and recreates the
-Bot containers on a run that mints one.
+Configure this token on both the API and any external framework Bot that needs those callbacks.
+It authenticates the Bot to the API; a remote Bot's own endpoint credential is configured separately
+on its profile and stored in the credential vault.
 
 **`SERVER_INTERNAL_URL`** is the API address used by the frontend server to proxy requests. Set it to the API's reachable address when the frontend and API are served separately; it is not a background-worker setting.
 
 ## The provider spec file
 
-`shared/model-providers.json` is one file, and every language in the box reads it: the TypeScript
-Bots through `shared/model-providers.ts`, the Python Bots through `shared/model_providers.py`, and
-any other implementation straight as JSON. The one Bot that does not is `agent-claude-sdk`, which has
-no `bots` row. It has two sections: the facts per provider, and the
-provider and model each Bot runs:
+`shared/model-providers.json` supplies provider facts and Bot defaults to the retained TypeScript
+LangGraph backend through `shared/model-providers.ts`. It has two sections: provider configuration,
+and the provider and model each registered backend runs:
 
 ```json
 {
@@ -93,8 +81,7 @@ provider and model each Bot runs:
     }
   },
   "bots": {
-    "agent-langgraph": { "provider": "openai", "model": "gpt-5.5" },
-    "agent-adk": { "provider": "openai", "model": "gpt-4o-mini" }
+    "agent-langgraph": { "provider": "openai", "model": "gpt-5.5" }
   }
 }
 ```
@@ -106,37 +93,21 @@ of it:
 2. the Bot's row in this file — what the repository decided;
 3. the provider's `default_model` — what is left when neither says.
 
-Each Bot retains its existing default: for example, `agent-mastra` uses `gpt-4o-mini`, while
-`agent-langgraph` uses `gpt-5.5`. Editing a Bot's row changes that Bot's default without changing
-another Bot's choice. The Python LangGraph harness also accepts `BOT_PROVIDER=google_genai` as an
-alias for the spec's `google` provider.
+Editing a backend's row changes its default without changing another backend's choice.
 
 A blank value is read as unset, which is what a compose file passing `${BOT_MODEL:-}` hands a Bot
 when nobody chose a model. API keys never appear in the file: they arrive in the environment
 under the `key_variable` the provider row names.
 
-Adding a Bot in any language is adding one `bots` entry — `"agent-java": { "provider":
-"anthropic", "model": "claude-sonnet-4-5" }` — after which that Bot resolves its model the same
-way everything else does. A row that names a provider no `providers` entry exists for, or leaves a
-field empty, stops every Bot at startup with the path of the key that is wrong, rather than at the
-first model call.
-
-Adding a **provider** is three places rather than one: a row under `providers` here, one entry to
-`PROVIDER_IDS` in `shared/model-providers.ts`, and one entry to `PROVIDER_IDS` in
-`shared/model_providers.py`. Each loader checks this file against its own list in both
-directions, so neither the Python Bots nor the TypeScript ones start against a provider row their
-own loader has never heard of, nor against a provider their own loader names when the file has no
-row for it. Either refusal names the key that is wrong, at startup rather than at the first model
-call, in either language.
-
-`agent-bot` is the one Bot that pins its provider: it speaks `/v1/chat/completions` directly and
-has never read `BOT_PROVIDER`, and `bots.agent-bot` supplies only its model.
+The TypeScript loader requires each Bot row to name a known provider and nonempty fields. Adding a
+provider requires its `providers` row and an entry in `PROVIDER_IDS` in
+`shared/model-providers.ts`; the backend must implement that provider as well.
 
 ## OpenAI-compatible endpoints
 
 `OPENAI_BASE_URL` decides where an OpenAI-shaped request is answered. Unset, that is OpenAI. Set, it is any endpoint speaking the same API: a gateway in front of several providers, a proxy, or a model on hardware you control.
 
-It moves the whole deployment rather than one Bot. The API server reads it for package built-in agents, `agent-bot` reads it for the client it constructs, and `agent-langgraph` reads it for `BOT_PROVIDER=openai`.
+It applies to Native Bots in the API and to `agent-langgraph` when `BOT_PROVIDER=openai`.
 
 `OPENAI_CONTAINER_BASE_URL` overrides that value inside the Bot containers only, for an endpoint the containers reach by a different route than the host does. Unset, the containers use `OPENAI_BASE_URL` like everything else.
 
@@ -308,10 +279,7 @@ settings as Compose. Restart existing API processes after changing those setting
 
 **Some variables belong to the desktop app, not to you.** A desktop installation writes these into
 its own deployment's `.env` and owns their values: `OPENBOT_MODEL_OAUTH_FILE`, `CHATGPT_AUTH_FILE`,
-`CLAUDE_CODE_OAUTH_TOKEN`, and the `PICKED_HARNESS_*` names that describe the Bot picked during setup
-(`PICKED_HARNESS_IMAGE`, `PICKED_HARNESS_URL`, `PICKED_HARNESS_PORT` and the rest). The server reads
-`PICKED_HARNESS_IMAGE` and `PICKED_HARNESS_URL` to hand that Bot `MANAGED_AGENT_TOKEN`, and refuses to
-start when they are set without it. When a model provider is connected by OAuth rather than by key, the
+and `CLAUDE_CODE_OAUTH_TOKEN`. When a model provider is connected by OAuth rather than by key, the
 desktop also points `OPENAI_BASE_URL` at OpenBot's own loopback route and sets `OPENAI_API_KEY` to a
 local proxy credential rather than a provider key, so those two do not mean what the table above says
 in that mode. A server you configure yourself is unaffected by all of this.
@@ -477,7 +445,7 @@ Reachability codes and account-link codes look alike, and Reachability's are che
 Reachability `link <code>` binds a conversation for delivery and is not recorded as a linked
 account; a `link <code>` from Slack's page under Connections links the Slack user.
 
-## Text messages and push notifications
+## Text messages
 
 A provider is switched on by setting its variables and is off while none of them are set. Setting
 some of a provider's variables and not all of them stops the server at start-up with
@@ -490,18 +458,11 @@ some of a provider's variables and not all of them stops the server at start-up 
 | `TWILIO_AUTH_TOKEN`         | Twilio auth token. Used to send and to check the signature on every request Twilio makes.                                                                                                                                                         |
 | `TWILIO_VERIFY_SERVICE_SID` | The Twilio Verify service that texts the code a person enters under a Bot's **Reaching you** to confirm their number.                                                                                                                            |
 | `TWILIO_FROM_NUMBER`        | The Twilio number OpenBot sends from.                                                                                                                                                                                                              |
-| `EXPO_PROJECT_ID`           | The native app's EAS project id, a UUID. Switches on push notifications and sign-in from the native app (without it, the server does not trust the app's `openbotmobile://` sign-in redirect). A device registers only when the app reports this same project id; any other value is refused. A value that is not a UUID stops the server at start-up.                  |
-| `EXPO_ACCESS_TOKEN`         | Optional. Sent as `Authorization: Bearer` on every request to Expo's push service; without it those requests carry no token.                                                                                                                       |
 
 With SMS on, point the Twilio number's incoming-message webhook at
 `<DELIVERY_PUBLIC_URL>/api/delivery/webhooks/sms`. OpenBot passes
 `<DELIVERY_PUBLIC_URL>/api/delivery/webhooks/sms/status` to Twilio as the status callback on each
 message it sends.
-
-The native app in `mobile/` reads two variables of its own when it is built, from `mobile/.env`:
-`EXPO_PUBLIC_SERVER_URL`, the deployment's public URL (required, `https` outside development, no
-credentials or query string), and `EXPO_PUBLIC_EAS_PROJECT_ID`, the same project id as
-`EXPO_PROJECT_ID` above.
 
 ## Inbound email triggers
 
@@ -537,11 +498,7 @@ address: its page and the Bot both say inbound email is not configured on this d
 | `COMPUTER_RUNTIME`                   | Set to `runsc` to run supervised computers under gVisor.                                  |
 | `COMPUTER_SANDBOX`                   | Set to `on` to enable Chromium's own sandbox where the host permits user namespaces. Which way it went is printed at start-up. |
 
-`COMPUTER_SANDBOX` is not the cluster sandbox provider. A Kubernetes deployment can instead run each
-computer as a sandboxed pod, selected by `COMPUTER_SANDBOX_NAMESPACE` with `COMPUTER_SANDBOX_IDLE_AFTER`
-and `COMPUTER_SANDBOX_TEMPLATE_FILE` beside it; those are set by the Helm chart, not by Compose, and
-are covered in [charts/openbot/README.md](../charts/openbot/README.md). The similarly named
-`COMPUTER_SANDBOX` above only toggles Chromium's own process sandbox on a Docker computer.
+`COMPUTER_SANDBOX` toggles Chromium's own process sandbox on a Docker computer.
 
 Changing `COMPUTER_BROWSER_MODE` affects new supervised computers. A computer that already exists is
 left running until its image changes or its container is recreated. To apply a mode-only change to
@@ -554,12 +511,11 @@ docker ps -aq --filter "label=openbot.namespace=openbot" | xargs -r docker rm -f
 
 The supervisor recreates each computer with the same named volumes on its next request.
 
-### Headed or headless managed Chromium in Docker or Helm
+### Headed or headless managed Chromium in Docker
 
 The managed backend uses Playwright's full `chromium` channel in either mode. The Docker image
 already installs that browser and Xvfb; it does not require Google Chrome. Headed is the default in
-Compose (`agent-computer` and the computers the supervisor creates) and in the Helm chart
-(`computers.browserMode: headed`). The computer starts its own Xvfb, so nothing appears on any screen
+Compose (`agent-computer` and the computers the supervisor creates). The computer starts its own Xvfb, so nothing appears on any screen
 and the live screen, take control and hand back work exactly as before. Headed costs a little more
 memory and CPU than headless.
 
@@ -571,16 +527,8 @@ docker compose up -d --force-recreate agent-computer supervisor
 ```
 
 Existing supervisor-created computers retain their mode until recreated as described above. The
-same per-Bot profile volumes and streamed viewer continue to work. For Helm:
-
-```yaml
-computers:
-  browserMode: headless
-```
-
-Apply the Helm upgrade. A newly created computer uses the new setting; recreate existing supervised
-computers through your deployment's lifecycle controls while keeping their persistent volumes. A
-headless computer no longer calls itself `HeadlessChrome`: its user agent and client hints report what
+same per-Bot profile volumes and streamed viewer continue to work. A headless computer's user agent
+and client hints report what
 the same browser reports headed.
 
 ### Installed Chrome for a local API deployment
@@ -601,13 +549,12 @@ bun install --cwd agent-computer --frozen-lockfile
 
 Use the same existing `COMPUTER_TOKEN` for the API and helper. It can be set in the checkout's `.env`
 (Bun loads it) or supplied securely in each process environment; the helper never prints it. Set the
-following API configuration and clear both supervisor selectors, including any inherited process
-environment values, because either selector takes precedence over the shared URL:
+following API configuration and clear the supervisor URL, including any inherited process
+environment value, because it takes precedence over the shared URL:
 
 ```dotenv
 AGENT_COMPUTER_URL=http://127.0.0.1:4101
 COMPUTER_SUPERVISOR_URL=
-COMPUTER_SANDBOX_NAMESPACE=
 ```
 
 In the helper's environment, leave `COMPUTER_BROWSER_BACKEND` and `COMPUTER_BROWSER_MODE` unset, or
@@ -724,20 +671,6 @@ residential or ISP proxy's gateway URL, credentials included:
 EGRESS_PROXY_DEFAULT=http://customer-user:password@gateway.residential.example:8000
 ```
 
-On Helm, put the URL in a Secret and turn it on:
-
-```yaml
-computers:
-  egressProxy:
-    enabled: true
-    # existingSecret: my-proxy        # or let the chart hold it in secrets.egressProxyUrl
-    # existingSecretKey: egress-proxy-url
-networkPolicy:
-  computerExtraEgress:                # needed when networkPolicy.enabled
-    - to: [{ ipBlock: { cidr: 0.0.0.0/0 } }]
-      ports: [{ port: 8000, protocol: TCP }]
-```
-
 It reaches the shared computer and every per-Bot computer as `EGRESS_PROXY_DEFAULT`. The egress
 filter chains to it, so the network policy still decides what a Bot may reach, and the proxy's
 credentials are split out before Chromium or any status report sees them.
@@ -757,7 +690,6 @@ stack without a toolchain and without waiting for Chromium to build.
 | ----------------- | ------------------- | ------------------------------------------ |
 | `agent-computer`  | `COMPUTER_IMAGE`    | `your-registry/pdsduet-agent-computer` |
 | `supervisor`      | `SUPERVISOR_IMAGE`  | `your-registry/pdsduet-supervisor`     |
-| `agent-bot`       | `BOT_IMAGE`         | `your-registry/pdsduet-agent-bot`      |
 | `agent-langgraph` | `LANGGRAPH_IMAGE`   | `your-registry/pdsduet-agent-langgraph`|
 | `migrate`         | `SERVER_IMAGE`      | `your-registry/pdsduet-server`         |
 
@@ -781,7 +713,6 @@ useful answer is that the image could not be fetched. Somewhere that must never 
 | `app`             | 3010                       | `APP_PORT`        |
 | `server`          | 3001                       | `SERVER_PORT`     |
 | `agent-computer`  | 4100                       | `COMPUTER_PORT`   |
-| `agent-bot`       | 4200                       | `BOT_PORT`        |
 | `agent-langgraph` | 4201                       | `LANGGRAPH_PORT`  |
 | `supervisor`      | 4500 host / 4300 container | `SUPERVISOR_PORT` |
 | PostgreSQL        | 5432                       | `POSTGRES_PORT`   |
@@ -789,7 +720,7 @@ useful answer is that the image could not be fetched. Somewhere that must never 
 Set these in `.env` or in the environment. `docker-compose.yml` publishes on them and
 `scripts/start.sh` reads the same names to decide where to look, so one setting moves a service and
 everything that talks to it. The addresses built from them are separate settings, so a moved service
-also needs its URL changed: `DATABASE_URL`, `AGENT_COMPUTER_URL` and `MANAGED_AGENT_AG_UI_URL`.
+also needs its URL changed, such as `DATABASE_URL`, `AGENT_COMPUTER_URL` or a Bot's explicit remote endpoint.
 
 To run two deployments on one Docker host, give the second one its own `COMPOSE_PROJECT_NAME`,
 `COMPUTER_NAMESPACE` and `COMPUTER_IMAGE`. Container and volume names are global to a host, and the

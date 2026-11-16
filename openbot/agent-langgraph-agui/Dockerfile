@@ -1,5 +1,4 @@
-# LangGraph, as a Bot. Python rather than Bun because that is what the integration is published in,
-# and the protocol is the only thing a Bot has to share with the others.
+# ChatGPT subscription model bridge for the Native server runtime.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -9,7 +8,7 @@ COPY agent-langgraph-agui/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent-langgraph-agui/src ./src
-COPY shared/model_providers.py shared/model-providers.json /shared/
+COPY shared/model-providers.json /shared/model-providers.json
 
 ENV PORT=4206
 EXPOSE 4206

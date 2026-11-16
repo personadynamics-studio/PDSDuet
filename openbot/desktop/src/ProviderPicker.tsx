@@ -467,7 +467,7 @@ export function ProviderPicker({
 
   return (
     <div className="sheet">
-      <p className="steps-of">Step 3 of 4</p>
+      <p className="steps-of">Step 2 of 3</p>
       <h1>Connect your AI</h1>
       <p className="lede">
         Connect your provider with a supported plan or an API key.
@@ -622,18 +622,8 @@ export function ProviderPicker({
                     Sign in again with {row.name}
                   </button>
                 )}
-                {/*
-                 * Said here because it changes an answer the person already gave.
-                 *
-                 * A subscription only works through the one Bot that speaks that vendor's
-                 * sign-in, so choosing a plan re-points the Bot. Doing that silently would leave
-                 * somebody looking at a Bot they did not choose with no idea why; see
-                 * `harness::speaking_for` for the failure that came of not saying it at all.
-                 */}
                 <p className="footnote">
-                  Your Bot will be{" "}
-                  {row.id === "anthropic" ? "Claude Agent SDK" : "LangGraph"},
-                  which is the one that can use this plan.
+                  Your plan supplies the model used by your Native Bot.
                 </p>
               </>
             ) : signInUrl ? (

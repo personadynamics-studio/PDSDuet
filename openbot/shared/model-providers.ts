@@ -1,32 +1,7 @@
 /**
- * The facts every Bot shares about the model providers it may be pointed at.
- *
- * One entry per provider, rather than the same default model, key variable and base URL variable
- * written out in each Bot. They were written out in each Bot, and they drifted: five files, five
- * different default OpenAI models, the first time somebody changed one of them in one place only.
- * A provider is added here; the Bots that speak its SDK take their names from this table.
- *
- * THE VALUES LIVE IN `model-providers.json`, beside this file. That file is the contract every
- * language in the box reads — TypeScript and Python through the loaders beside it, any other
- * language straight as JSON — so a developer adding a Bot in Java adds one entry there and never
- * reads this module. What the two loaders add to the file is types and validation: in either
- * loader, a row missing a field, a provider row the file lacks, a provider row that loader's list
- * has never heard of, or a `bots` entry naming a provider outside that list, stops the process at
- * startup with the path of the offending key rather than at the first model call.
- *
- * ENVIRONMENT BEATS FILE. `BOT_PROVIDER` and `BOT_MODEL` still win, exactly as
- * `docs/configuration.md` has always described; the file supplies what they leave unset. API keys
- * never appear in the file — they arrive in the environment under the `key_variable` the provider
- * row names.
- *
- * Facts only. Which provider a Bot can DRIVE is that Bot's own decision, beside the code that
- * loads its SDK: this module knows Google exists and what its key is called, and `agent-mastra`
- * still refuses it because it loads no Google module. Keeping the two apart is what lets a new
- * provider be registered here without pretending every harness can answer for it. The `bots`
- * section records what a Bot runs by default, not what it is able to drive.
- *
- * Its own module for the reason `model-key.ts` had to be one: `agent-bot` and `agent-langgraph`
- * call `serve()` at module scope, so importing a pure function from an entry point binds a port.
+ * Provider facts and Bot defaults from model-providers.json.
+ * BOT_PROVIDER and BOT_MODEL override those defaults; credentials stay in the environment.
+ * Each runtime's installed SDKs decide which providers it can use.
  */
 
 import specJson from "./model-providers.json";
@@ -34,10 +9,7 @@ import specJson from "./model-providers.json";
 /**
  * The providers this deployment knows the names of.
  *
- * Adding one is one entry here, one in `PROVIDER_IDS` in `shared/model_providers.py`, and one row
- * to the JSON file. Each loader checks the file against its own list in both directions, so a
- * provider row this list names and the file lacks, or a row in the file this list has never heard
- * of, stops this Bot at startup rather than at its first model call.
+ * The TypeScript loader checks this list against the provider rows in the JSON file.
  */
 export const PROVIDER_IDS = ["openai", "anthropic", "google"] as const;
 
@@ -232,10 +204,6 @@ export type BotSettings = {
  * the last: the provider's own default row, for a provider whose Bot entry the file pairs with
  * somebody else.
  *
- * `pinnedProvider` is for a Bot that drives exactly one provider's API and answers to no other
- * name — `agent-bot` speaks chat completions by hand and has never read `BOT_PROVIDER`. Pinning
- * keeps that Bot's behavior what it was while its model still comes from the file.
- *
  * A provider nobody has heard of is kept as typed, not rewritten to OpenAI, so the Bot's own
  * refusal can put the name in its message. Its model falls back to the OpenAI default for the
  * same reason `defaultModelFor` does it: the refusal is one line below and belongs to the Bot.
@@ -248,7 +216,6 @@ export type BotSettings = {
 export function botSettings(
   botId: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
-  pinnedProvider?: string,
 ): BotSettings {
   const entry = Object.hasOwn(BOT_ENTRIES, botId)
     ? BOT_ENTRIES[botId]
@@ -260,7 +227,6 @@ export function botSettings(
   }
 
   const provider =
-    pinnedProvider?.trim() ||
     (env.BOT_PROVIDER ?? "").trim().toLowerCase() ||
     entry.provider;
 
@@ -283,8 +249,6 @@ export function botSettings(
  * cannot use it, and a Bot whose integration offers the Responses API has to turn it on. The same
  * predicate answers both questions; which question is asked belongs to the Bot.
  *
- * Named for the fact rather than for either consequence, because `agent-bot` uses it to refuse a
- * model and `agent-langgraph` uses it to select a flag, and neither name fits both.
  */
 export function requiresResponsesApi(model: string): boolean {
   return /^gpt-5\.[6-9]|^gpt-[6-9]/.test(model);

@@ -21,72 +21,18 @@ use crate::problem::Problem;
 /// rather than raised, and treating it as a long-lived service makes it look like a crash loop.
 const SERVICES: [&str; 3] = ["postgres", "supervisor", "agent-computer"];
 
-/**
-The Bots that ship with OpenBot, which only run on an API key.
-
-BOTH REFUSE TO START WITHOUT ONE, saying so themselves: "OPENAI_API_KEY is not set. This Bot cannot
-answer without a model." That is correct of them and wrong of us to ignore. Somebody who signs in
-with the ChatGPT or Claude subscription they already pay for has no key by design, so raising these
-gave them two containers that died on startup and two red lines on the setup screen, about Bots they
-never chose.
-
-Started when a key exists and left alone when it does not. The Bot the person actually picked speaks
-its plan and answers either way, which is what the last screen proves.
-*/
-const AGENT_BOT: &str = "agent-bot";
 const AGENT_LANGGRAPH: &str = "agent-langgraph";
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BundledBots {
-    pub agent_bot: bool,
-    pub agent_langgraph: bool,
+pub fn needs_langgraph(credential: &crate::env::ModelCredential) -> bool {
+    use crate::env::ModelCredential;
+    matches!(credential, ModelCredential::OpenAi { .. } | ModelCredential::Anthropic { .. } | ModelCredential::Compatible { .. } | ModelCredential::ProviderOAuth { .. })
 }
 
-impl BundledBots {
-    /// One provider decision for both service selection and the advertised package endpoint.
-    pub fn for_credential(credential: &crate::env::ModelCredential) -> Self {
-        use crate::env::ModelCredential;
-        match credential {
-            ModelCredential::OpenAi { .. }
-            | ModelCredential::Compatible { .. }
-            | ModelCredential::ProviderOAuth { .. } => Self::openai_compatible(),
-            ModelCredential::Anthropic { .. } => Self::anthropic(),
-            ModelCredential::None
-            | ModelCredential::ClaudePlan { .. }
-            | ModelCredential::ChatGptPlan { .. } => Self::none(),
-        }
-    }
-
-    pub const fn none() -> Self {
-        Self {
-            agent_bot: false,
-            agent_langgraph: false,
-        }
-    }
-
-    pub const fn openai_compatible() -> Self {
-        Self {
-            agent_bot: true,
-            agent_langgraph: true,
-        }
-    }
-
-    pub const fn anthropic() -> Self {
-        Self {
-            agent_bot: false,
-            agent_langgraph: true,
-        }
-    }
-}
-
-pub fn selected_services(harness: bool, bots: BundledBots) -> Vec<&'static str> {
+pub fn selected_services(model_bridge: bool, langgraph: bool) -> Vec<&'static str> {
     let mut services = SERVICES.to_vec();
-    if bots.agent_bot {
-        services.push(AGENT_BOT);
-    }
-    if bots.agent_langgraph {
+    if langgraph {
         services.push(AGENT_LANGGRAPH);
     }
-    if harness {
+    if model_bridge {
         services.push("agent-harness");
     }
     services
@@ -162,15 +108,11 @@ fn compose_command(engine: &Address, root: &Path, secrets: &Secrets) -> Command 
 pub fn installation_images(
     engine: &Address,
     root: &Path,
-    harness: bool,
     settings: &Secrets,
 ) -> Result<Vec<String>, Problem> {
-    let mut requested = selected_services(harness, BundledBots::openai_compatible());
+    let mut requested = selected_services(false, true);
     requested.push("initialize");
     let mut command = compose_command(engine, root, settings);
-    if harness {
-        command.args(["--profile", "harness"]);
-    }
     let output = command
         .args(["config", "--images"])
         .args(requested)
@@ -205,22 +147,14 @@ pub fn installation_images(
 pub fn up(
     engine: &Address,
     root: &Path,
-    harness: bool,
-    // Which bundled Bots can read the provider the model screen selected.
-    bots: BundledBots,
+    model_bridge: bool,
+    langgraph: bool,
     secrets: &Secrets,
 ) -> Result<Vec<&'static str>, crate::problem::Problem> {
-    /*
-     * The picked harness rides in on its profile.
-     *
-     * `agent-harness` is profile-gated so a deployment that picked nothing does not try to start
-     * it: its image comes from `.env`, and unset that is a request to pull the empty string, which
-     * fails the whole `up` rather than the one service nobody asked for. The flag comes before
-     * `up`, because `--profile` is an option of `compose` itself and not of the subcommand.
-     */
-    let requested = selected_services(harness, bots);
+    // The existing Compose profile starts a bridge only for subscription credentials.
+    let requested = selected_services(model_bridge, langgraph);
     let mut command = compose_command(engine, root, secrets);
-    if harness {
+    if model_bridge {
         command.args(["--profile", "harness"]);
     }
     let output = command

@@ -1,12 +1,4 @@
-"""Claude Agent SDK as a Bot, through `ag-ui-claude-sdk`.
-
-This is the row where a plan can stand in for a key. `claude setup-token` mints a
-`CLAUDE_CODE_OAUTH_TOKEN` against a Pro or Max subscription and the SDK accepts it, which is why
-this harness is the one the model screen offers a subscription on.
-
-The precedence trap is the thing to get right: `ANTHROPIC_API_KEY` wins over the OAuth token, so a
-deployment that sets both silently bills the key and the plan goes unused. OpenBot sets one.
-"""
+"""Claude subscription model bridge for the Native server runtime."""
 
 import os
 
@@ -47,13 +39,7 @@ async def health():
     return {"ok": True, "harness": "claude-agent-sdk"}
 
 
-add_claude_fastapi_endpoint(
-    app=app,
-    adapter=OpenBotClaudeAgentAdapter(name="openbot"),
-    path="/",
-)
-
-model_adapter = OpenBotClaudeAgentAdapter(name="openbot-model", model_only=True)
+model_adapter = OpenBotClaudeAgentAdapter(name="openbot-model")
 add_claude_fastapi_endpoint(
     app=app,
     adapter=model_adapter,

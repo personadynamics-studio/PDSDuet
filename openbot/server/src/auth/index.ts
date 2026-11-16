@@ -1,5 +1,4 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
-import { expo } from "@better-auth/expo";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import { betterAuth } from "better-auth";
@@ -89,15 +88,7 @@ export function createAuth(config: DeploymentConfig, database: Database) {
   };
   const scimPluginOptions = scimOptions(scimDeps);
 
-  /*
-   * The native app signs in through its custom scheme, and the Expo plugin appends the session cookie
-   * to that redirect. Any Android app can register the same scheme, so the scheme is trusted only on
-   * a deployment that runs the native app (EXPO_PROJECT_ID, as for push). Elsewhere a sign-in can
-   * never be sent there.
-   */
-  const nativeApp = Boolean(process.env.EXPO_PROJECT_ID?.trim());
   const plugins = [
-    ...(nativeApp ? [expo()] : []),
     /*
      * SCIM 2.0 at /api/auth/scim/v2, only when SCIM_BEARER_TOKEN is set. See scim.ts.
      */

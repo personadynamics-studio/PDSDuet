@@ -1,14 +1,13 @@
-import { summaryFor, WEB_HARNESSES } from "@openbot/shared/harnesses";
 import {
   IconCheck,
   IconLock,
+  IconLink,
   IconSparkles,
   IconUsers,
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { HarnessMark } from "@/components/agents/harness-mark";
 import { MicOrb } from "@/components/duet/mic-orb";
 import { Button } from "@/components/ui/button";
 import {
@@ -96,22 +95,13 @@ const STEPS = ["runtime", "endpoint", "about"] as const;
 type Step = (typeof STEPS)[number];
 
 /**
- * Where the Bot runs: on this deployment, or behind a framework somebody hosts.
- *
- * Which framework is kept so Back returns to it still chosen, and so a Bot made without a title can
- * be given one. Every framework is reached the same way and stored the same way — an AG-UI address —
- * so the server never hears which was picked.
+ * Where the Bot runs: on this deployment, or at an AG-UI endpoint somebody hosts.
  */
-type Runtime = { kind: "builtin" } | { kind: "managed"; harness: string };
+type Runtime = { kind: "builtin" } | { kind: "remote" };
 
 /** What a created Bot is called beneath its name when the person gave it no title. */
 function defaultTitle(runtime: Runtime): string {
-  if (runtime.kind === "builtin") return "助理";
-  if (runtime.harness === "byo-url") return "AG-UI 代理";
-  return (
-    WEB_HARNESSES.find((harness) => harness.id === runtime.harness)?.name ??
-    "AG-UI 代理"
-  );
+  return runtime.kind === "builtin" ? "助理" : "AG-UI 代理";
 }
 
 /**
@@ -195,7 +185,7 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
   };
 
   const create = async (chosen: Runtime) => {
-    const managed = chosen.kind === "managed";
+    const remote = chosen.kind === "remote";
     const agent = await createAgent.mutateAsync(
       agentInputFrom({
         name: name.trim(),
@@ -203,8 +193,8 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
         roleDescription: instructions.trim(),
         visibility,
         // A Bot that runs here has no address; whatever was typed on the way past stays behind.
-        endpoint: managed ? endpoint.trim() : "",
-        authValue: managed ? key : "",
+        endpoint: remote ? endpoint.trim() : "",
+        authValue: remote ? key : "",
       }),
     );
     setCreatedId(agent.id);
@@ -227,7 +217,7 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
 
   /** Where Back goes: the address for a Bot somebody else runs, where it runs otherwise. */
   const previous = (): Step =>
-    step === "about" && runtime?.kind === "managed" ? "endpoint" : "runtime";
+    step === "about" && runtime?.kind === "remote" ? "endpoint" : "runtime";
 
   if (createdId) {
     return (
@@ -310,7 +300,6 @@ function NewBotFlow({ onCreated }: { onCreated: (agentId: string) => void }) {
               <EndpointStep
                 endpoint={endpoint}
                 endpointError={tried ? endpointIssue : undefined}
-                harness={runtime?.kind === "managed" ? runtime.harness : null}
                 onEndpoint={(value) => {
                   setEndpoint(value);
                   setTried(false);
@@ -632,25 +621,18 @@ function RuntimeStep({
         <span className="h-px flex-1 bg-border" />
       </div>
 
-      {WEB_HARNESSES.map((harness) => (
-        <button
-          aria-pressed={
-            runtime?.kind === "managed" && runtime.harness === harness.id
-          }
-          className={OPTION_CLASSES}
-          key={harness.id}
-          onClick={() => onChoose({ kind: "managed", harness: harness.id })}
-          type="button"
-        >
-          <HarnessMark id={harness.mark} name={harness.name} />
-          <span className="min-w-0">
-            <span className="block font-medium text-sm">{harness.name}</span>
-            <span className="block text-pretty text-muted-foreground text-xs">
-              {summaryFor(harness)}
-            </span>
-          </span>
-        </button>
-      ))}
+      <button
+        aria-pressed={runtime?.kind === "remote"}
+        className={OPTION_CLASSES}
+        onClick={() => onChoose({ kind: "remote" })}
+        type="button"
+      >
+        <IconLink className="size-5 shrink-0" />
+        <span className="min-w-0">
+          <span className="block font-medium text-sm">AG-UI 代理</span>
+          <span className="block text-pretty text-muted-foreground text-xs">連接你已運行的 AG-UI 服務。</span>
+        </span>
+      </button>
     </div>
   );
 }
@@ -658,39 +640,25 @@ function RuntimeStep({
 /**
  * The address of an agent somebody else runs, and the key it sits behind if it has one.
  *
- * The framework picked on the step before is named at the top so the person can see what they are
- * connecting, but nothing below differs by framework: every one of them is an AG-UI address and is
- * stored the same way.
- *
  * The address takes focus on arrival rather than the heading, as the name does on the last step: it
  * is the one thing this step asks for, and its label says what it is.
  */
 function EndpointStep({
-  harness,
   endpoint,
   secret,
   endpointError,
   onEndpoint,
   onKey,
 }: {
-  harness: string | null;
   endpoint: string;
   secret: string;
   endpointError?: string;
   onEndpoint: (value: string) => void;
   onKey: (value: string) => void;
 }) {
-  const chosen = WEB_HARNESSES.find((entry) => entry.id === harness);
-
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
-        {chosen ? (
-          <span className="inline-flex w-fit items-center gap-2 rounded-lg bg-muted/50 py-1 pr-2.5 pl-1.5 text-sm">
-            <HarnessMark id={chosen.mark} name={chosen.name} />
-            {chosen.name}
-          </span>
-        ) : null}
         <h2 className="break-words font-semibold text-lg tracking-tight">
           如何連接代理程式？
         </h2>

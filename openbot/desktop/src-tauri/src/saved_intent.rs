@@ -153,24 +153,6 @@ pub fn persist_configuration(
     purge: &BTreeMap<String, String>,
     credential: &ModelCredential,
 ) -> Result<(), Problem> {
-    persist_configuration_with(
-        root,
-        settings,
-        secrets,
-        purge,
-        credential,
-        crate::vault::remember_all,
-    )
-}
-
-fn persist_configuration_with(
-    root: &Path,
-    settings: &BTreeMap<String, String>,
-    secrets: &BTreeMap<String, String>,
-    purge: &BTreeMap<String, String>,
-    credential: &ModelCredential,
-    remember: impl FnOnce(&Path, &BTreeMap<String, String>) -> Result<(), Problem>,
-) -> Result<(), Problem> {
     let mut scoped_secrets = secrets.clone();
     let record = match credential {
         ModelCredential::Compatible {
@@ -194,7 +176,7 @@ fn persist_configuration_with(
     if let Some(record) = record {
         scoped_secrets.insert(COMPATIBLE_CREDENTIAL.into(), record);
     }
-    remember(root, &scoped_secrets)?;
+    crate::vault::remember_all(root, &scoped_secrets)?;
     crate::env::write_plan_store(root, credential).map_err(|error| {
         Problem::with(
             "OpenBot could not save the model sign-in. Try Start again.",

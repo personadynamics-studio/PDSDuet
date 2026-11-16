@@ -1,9 +1,7 @@
 ag-ui-langgraph==0.0.45
 langgraph
-langchain
+langchain-core
 langchain-openai
-langchain-anthropic
-langchain-google-genai
 fastapi
 python-multipart
 uvicorn[standard]

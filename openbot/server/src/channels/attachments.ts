@@ -1051,13 +1051,9 @@ export function createChannelAttachmentRoutes(
      * cannot be withdrawn at all — a channel that was soft-deleted, or one this person was removed
      * from, still holds their staged rows and `DELETE /api/attachments/:id` will not take them — so a
      * sentence offering only "remove some" would be asking for something impossible, and the sentence
-     * has to say what becomes of those. It used to say they are "cleared within a day", which this
-     * server is in no position to promise: `attachments.culler.olderThanHours` is the operator's to
-     * set, and `attachments.culler.enabled: false` is a documented way to keep every staged row for
-     * ever (charts/openbot/README.md). A deployment that has done either is one where this sentence
-     * was simply a lie, told to the one person who could not act on it. What is true whatever the
-     * chart says is that those rows are the deployment's to clear and not this person's, and that is
-     * what it says now.
+     * has to say what becomes of those. Cleanup timing belongs to the deployment's attachment sweep,
+     * so the server cannot promise that these rows will be cleared within a day. Those rows are the
+     * deployment's to clear and not this person's.
      *
      * The count comes from the statement that refused, exactly as the cap's does, so the number and
      * the decision cannot contradict each other.

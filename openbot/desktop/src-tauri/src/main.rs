@@ -7,7 +7,7 @@ use std::sync::Mutex;
 mod desktop_host_access;
 
 use openbot_desktop_lib::{
-    acquire, deployment, engine, env as openbot_env, harness, host_access,
+    acquire, deployment, engine, env as openbot_env, host_access,
     install, preparation, problem::Problem, provider, pull_metrics, quiet, stack,
     tray, windows as win,
 };
@@ -92,7 +92,6 @@ struct SavedConfiguration {
 struct AlreadyConfigured {
     values: std::collections::BTreeMap<String, String>,
     saved: SavedConfiguration,
-    harness: Option<harness::HarnessChoice>,
 }
 
 fn report<R: tauri::Runtime>(
@@ -176,20 +175,15 @@ async fn prepare_engine(app: tauri::AppHandle) -> Result<engine::EngineStatus, P
 
 /// Install local deployment software.
 #[tauri::command]
-async fn prepare_installation(app: tauri::AppHandle, root: String, harness: Option<harness::HarnessChoice>) -> Result<(), Problem> {
+async fn prepare_installation(app: tauri::AppHandle, root: String) -> Result<(), Problem> {
     let root = stack::root_from(&root);
     let address = engine_ready(&app).await?;
     deployment_ready(&app, &root).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let bun = install::ensure_bun(&root, which_bun())?;
         stack::install_dependencies(&root, &bun)?;
-        let picked = harness::picked(harness.as_ref(), &root)?;
-        let settings = preparation::image_settings(&root, picked.as_ref())?;
-        let mut images = stack::installation_images(&address, &root, picked.as_ref().and_then(|p| p.installed_port()).is_some(), &settings)?;
-        for name in [openbot_desktop_lib::plan::SIGN_IN_IMAGE, openbot_desktop_lib::plan::CHATGPT_SIGN_IN_IMAGE] {
-            images.push(deployment::reference(&root, name)?);
-        }
-        images.sort(); images.dedup();
+        let settings = preparation::image_settings(&root)?;
+        let images = stack::installation_images(&address, &root, &settings)?;
         for image in images {
             pull_metrics::pull_image(&address, &image, |_| {}, |_| {})?;
         }
@@ -246,7 +240,9 @@ async fn deployment_ready<R: tauri::Runtime>(
 fn prepared_sign_in(root: &Path, published: &str) -> Result<(engine::Address, String), Problem> {
     let status = engine::detect();
     let address = status.address.ok_or_else(|| Problem::plain(status.detail))?;
-    Ok((address, deployment::reference(root, published)?))
+    let image = deployment::reference(root, published)?;
+    pull_metrics::pull_image(&address, &image, |_| {}, |_| {})?;
+    Ok((address, image))
 }
 
 /// What the model screen chose, as the window sends it.
@@ -271,14 +267,6 @@ struct ChosenModel {
 
 impl ChosenModel {
     fn into_credential(self, root: &Path) -> Result<openbot_env::ModelCredential, Problem> {
-        self.into_credential_with(root, saved_secret)
-    }
-
-    fn into_credential_with(
-        self,
-        root: &Path,
-        mut saved_secret: impl FnMut(&Path, &str) -> Result<String, Problem>,
-    ) -> Result<openbot_env::ModelCredential, Problem> {
         let given = |value: Option<String>| value.unwrap_or_default().trim().to_string();
         let saved = self.saved.unwrap_or(false);
         match (self.provider.as_str(), self.login.as_str()) {
@@ -414,16 +402,10 @@ fn saved_secret(root: &Path, key: &str) -> Result<String, Problem> {
 }
 
 #[tauri::command]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "These named fields preserve the existing Tauri IPC contract."
-)]
 async fn start_stack<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     root: String,
     model: ChosenModel,
-    // The row the person picked, with the address only for the bring-your-own row.
-    harness: Option<harness::HarnessChoice>,
     // Both registers on the way out: see `problem.rs`. Anything that still returns a bare string
     // converts to the plain half, so a path without its own sentence reads as it always did.
 ) -> Result<(), openbot_desktop_lib::problem::Problem> {
@@ -432,29 +414,24 @@ async fn start_stack<R: tauri::Runtime>(
         app,
         root,
         model,
-        harness,
     )
     .await
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Mirror the command fields while testing startup with a resolved root."
-)]
-async fn start_stack_inner<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: PathBuf, model: ChosenModel, harness: Option<harness::HarnessChoice>) -> Result<(), Problem> {
+async fn start_stack_inner<R: tauri::Runtime>(app: tauri::AppHandle<R>, root: PathBuf, model: ChosenModel) -> Result<(), Problem> {
     let shell = app.state::<Shell>();
     remember_selected_root(&shell, &root);
     let credential = start_stack_credential(&root, model)?;
-    let picked = harness::picked(harness.as_ref(), &root)?;
+    let bridge = openbot_desktop_lib::plan::bridge_for(&root, &credential)?;
     let status = engine::detect();
     let address = status.address.clone().ok_or_else(|| Problem::plain(status.detail.clone()))?;
     let bun = install::ensure_bun(&root, which_bun())?;
     let existing = openbot_desktop_lib::vault::already_given_no_ui(&root, &root.join(".env"), &openbot_env::MINTED[..])?;
     let ports = openbot_env::Ports::read(&root).map_err(|e| Problem::from(e.to_string()))?;
-    let settings = openbot_env::compose(&openbot_env::Model { credential: credential.clone() }, &status, &ports, &deployment::image_variables(&root)?, picked.as_ref(), &existing);
+    let settings = openbot_env::compose(&openbot_env::Model { credential: credential.clone() }, &status, &ports, &deployment::image_variables(&root)?, bridge.as_ref(), &existing);
     let (settings, mut secrets) = openbot_desktop_lib::vault::split(settings);
     openbot_desktop_lib::saved_intent::persist_configuration(&root, &settings, &secrets, &secrets, &credential)?;
-    stack::up(&address, &root, picked.as_ref().and_then(|p| p.installed_port()).is_some(), stack::BundledBots::for_credential(&credential), &secrets)?;
+    stack::up(&address, &root, bridge.is_some(), stack::needs_langgraph(&credential), &secrets)?;
     stack::initialize(&address, &root, &secrets)?;
     let output = quiet::command(&bun).current_dir(root.join("app")).args(["run", "build"]).output().map_err(|e| Problem::from(e.to_string()))?;
     if !output.status.success() { return Err(Problem::plain(quiet::said(&output.stderr))); }
@@ -717,9 +694,6 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
             "OPENAI_BASE_URL",
             "OPENAI_CONTAINER_BASE_URL",
             "BOT_MODEL",
-            "PICKED_HARNESS_NAME",
-            "PICKED_HARNESS_SOURCE",
-            "PICKED_HARNESS_URL",
             "CLAUDE_CODE_OAUTH_TOKEN",
         ],
     );
@@ -730,14 +704,7 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
         (file_present || intent.categories.contains(&category)).then_some(true)
     };
     let claude_plan = values.remove("CLAUDE_CODE_OAUTH_TOKEN").is_some();
-    let harness = values.get("PICKED_HARNESS_NAME").and_then(|name| {
-        harness::catalogue().into_iter().find(|row| &row.name == name).map(|row| harness::HarnessChoice {
-            id: row.id,
-            agent_url: values.get("PICKED_HARNESS_URL").cloned(),
-        })
-    });
     AlreadyConfigured {
-        harness,
         saved: SavedConfiguration {
             model_api_keys: SavedModelApiKeys {
                 openai: hint(
@@ -765,12 +732,6 @@ fn already_configured_for_root(root: String) -> AlreadyConfigured {
     }
 }
 
-/// The harness picker's rows. Data, so the screen is a list and not twelve branches.
-#[tauri::command]
-fn harnesses() -> Vec<harness::Harness> {
-    harness::catalogue()
-}
-
 /// Start a Claude plan sign-in and return the address a browser has to open.
 ///
 /// Blocking work on a blocking thread: it starts a container and waits on its output, and doing
@@ -779,12 +740,7 @@ fn harnesses() -> Vec<harness::Harness> {
 async fn begin_claude_sign_in(app: tauri::AppHandle, root: String) -> Result<String, Problem> {
     let root = stack::root_from(&root);
     remember_selected_root(&app.state::<Shell>(), &root);
-    /*
-     * The image is decided here, not by the window, and it is the Claude Agent SDK harness whatever
-     * harness the person picked. It is not being used as a Bot: it is the container that happens to
-     * carry Anthropic's bundled CLI, which is what does the OAuth. Letting the screen name an image
-     * would make the sign-in depend on a choice that has nothing to do with it.
-     */
+    // The model provider owns the sign-in image; it is not a Bot framework choice.
     #[cfg(target_os = "linux")]
     let service_app = app.clone();
     let (signing, url) = tauri::async_runtime::spawn_blocking(move || {
@@ -890,10 +846,7 @@ async fn finish_chatgpt_sign_in(app: tauri::AppHandle) -> Result<String, String>
         .map_err(|error| format!("The sign-in did not finish: {error}"))?
 }
 
-/// A self-hosted server authenticates in its own browser session. Only the selected project's
-/// runtime key crosses into the window; the helper owns and then closes the temporary browser.
-/// The model screen's rows. Independent of the picker above, and required to stay that way: no
-/// harness on that list is tied to a vendor's models, so choosing one may not narrow this.
+/// The providers the model screen supports.
 #[tauri::command]
 fn providers() -> Vec<provider::Provider> {
     provider::catalogue()
@@ -1049,7 +1002,6 @@ fn main() {
             last_failure,
             default_root,
             selected_root,
-            harnesses,
             providers,
             already_configured,
             begin_claude_sign_in,

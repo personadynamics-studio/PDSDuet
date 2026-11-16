@@ -2,16 +2,12 @@ import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import { computerKeys } from "./queries";
 
-/**
- * Stopping frees the container; resetting also deletes the browser profile; updating moves the
- * computer onto the current image and keeps the profile.
- */
-export type ComputerAction = "stop" | "reset" | "update";
+/** Stopping frees the container; resetting also deletes the browser profile. */
+export type ComputerAction = "stop" | "reset";
 
 const PAST: Record<ComputerAction, string> = {
   stop: "stopped",
   reset: "reset",
-  update: "updated",
 };
 
 function invalidateComputers(queryClient: QueryClient) {

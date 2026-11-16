@@ -1,7 +1,4 @@
-# The framework Bot. Same shape as agent-bot and the same absence of a browser: this process speaks
-# AG-UI and talks to a model, and the computer it drives is a separate container with its own
-# lifecycle. Two Bots in the box rather than one, so "any AG-UI agent is a Bot" is demonstrated by
-# two implementations that share nothing but the protocol.
+# The TypeScript LangGraph AG-UI endpoint. Its browser runs in the separate computer container.
 FROM oven/bun:1.4-alpine
 
 WORKDIR /app

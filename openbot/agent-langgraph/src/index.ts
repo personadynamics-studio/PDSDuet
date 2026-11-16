@@ -25,19 +25,10 @@ import { readReasoningEffort } from "./model-options";
 import { streamRun } from "./stream";
 
 /**
- * The same Bot, on a framework.
- *
- * `agent-bot` is a proof of concept written against a model SDK; this process uses framework integrations while
- * keeping the same AG-UI endpoint contract.
+ * The TypeScript LangGraph Bot, behind the generic AG-UI endpoint contract.
  *
  * A Bot is a registry row pointing at an AG-UI endpoint, so adding a framework does not require
  * server changes.
- *
- * The model API stops being ours. `agent-bot` speaks `/v1/chat/completions` by hand, which is why
- * gpt-5.6 costs it a rewritten streaming loop: those models reject function tools on that endpoint
- * unless reasoning is turned off, and turning reasoning off on a Bot that has to decide when to ask
- * a person for help is the wrong trade. Here it is `useResponsesApi`, one line, because the
- * migration belongs to the people who maintain the integration.
  *
  * The graph produces one model segment. Every tool supplied in input.tools belongs to the
  * server's execution loop, which returns actual results in the next segment's messages.
@@ -49,11 +40,7 @@ const PORT = listenPort(process.env.PORT, 4201);
 /**
  * Which model drives this Bot, and from whom.
  *
- * The framework integration owns provider-specific HTTP and streaming details. The proof-of-concept Bot
- * speaks one provider's HTTP API
- * directly, so changing provider there means rewriting its streaming loop and its message
- * translation. Here it is a name and a key, because the integrations already exist and are
- * maintained by the people whose API it is.
+ * The framework integration owns provider-specific HTTP and streaming details.
  *
  * Each provider reads its own key. A deployment that only runs Anthropic never needs an OpenAI key,
  * which is the point of making this configurable rather than assuming one vendor.
@@ -161,7 +148,7 @@ if (!API_KEY && keyIsRequired(PROVIDER, BASE_URL)) {
 /**
  * Every tool comes from the caller. This service publishes none of its own, on purpose.
  *
- * Same rule as `agent-bot`: a new capability on the front end needs no change here.
+ * A new capability on the front end needs no change here.
  */
 function toBoundTools(input: RunAgentInput) {
   if (!input.tools?.length) return [];

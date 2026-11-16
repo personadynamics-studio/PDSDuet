@@ -1,11 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  DEFAULT_HARNESS,
-  type HarnessChoice,
-  HarnessPicker,
-} from "./HarnessPicker";
 import { isHttpEndpointUrl } from "./http-endpoint-url";
 import { asProblem, Failure, type Problem } from "./Problem";
 import {
@@ -34,7 +29,6 @@ type Progress = {
 type AlreadyConfigured = {
   values: Record<string, string>;
   saved: NonNullable<HeldConfiguration["saved"]>;
-  harness: HarnessChoice | null;
 };
 
 export function App() {
@@ -43,19 +37,16 @@ export function App() {
   const [instruction, setInstruction] = useState("");
   const [root, setRoot] = useState("");
   /*
-   * Which Bot and which model, as two separate answers.
+   * Keep the model choice while moving between setup screens.
    *
    * Held here rather than inside the screens so going Back does not lose what was already chosen:
    * the flow is resumable at the screen it stopped on, and a wizard that asks twice is one nobody
    * finishes. `null` means not answered yet, which is what decides the screen below.
    */
-  const [harness, setHarness] = useState<HarnessChoice | null>({
-    id: DEFAULT_HARNESS,
-  });
   const [model, setModel] = useState<ModelChoice | null>(null);
   /** Model credentials a previous run already wrote, so the provider screen arrives filled in. */
   const [alreadyHeld, setAlreadyHeld] = useState<HeldConfiguration>({});
-  const [step, setStep] = useState<"welcome" | "harness" | "install" | "model" | "ready">("welcome");
+  const [step, setStep] = useState<"welcome" | "install" | "model" | "ready">("welcome");
   const [steps, setSteps] = useState<Progress[]>([]);
   const [busy, setBusy] = useState(false);
   const [resuming, setResuming] = useState(false);
@@ -153,7 +144,6 @@ export function App() {
          */
         const configured = await loadConfiguredRoot(found);
         if (!active) return;
-        setHarness(configured?.harness ?? null);
         const resumedModel = configured
           ? recordedModel({
               ...configured.values,
@@ -184,7 +174,6 @@ export function App() {
           await invoke("start_stack", {
             root: found,
             model: resumedModel,
-            harness: configured.harness,
           });
           if (!active) return;
           setSteps((current) => settleProgress(current));
@@ -238,7 +227,7 @@ export function App() {
       },
     ]);
     try {
-      await invoke("prepare_installation", { root: root.trim(), harness });
+      await invoke("prepare_installation", { root: root.trim() });
       setSteps((current) => settleProgress(current));
       setStep("model");
     } catch (error) {
@@ -261,9 +250,6 @@ export function App() {
         // implies. Sending a bare key here is what made `ANTHROPIC_API_KEY` and a plan token
         // expressible at the same time.
         model: nextModel,
-        // By id only. The image, the port and how it is dialled are facts about the harness, and
-        // the window carrying them would be a second list to keep in step with the catalogue.
-        harness,
       });
       setSteps((current) => settleProgress(current));
       setRunning(true);
@@ -356,36 +342,8 @@ export function App() {
   if (!running && step === "welcome") {
     return (
       <main>
-        <Welcome onStart={() => setStep("harness")} />
+        <Welcome onStart={() => setStep("install")} />
         {displayedFailure && <Failure problem={displayedFailure} />}
-      </main>
-    );
-  }
-
-  if (!running && step === "harness") {
-    return (
-      <main>
-        <HarnessPicker
-          chosen={harness}
-          onChoose={(choice) => {
-            if (
-              choice.id !== harness?.id ||
-              choice.agentUrl !== harness?.agentUrl
-            ) {
-              setSteps([]);
-            }
-            setHarness(choice);
-          }}
-          onContinue={() => {
-            setHarness((choice) =>
-              choice?.id === "byo-url"
-                ? { ...choice, agentUrl: choice.agentUrl?.trim() }
-                : choice,
-            );
-            setStep("install");
-          }}
-          onBack={() => setStep("welcome")}
-        />
       </main>
     );
   }
@@ -394,7 +352,7 @@ export function App() {
     return (
       <main>
         <div className="sheet">
-          <p className="steps-of">Step 2 of 4</p>
+          <p className="steps-of">Step 1 of 3</p>
           <h1>Install OpenBot</h1>
           <p className="lede">Install the local software, then connect your accounts.</p>
           <div className="field">
@@ -422,7 +380,7 @@ export function App() {
               type="button"
               className="quiet"
               disabled={busy}
-              onClick={() => setStep("harness")}
+              onClick={() => setStep("welcome")}
             >
               Back
             </button>
@@ -464,7 +422,7 @@ export function App() {
     <main>
       <div className="sheet connection-sheet">
         {!running && (
-          <p className="steps-of">Step 4 of 4</p>
+          <p className="steps-of">Step 3 of 3</p>
         )}
         <h1>
           {running && !displayedFailure

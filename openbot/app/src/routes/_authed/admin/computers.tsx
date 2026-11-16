@@ -48,8 +48,6 @@ function ComputersPage() {
   const [busy, setBusy] = useState<string | null>(null);
   /** Reset deletes the browser profile, so it requires confirmation. */
   const [confirming, setConfirming] = useState<string | null>(null);
-  /** Updating restarts a running computer mid-task, so it is confirmed too. */
-  const [confirmingUpdate, setConfirmingUpdate] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const nameFor = useBotNames();
 
@@ -70,7 +68,7 @@ function ComputersPage() {
   const computers = fleet.data?.computers ?? null;
   const isolation = fleet.data?.isolation ?? null;
   /*
-   * A list that could not be read. A refused stop, reset or update is said beside the buttons
+   * A list that could not be read. A refused stop or reset is said beside the buttons
    * instead, because the top of this page is a long scroll away from them.
    */
   const problem = fleet.error
@@ -86,10 +84,9 @@ function ComputersPage() {
           ? stopHostAccess.error.message
           : null;
 
-  const run = (botId: string, action: "stop" | "reset" | "update") => {
+  const run = (botId: string, action: "stop" | "reset") => {
     setBusy(botId);
     setConfirming(null);
-    setConfirmingUpdate(null);
     setState.mutate({ action, botId }, { onSettled: () => setBusy(null) });
   };
 
@@ -181,20 +178,9 @@ function ComputersPage() {
                         : computer.egress === null
                           ? "Leaves directly"
                           : `Leaves through ${computer.egress}`}
-                      {computer.updateAvailable ? " · Update available" : ""}
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions>
-                    {computer.updateAvailable ? (
-                      <Button
-                        disabled={busy === computer.botId}
-                        onClick={() => setConfirmingUpdate(computer.botId)}
-                        size="sm"
-                        variant="outline"
-                      >
-                        Update computer
-                      </Button>
-                    ) : null}
                     <Button
                       disabled={busy === computer.botId || !computer.running}
                       onClick={() => void run(computer.botId, "stop")}
@@ -264,52 +250,10 @@ function ComputersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        onOpenChange={(open) => {
-          if (!open) setConfirmingUpdate(null);
-        }}
-        open={confirmingUpdate !== null}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Update {confirmingUpdate ? nameFor(confirmingUpdate) : ""}'s
-              computer?
-            </DialogTitle>
-            <DialogDescription>
-              It moves to the computer image this deployment now runs. Its files
-              and sign-ins are kept. If it's running, it restarts and stops what
-              it's doing.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              onClick={() => setConfirmingUpdate(null)}
-              size="sm"
-              variant="ghost"
-            >
-              取消
-            </Button>
-            <Button
-              disabled={busy === confirmingUpdate}
-              onClick={() => {
-                if (confirmingUpdate) void run(confirmingUpdate, "update");
-              }}
-              size="sm"
-            >
-              {busy === confirmingUpdate ? "Updating…" : "Update it"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <p className="mt-4 text-muted-foreground text-sm">
         <strong>停止</strong> closes the browser and keeps its logins. It starts
         again the next time the Bot needs it. <strong>重設</strong> deletes the
-        profile and signs the Bot out of everything.{" "}
-        <strong>Update computer</strong> shows when a computer runs an older
-        image. It moves the computer to the new one and keeps its files and
-        sign-ins. All three show in{" "}
+        profile and signs the Bot out of everything. Both show in{" "}
         <Link className="underline" to="/admin/audit">
           Audit
         </Link>

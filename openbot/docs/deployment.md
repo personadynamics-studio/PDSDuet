@@ -1,182 +1,68 @@
 # Deployment
 
-PDSDuet is deployed from this source tree or an explicitly supplied local bundle. It carries the app, the API that serves it, and the browser the Bots
-drive, and it can carry its own PostgreSQL as well. It does what it does on a laptop.
+The supported stack uses the shared web app, API, PostgreSQL, and a managed computer service.
+Phones and desktop browsers use the same web app. The desktop shell opens that app after starting
+its local deployment.
 
-Build the application image from this checkout and use the image you built or published yourself.
-No upstream OpenBot image or downloadable PDSDuet release is assumed.
+## Source checkout and desktop bundles
+
+From `openbot/`, configure `.env` using `.env.example`, install the dependencies, and start the
+existing local stack:
 
 ```sh
-docker build -t pdsduet .
-docker run -p 127.0.0.1:3001:3001 --env-file .env pdsduet
+bun install
+bash scripts/start.sh
 ```
 
-**With no identity provider, publish on loopback: `-p 127.0.0.1:3001:3001`.** The image
-listens on every interface inside the container (`OPENBOT_HOST=0.0.0.0`), so what decides who can
-reach it is the address `-p` publishes on, and `-p 3001:3001` publishes on every address this
-machine has. With no sign-in, everybody who reaches that port is the administrator.
+The script starts the selected Compose services, initializes an empty database, builds the frontend,
+and starts the API and frontend processes. PostgreSQL and computer services remain separate
+containers. The Docker supervisor provides one computer per Bot; a deployment can instead select
+the shared computer URL.
 
-A desktop bundle must already contain the application source and a `container-images.json` naming its own images. The desktop shell does not download or replace the bundle with an upstream release.
+A desktop bundle contains this project's source and a `container-images.json` naming its images.
+The shell does not download or replace the bundle with an upstream release.
 
-## What is in the image, and what is not
+## API image
 
-**In it:** the built app, the API, and Chromium. One port, 3001. The browser listens on 4100 inside
-the container and is deliberately not published: it holds real logins and its only caller is the
-process beside it.
+`server/Dockerfile` builds the API together with the web app it serves. From `openbot/`:
 
-**PostgreSQL, if you ask for it.** `EMBEDDED_POSTGRES=on` starts one inside the container, creates
-the local database on first setup. It
-listens on loopback only and is never published, so there is no password to manage.
+```sh
+docker build -f server/Dockerfile -t pdsduet-api .
+```
 
-Give it a volume at `/var/lib/postgresql` — the parent, not the data directory itself. Without one,
-a redeploy takes the audit trail with it, and the audit trail is the product.
+This image contains neither PostgreSQL nor Chromium. Set `DATABASE_URL` to a database reachable
+from the container and configure `COMPUTER_SUPERVISOR_URL` or `AGENT_COMPUTER_URL` for its computer
+service. Use this project's Compose services or explicitly supplied service addresses.
 
-**Mount the parent, not `/var/lib/postgresql/data`.** On any platform whose volume is an ext4 mount,
-and that is most of them, the mount arrives holding a `lost+found` directory. `initdb` will not
-initialise into a directory that has anything in it, so mounting it directly on the data directory
-leaves the cluster uncreated — and because `api` waits on `postgres` and `initialize`, the container
-starts, the platform reports the deploy a success, and the URL serves a 502. Mounting the parent
-leaves `data` as an ordinary subdirectory, which is what PostgreSQL asks for. A Docker named volume
-works either way; a platform volume does not. Platforms that offer no persistent volume are the ones to
-point at a managed database instead: set `DATABASE_URL` and leave `EMBEDDED_POSTGRES` off. 
-
-**Not in it:**
-
-**The supervisor.** It gives each Bot its own container, which needs a Docker socket, which no
-serverless container platform permits. Without it, every Bot shares the one browser, exactly as they
-do on a laptop with no supervisor configured. A shared browser means shared logins, shared files and
-shared session between Bots, which is fine for a deployment where one team trusts its own Bots and
-is not fine as a boundary between tenants.
-
-**The staged-attachment sweep.** A file dropped into the composer is stored before it is sent, and nothing in
-this image reclaims the ones that never were. The sweep is `bun scripts/cull-staged-attachments.ts`
-from `/app/server`, one pass then exit, which the Helm chart runs hourly and which deletes unsent
-attachments older than 24 hours — the window is the script's one positional argument, so
-`bun scripts/cull-staged-attachments.ts 72` keeps them for three days, and a fraction is a fraction
-of an hour. It needs only `DATABASE_URL` — no encryption key, no identity provider, nothing else
-this image is configured with — so an external cron can run it with one variable set. A second container of this image still needs `--entrypoint sh`, for the
-reason under [Database initialization](#database-initialization).
-
-Until something does, abandoned uploads accumulate in `attachments` up to a ceiling that is one
-person's: **32 unsent files each**, counted across every channel and every composer session at once
-and refused at the upload endpoint. A file is at most 8 MiB, so that is 256 MiB of staged blobs per
-person who uploads, and that is the number to size storage against. It is **not** the eight files
-the composer refuses a ninth on: that cap is counted over a bucket the client names in its own
-request, so it bounds a client that plays along and nothing else, which is exactly why the
-per-person ceiling was added behind it.
-
-That ceiling is also why never running this sweep is worse than growth. The refusal a person sees on
-their 33rd staged file tells them anything still unsent is cleared within a day — which is a promise
-made on this sweep's behalf. With nothing running it, the files are never cleared, and anybody who
-reaches 32 can attach nothing, in any channel, for good.
-
-## Minimum size
-
-Measured on the real image, one Bot, arm64.
-
-| | Measured | Minimum | Recommended |
-| --- | --- | --- | --- |
-| Memory | 409 MB idle, 498 MB after three page loads, 548 MB after a snapshot | **2 GB** | **4 GB** |
-| vCPU | 3 to 6 percent at rest, bursty while a page renders | **1** | **2** |
-| Disk | 1.4 GB image | **4 GB** | 8 GB with room for `/workspace` |
-
-**Why 2 GB when it measures at 550 MB.** That figure is one Bot with one page open. Every additional
-concurrent page is roughly another 100 to 200 MB, and Playwright's own guidance is to allow about
-1 GB per concurrent browser. 2 GB is the floor at which one person using it does not meet the OOM
-killer; 4 GB is where a handful of Bots working at once stays comfortable.
-
-**Do not configure shared memory.** Chromium is launched with `--disable-dev-shm-usage`, so it writes
-to `/tmp` rather than `/dev/shm` and the 64 MB default is irrelevant. This matters because **AWS
-Fargate does not support `sharedMemorySize` at all**; without that flag Chromium would crash there
-and the fix would not be available.
-
-## Required configuration
-
-| Variable | |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL. Not needed with `EMBEDDED_POSTGRES=on` |
-| an identity provider for shared access | `GOOGLE_OAUTH_*`, `MICROSOFT_OAUTH_*` or `OKTA_OAUTH_*`, with `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET`. `INITIAL_ADMIN_EMAILS` is optional. See the README |
-| `EMBEDDED_POSTGRES` | `on` to run the database inside the container. Off by default |
-| `KEY_ENCRYPTION_KEY` | base64 32 bytes. `openssl rand -base64 32`. The example key is refused in production |
-| a model key | `OPENAI_API_KEY`, or the provider you configured |
-
-`COMPUTER_TOKEN` is generated at start if you do not set one. Both processes that need it are inside
-the container, so there is nothing to share it with.
-
-The image does not carry `agent-langgraph` or `agent-bot`. The default openduet package's insurance
-Bot points to `http://localhost:4201/ag-ui`; provide that LangGraph service or use an explicitly
-configured tenant package whose remote endpoint is reachable from the container. The built-in search
-Bot runs in the API process. `MANAGED_AGENT_AG_UI_URL` does not rewrite a tenant's explicit endpoint.
-
-An older Desktop `.env` that explicitly selects `../examples/fintech` keeps that value, but the bundled fintech example is retired. Set `TENANT_PACKAGE_DIR` to `../examples/openduet` or a valid custom package path before using that installation. No existing `.env` or saved data is converted automatically.
-
-**Configure sign-in for shared access.** Google, Microsoft or Okta enables account-based requests.
-Without a provider, the API serves requests as the shared `DEV_ACTOR` administrator; there is no
-separate single-user switch or automatic refusal based on a public address.
-
-`INITIAL_ADMIN_EMAILS` may be empty. Listed addresses form a protected administrator floor; other
-accounts use the roles managed through People. New-account seeding sets the initial role, and
-subsequent sign-ins do not rewrite it.
-
-**Put TLS in front of it.** Not only for the cookies. A page served from `http://<address>` is not a
-secure context, which removes a set of browser APIs that are present on `http://localhost` and so
-never missing on a laptop. The app does not depend on any of them, but sign-in cookies still want
-`Secure`, and every platform below terminates TLS for you.
+The API listens on port 3001 inside its container. Without an identity provider, publish that port
+on loopback because every admitted request uses the existing shared administrator actor. Configure
+Google, Microsoft or Okta for account-based shared access; see [Configuration](configuration.md).
+`INITIAL_ADMIN_EMAILS` is optional: listed addresses remain administrators, while other accounts use
+the roles managed through People.
 
 ## Database initialization
 
-The server image includes `server/schema.sql` and `server/scripts/initialize.ts`. Run the initializer once against the empty database for this version. The local Compose service is named `initialize`; the Helm job is controlled by `initialization.enabled`; the embedded-database image uses the s6 `initialize` step.
+`server/schema.sql` owns the fresh database schema. The Compose `initialize` service runs
+`server/scripts/initialize.ts` against an empty database. For an API deployment outside that local
+startup flow, run the same initializer explicitly before starting the API.
 
-This initializer creates the fresh application schema. It contains no old-data import, backfill, incremental migration chain or compatibility conversion. Existing application records are outside this deployment path.
+Initialization does not migrate existing records, import old data or rebuild conversation history.
+The application database role needs permission to create the schema's tables, indexes and enums.
 
-The PostgreSQL application role needs permission to create the schema's tables, indexes and enums. No vector extension is installed or required.
+## Persistent data and API ownership
 
-## Replicas
+Keep PostgreSQL data, browser profiles and workspaces on their existing volumes. Stopping the stack
+or replacing a computer container does not require deleting its volumes. A computer reset is
+different: it deliberately clears that Bot's browser profile and signs it out.
 
-The page snapshot a Bot resolves element references against lives in Postgres, so a second replica
-can answer a click the first one snapshotted. Run more than one if the platform wants it. The
-supervisor is still not in this image, so every replica shares the one browser inside it.
+Run one API owner for a deployment. Execution waiting state and event replay are durable, while
+active execution and model state belong to that API process. Horizontal replicas or overlapping API
+owners are not supported.
 
-## Platform notes
+## Staged attachments
 
-**Google Cloud Run.** Set memory to at least 2 GB. More than one instance is fine (see Replicas
-above); each instance has its own browser, so a Bot's logins stay on whichever instance served them.
-Cloud Run runs every
-container under gVisor, which Chromium is sensitive to; test a navigation before trusting it.
-`gcloud run compose up` will also deploy the whole compose file if you want a throwaway database
-alongside.
-
-**AWS.** ECS Express Mode provisions the cluster, load balancer, HTTPS and autoscaling from an image
-in ECR, and is what AWS points App Runner users at now that App Runner takes no new customers.
-Plain ECS on Fargate behind an ALB is the answer if you want task definitions and fine-grained IAM.
-No shared-memory configuration is needed or possible.
-
-**Kubernetes.** The Helm chart runs Bot computers separately from its single API pod and can schedule
-staged-attachment cleanup:
-[charts/openbot/README.md](../charts/openbot/README.md), which covers EKS, GKE, AKS and a plain
-self-hosted cluster from the same templates.
-
-**Azure Container Apps.** Managed ingress with TLS and custom domains. Note the **240-second request
-timeout**: the live screen holds a long connection, so expect it to reconnect. Concurrent WebSockets
-are capped at 350 per instance on the basic tier.
-
-**Railway, Render, Fly.io.** All run this image directly and all provision PostgreSQL in a click,
-which makes them the shortest path from nothing to a running deployment.
-
-## Known costs
-
-**The browser images carry only the Chromium browser family.** The all-in-one Dockerfile and the
-published `agent-computer` Dockerfile both build from Ubuntu and run Playwright's pinned
-`install --with-deps chromium` path, so Firefox and WebKit are never introduced into the final image
-layers. Keep that Playwright version matched to `agent-computer/package.json`; changing one without
-the other can make the browser protocol and executable revision diverge. The images keep the
-baseline Node command-line tools (`node`, `npm`, and `npx`) from the official Node 24.18.1 image.
-Measured as local zstd OCI layer descriptors against the previous Playwright-base `agent-computer`
-image, the compressed image fell from 884.2 MiB to 535.0 MiB on arm64 and from 894.6 MiB to
-518.1 MiB on amd64.
-
-**A strict content-security-policy needs a hash or a nonce.** `app/index.html` runs a small inline
-script that decides the theme before the first paint. Nothing in this repo sends a CSP header, so it
-works as shipped; a deployment that adds one at its proxy has to allow that script explicitly, or
-`script-src` blocks it and the page renders with the wrong theme until the app boots. A `'sha256-'`
-hash of the script body is the version that survives a rebuild without a per-request nonce.
+The local startup flow does not schedule attachment cleanup. From `server/`, the existing
+`bun scripts/cull-staged-attachments.ts` command removes unsent attachments older than its retention
+window (24 hours by default, or the optional argument in hours). A deployment that needs periodic
+cleanup schedules that command separately with `DATABASE_URL`. The server does not promise a
+cleanup schedule on the deployment's behalf.

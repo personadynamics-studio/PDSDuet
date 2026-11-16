@@ -3,7 +3,6 @@ pub mod acquire;
 pub mod deployment;
 pub mod engine;
 pub mod env;
-pub mod harness;
 pub mod host_access;
 pub mod install;
 pub mod plan;

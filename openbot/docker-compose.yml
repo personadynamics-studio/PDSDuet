@@ -148,44 +148,8 @@ services:
       timeout: 5s
       retries: 5
 
-  # The built-in Bot is an AG-UI endpoint registered the same way as a customer-provided Bot.
-  agent-bot:
-    build:
-      context: .
-      dockerfile: agent-bot/Dockerfile
-    # Published by a release; see initialize above for what pull_policy decides.
-    image: ${BOT_IMAGE:-openbot-agent-bot:latest}
-    pull_policy: ${IMAGE_PULL_POLICY:-build}
-    ports:
-      - "${BOT_PORT:-4200}:4200"
-    environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      # Server sends this on every call to the managed Bot. It refuses to start without it.
-      # Unset means OpenAI. Set, it is any endpoint speaking the same API, and BOT_MODEL is sent
-      # to it verbatim.
-      OPENAI_BASE_URL: ${OPENAI_CONTAINER_BASE_URL:-${OPENAI_BASE_URL:-}}
-      # gpt-5.5, not the deployment default: this Bot writes /v1/chat/completions by hand, and
-      # gpt-5.6-* rejects function tools there unless reasoning is turned off. Its own variable, so
-      # a BOT_MODEL set for the framework Bot cannot silently take its tools away.
-      BOT_MODEL: ${AGENT_BOT_MODEL:-gpt-5.5}
-    healthcheck:
-      test: ["CMD-SHELL", "bun -e \"await fetch('http://localhost:4200/health')\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # The harness somebody picked during setup, whichever one it is.
-  #
-  # ONE SERVICE RATHER THAN TWELVE, because a picked harness is a choice and not twelve branches in
-  # this file. The image and the port come from `.env`, which the shell writes from the pick, and
-  # both are facts about the image: each harness fixes its own port in its own Dockerfile.
-  #
-  # Behind a profile so a deployment that has picked nothing does not try to start it. Without that
-  # an unset `PICKED_HARNESS_IMAGE` becomes a request to pull the empty string, which fails the
-  # whole `compose up` rather than the one service nobody asked for.
-  #
-  # No `build:`, so `pull_policy` cannot be `build` here as it is elsewhere: this image is only ever
-  # published, never built from this tree.
+  # Internal model bridge for a Claude or ChatGPT subscription, selected by the desktop credential.
+  # The profile stays off for ordinary API-key models. Its image and ports are existing plan settings.
   agent-harness:
     profiles: ["harness"]
     image: ${PICKED_HARNESS_IMAGE:-}
@@ -193,16 +157,9 @@ services:
     ports:
       - "${PICKED_HARNESS_HOST_PORT:-${PICKED_HARNESS_PORT:-4202}}:${PICKED_HARNESS_PORT:-4202}"
     environment:
-      # Whichever the model screen chose. A harness reads the one its provider needs and ignores the
-      # rest, and the ones the choice did not imply are written empty rather than left stale: see
-      # `ModelCredential`.
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_CONTAINER_BASE_URL:-${OPENAI_BASE_URL:-}}
+      # Claude preserves its existing key/plan precedence refusal; ChatGPT uses its token store.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      GOOGLE_GENERATIVE_AI_BASE_URL: ${GOOGLE_GENERATIVE_AI_BASE_URL:-}
-      BOT_PROVIDER: ${BOT_PROVIDER:-openai}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       # A path into the mount below, set only when a ChatGPT plan was signed in to. The file is
       # there either way; this variable is what tells the harness to read it.
@@ -233,7 +190,6 @@ services:
       # The selected provider reads its own key. Models requiring the Responses API use
       # BOT_RESPONSES_API instead of changing the streaming loop here.
       BOT_PROVIDER: ${BOT_PROVIDER:-openai}
-      # Same server-to-Bot request boundary as agent-bot above.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_CONTAINER_BASE_URL:-${OPENAI_BASE_URL:-}}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

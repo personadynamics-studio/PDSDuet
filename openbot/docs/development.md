@@ -33,7 +33,6 @@ Use `bun run dev` only when you want the app and API server without starting the
 | `app`             | 3010                       |
 | `server`          | 3001                       |
 | `agent-computer`  | 4100                       |
-| `agent-bot`       | 4200                       |
 | `agent-langgraph` | 4201                       |
 | `supervisor`      | 4500 host / 4300 container |
 | PostgreSQL        | 5432                       |
@@ -48,8 +47,8 @@ asks for is refused until that origin is in `TRUSTED_ORIGINS`.
 
 **Nothing here sweeps staged attachments.** A file dropped into the composer is stored before the
 message is sent, and the only thing that reclaims the ones never sent is
-`bun scripts/cull-staged-attachments.ts` from `server/`, which the Helm chart runs hourly and which
-neither `docker-compose.yml` nor `start.sh` starts. It needs only `DATABASE_URL`, and takes a
+`bun scripts/cull-staged-attachments.ts` from `server/`; neither `docker-compose.yml` nor `start.sh`
+starts it. It needs only `DATABASE_URL`, and takes a
 retention window in hours as its one optional argument, defaulting to 24. On a laptop that is
 usually nothing, because the rows are small and the database is yours. It stops being nothing at
 thirty-two: one person may hold that many unsent files across every channel at once, the refusal on
@@ -58,52 +57,12 @@ long-lived local deployment can reach a state where attaching anything is refuse
 in the composer deletes it outright, so it takes abandoned drafts rather than ordinary use.
 [deployment.md](deployment.md) says the same for a real deployment.
 
-## Migrations
+## Database initialization
 
-After changing the Drizzle schema:
-
-```sh
-bun run --filter server db:generate
-bun run --filter server db:migrate
-```
-
-Review generated migration files before sharing them. `start.sh` applies existing migrations when it starts the stack.
-
-**Do not hand-edit a generated migration.** It leaves a file that no longer matches what the
-generator produced. If the generated SQL will not work — `ADD COLUMN ... NOT NULL` fails on a table
-that already has rows — split it instead: generate the column nullable, add the data step, then
-generate the constraint.
-
-**A constraint that tightens an existing column belongs to a later release**, not to the release that
-adds the column. A rolling deploy runs the migrations and then serves from old and new replicas at
-once, and an old replica writes rows without the new column: under `NOT NULL` its writes start
-failing, so the release that added the column breaks for everybody who lands on a replica that has
-not been replaced yet. Ship the column nullable, let the fleet turn over, then tighten it. `issuer`
-on `accounts` is the worked example: the column is nullable and no migration tightens it.
-
-**A data step is its own migration**, created with the flag that exists for it:
-
-```sh
-bun run --filter server db:generate -- --custom --name=backfill_something
-```
-
-A generator diffs schema against schema, so a rule like "the rows whose provider is Google get
-Google's issuer" can never come out of one: it is not in the schema. `--custom` writes an empty file
-registered in the journal, and it is the only migration anybody should be writing by hand.
-
-**If `db:migrate` refuses with "the migrator only runs migrations stamped after the row it
-reads"**, your database ran a branch's migrations before that branch was merged. Merging renumbers
-the branch's migrations to sit after the ones it merged in, and those merged-in migrations are now
-stamped older than what your database already recorded — so the migrator would skip them and report
-success over the tables they should have created. Nothing is applied; the refusal names them. Drop
-and recreate the database, which is almost always the right answer for a development one; see
-[deployment.md](deployment.md) for how to repair one you have to keep.
-
-**If `drizzle-kit migrate` hangs and then exits non-zero with no error**, the journal names a
-migration file that is not there. A rebase does this: `meta/_journal.json` is a checked-in file, so
-restoring it can reinstate entries for migrations that were renamed. `drizzle-kit check` reports
-"Everything's fine" in that state, because it compares schemas rather than checking that the journal
-and the directory agree. Compare `meta/_journal.json` against `ls server/drizzle/*.sql`.
+`server/schema.sql` defines the current schema. The server's existing `db:initialize` script runs
+`server/scripts/initialize.ts` to initialize an empty database; `start.sh` invokes it through the
+Compose `initialize` service. Existing databases are left unchanged. Normal API startup does not
+run schema migrations or historical data repairs.
 
 ## Reviewing changes
 

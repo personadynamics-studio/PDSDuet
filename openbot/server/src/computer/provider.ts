@@ -1,9 +1,4 @@
 import type { ComputerConfig } from "../config";
-import {
-  createSandboxComputerProvider,
-  inClusterConfig,
-  readSandboxTemplate,
-} from "./sandbox";
 import type { ComputerStatus } from "./schema";
 import {
   createDockerSupervisorProvider,
@@ -17,19 +12,6 @@ export type ComputerLocation = {
   url?: string;
   startedAt?: string;
   egress?: string | null;
-  /** Whether this computer runs an older image than a new one would get. Only a sandbox can tell. */
-  updateAvailable?: boolean;
-};
-
-/** What moving a computer onto the current image did. */
-export type ComputerUpdate = {
-  /** False when it was already current, or there is no computer. */
-  updated: boolean;
-  /** Whether it was running, and is therefore restarting on the new image. */
-  wasRunning: boolean;
-  /** The images it ran and the ones it runs now, for the trail. */
-  from?: string;
-  to?: string;
 };
 
 /** A description of how a provider separates one Bot's computer from another. */
@@ -94,16 +76,6 @@ export interface ComputerProvider {
   reset(botId: string): Promise<{ cleared: boolean }>;
   /** List the computers that this provider owns. */
   list(): Promise<ComputerLocation[]>;
-  /**
-   * Move this Bot's computer onto the current image, keeping its files and sign-ins.
-   *
-   * Only where a computer can be out of date with the deployment and the provider can replace it
-   * in place: a Sandbox carries its pod template inline, so it keeps the one it was created with.
-   */
-  update?(botId: string): Promise<ComputerUpdate>;
-  /** Prepare provider resources before the first computer request. */
-  warm?(): Promise<void>;
-
 }
 
 export type SharedComputerProviderOptions = {
@@ -245,78 +217,5 @@ export function createComputerProvider(
       return createSharedComputerProvider({
         baseUrl: config.baseUrl,
       });
-    case "sandbox":
-      /*
-       * Built lazily, because reading the service account is asynchronous and this factory is not.
-       * Every method needs the same credentials, so the promise is created once and awaited by each
-       * rather than the file being read on every call.
-       */
-      return createLazySandboxProvider(config);
   }
-}
-
-/**
- * The sandbox provider, built on first use.
- *
- * Its credentials come off disk, which is asynchronous, and `createComputerProvider` is not. Rather
- * than make every caller await a factory, the work happens once behind a promise and each method
- * waits on the same one. A failure to read them surfaces on the first computer request, naming what
- * is missing, instead of taking the whole deployment down at boot over a feature it may not use.
- */
-function createLazySandboxProvider(
-  config: Extract<ComputerConfig, { provider: "sandbox" }>,
-): ComputerProvider {
-  let built: Promise<ComputerProvider> | undefined;
-
-  const provider = async (): Promise<ComputerProvider> => {
-    /*
-     * A FAILURE IS NOT REMEMBERED, only a success.
-     *
-     * `??=` holds whatever the first call produced, and a rejected promise is something. One
-     * unreadable token file or one blip reading the template at the wrong moment, and every computer
-     * request for the rest of the pod's life failed with that same stale error: no probe notices,
-     * because the pod is serving happily, and nothing recovers short of a restart. Clearing the memo
-     * on rejection makes the next request try again, which is what a transient failure deserves.
-     */
-    built ??= (async () => {
-      const [cluster, template] = await Promise.all([
-        inClusterConfig(),
-        readSandboxTemplate(config.templateFile),
-      ]);
-      return createSandboxComputerProvider({
-        namespace: config.namespace,
-        idleAfterMs: config.idleAfterMs,
-        template,
-        apiServer: cluster.apiServer,
-        token: cluster.token,
-        ca: cluster.ca,
-      });
-    })().catch((error: unknown) => {
-      built = undefined;
-      throw error;
-    });
-    return built;
-  };
-
-  return {
-    name: "sandbox",
-    isolation: "per-bot",
-    locate: async (botId, signal) => {
-      signal?.throwIfAborted();
-      const ready = await provider();
-      signal?.throwIfAborted();
-      return ready.locate(botId, signal);
-    },
-    status: async (botId) => (await provider()).status(botId),
-    stop: async (botId) => (await provider()).stop(botId),
-    reset: async (botId) => (await provider()).reset(botId),
-    list: async () => (await provider()).list(),
-    // Forwarded like the rest, or the gateway sees no `update` and "Update computer" answers 503.
-    update: async (botId) => {
-      const built = await provider();
-      if (!built.update)
-        throw new Error("The sandbox computer provider cannot update.");
-      return built.update(botId);
-    },
-  };
 }

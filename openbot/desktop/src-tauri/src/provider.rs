@@ -1,14 +1,11 @@
 //! The model provider screen's list, as data.
 //!
-//! OpenAI and Anthropic offer plan sign-in alongside API keys. Google and xAI use named endpoint
-//! presets with API keys; their official addresses are supplied by the frontend.
+//! OpenAI and Anthropic offer plan sign-in alongside API keys. Google and xAI use the existing
+//! model OAuth flow; compatible endpoints accept a URL and their own credentials.
 //!
 //! The row that asks for a URL is the last one, and it is the only one that asks. Keeping it there
 //! is what keeps a base URL off the main path, which the audience rule at the top of the build doc
 //! requires: somebody who has never opened a terminal finishes this screen by signing in.
-//!
-//! Independent of the harness picker, always. No harness on that list is tied to a vendor's models,
-//! so nothing chosen there may narrow what is offered here.
 
 use serde::{Deserialize, Serialize};
 

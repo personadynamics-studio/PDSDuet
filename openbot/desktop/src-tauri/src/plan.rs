@@ -468,12 +468,20 @@ impl SigningIn {
 
 /// The published name of the image whose `langchain-openai` runs the ChatGPT sign-in.
 ///
-/// The LangGraph harness, used as a tool rather than as a Bot for the same reason the Claude one is:
-/// it is the image that already carries the vendor's own login. It is also the default harness, so
-/// on the common path this image is being pulled anyway.
+/// This image carries the vendor's login and model bridge, and is downloaded only for this plan.
 ///
 /// A name, not a reference: see `SIGN_IN_IMAGE`.
 pub const CHATGPT_SIGN_IN_IMAGE: &str = "agent-langgraph-agui";
+
+/// Only subscription credentials need these model bridges; API keys and provider OAuth do not.
+pub fn bridge_for(root: &std::path::Path, credential: &crate::env::ModelCredential) -> Result<Option<crate::env::ModelBridge>, String> {
+    let (image, port) = match credential {
+        crate::env::ModelCredential::ClaudePlan { .. } => (SIGN_IN_IMAGE, 4212),
+        crate::env::ModelCredential::ChatGptPlan { .. } => (CHATGPT_SIGN_IN_IMAGE, 4206),
+        _ => return Ok(None),
+    };
+    Ok(Some(crate::env::ModelBridge { image: crate::deployment::reference(root, image)?, port }))
+}
 
 /// Where the vendor's login persists what it gets.
 const CHATGPT_STORE: &str = "/root/.langchain/chatgpt-auth.json";

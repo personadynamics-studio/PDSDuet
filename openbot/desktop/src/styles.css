@@ -380,7 +380,7 @@ fieldset.picker {
   outline-offset: 2px;
 }
 
-/* The framework list, which almost nobody should open. */
+/* Progress and connection details. */
 details {
   border-top: 1px solid var(--hair-soft);
   padding-top: 0.9rem;

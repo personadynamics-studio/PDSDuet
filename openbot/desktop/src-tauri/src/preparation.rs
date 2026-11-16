@@ -13,13 +13,8 @@ pub fn selected_root(config: &Path) -> Option<PathBuf> {
 
 pub fn image_settings(
     root: &Path,
-    picked: Option<&crate::env::PickedHarness>,
 ) -> Result<stack::Secrets, Problem> {
     let mut settings: stack::Secrets = deployment::image_variables(root)?.into_iter().collect();
     settings.insert("IMAGE_PULL_POLICY".into(), "missing".into());
-    if let Some(crate::env::PickedHarness::Installed { image, port, .. }) = picked {
-        settings.insert("PICKED_HARNESS_IMAGE".into(), image.clone());
-        settings.insert("PICKED_HARNESS_PORT".into(), port.to_string());
-    }
     Ok(settings)
 }

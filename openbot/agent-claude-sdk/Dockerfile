@@ -1,5 +1,4 @@
-# Claude Agent SDK, as a Bot. Python rather than Bun because that is what the integration is published in,
-# and the protocol is the only thing a Bot has to share with the others.
+# Claude subscription model bridge for the Native server runtime.
 FROM python:3.12-slim
 
 WORKDIR /app

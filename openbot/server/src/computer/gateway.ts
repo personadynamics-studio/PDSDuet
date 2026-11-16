@@ -1,7 +1,7 @@
 import type { AuditInitiator } from "../audit";
 import { withUntrustedNotice } from "../untrusted-content";
-import { ComputerUnavailableError, createComputerTransport } from "./client";
-import type { ComputerProvider, ComputerUpdate } from "./provider";
+import { createComputerTransport } from "./client";
+import type { ComputerProvider } from "./provider";
 import type {
   ActionResult, ClickInput, ComputerStatus, ControlState, DownloadFileInput,
   HumanInput, HumanInputResult, KeyInput, ListFilesInput, ListFilesResult,
@@ -134,7 +134,6 @@ export interface ComputerGateway {
       running: boolean;
       startedAt: string | null;
       egress?: string | null;
-      updateAvailable?: boolean;
     }[];
   }>;
   stopComputer(
@@ -143,8 +142,6 @@ export interface ComputerGateway {
   resetComputer(
     botId: string,
   ): Promise<{ cleared: boolean }>;
-  /** Move a computer onto the current image, keeping its files and sign-ins. */
-  updateComputer(botId: string): Promise<ComputerUpdate>;
 }
 
 export function createComputerGateway(options: ComputerGatewayOptions): ComputerGateway {
@@ -199,20 +196,12 @@ export function createComputerGateway(options: ComputerGatewayOptions): Computer
     },
     async computers() {
       const computers = await provider.list();
-      return { isolation: provider.isolation, computers: computers.map((computer) => ({ botId: computer.botId, running: computer.status === "running", startedAt: computer.startedAt ?? null, egress: computer.egress, ...(computer.updateAvailable !== undefined ? { updateAvailable: computer.updateAvailable } : {}) })) };
+      return { isolation: provider.isolation, computers: computers.map((computer) => ({ botId: computer.botId, running: computer.status === "running", startedAt: computer.startedAt ?? null, egress: computer.egress })) };
     },
     stopComputer: (botId) => provider.stop(botId),
     async resetComputer(botId) {
       const result = await provider.reset(botId);
       return result;
-    },
-    async updateComputer(botId) {
-      if (!provider.update) {
-        throw new ComputerUnavailableError(
-          `The ${provider.name} computer provider has no computer image of its own to update.`,
-        );
-      }
-      return provider.update(botId);
     },
   };
 }

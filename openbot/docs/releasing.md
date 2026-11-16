@@ -34,26 +34,24 @@ and are not Apple-notarized. See [Windows signing](windows-signing.md) for signe
 
 ## Deploying a release
 
-`container-images.json` pins a digest for every image the release published. Deploy those, not tags:
-
-```sh
-gh release download v0.1.0 --pattern container-images.json
-docker run -p 3001:3001 --env-file .env \
-  "$(jq -r .images.openbot.reference container-images.json)"
-```
-
-The same file is how a machine runs the stack without building any of it. Each key under `images`
-is a service, so the references can be read straight out of it:
+Supply this project's own built images and a `container-images.json` naming their immutable
+references. The desktop and Compose consume these image keys: `agent-computer`, `supervisor`,
+`agent-langgraph`, and `server` (used by the `initialize` service). The `agent-claude-sdk` and
+`agent-langgraph-agui` keys remain for the Claude and ChatGPT subscription bridges respectively;
+the desktop selects their images through the `agent-harness` service. Use the supplied file to
+select the container images:
 
 ```sh
 export COMPUTER_IMAGE="$(jq -r '.images["agent-computer"].reference' container-images.json)"
 export SUPERVISOR_IMAGE="$(jq -r .images.supervisor.reference container-images.json)"
-export BOT_IMAGE="$(jq -r '.images["agent-bot"].reference' container-images.json)"
 export LANGGRAPH_IMAGE="$(jq -r '.images["agent-langgraph"].reference' container-images.json)"
 export SERVER_IMAGE="$(jq -r .images.server.reference container-images.json)"
 export IMAGE_PULL_POLICY=missing
 docker compose up -d
 ```
+
+Compose starts the container dependencies. The existing source startup script or desktop shell
+still starts the API and web app.
 
 `IMAGE_PULL_POLICY=missing` is what turns those names into pulls; without it every one of those
 services builds from source, because a service with a `build` section builds by default whatever
@@ -62,15 +60,4 @@ wants the `build` sections overridden away rather than this variable alone.
 
 A tag can be moved to point at a different image; a digest cannot. The selected digest is the one
 that runs, and rolling back is the same command with an earlier version.
-
-On Kubernetes the chart takes the same digest as `image.digest`; see
-[charts/openbot/README.md](../charts/openbot/README.md#pin-the-image-by-digest).
-
-Before deploying, you can check an image is the one this repository built. Every published image
-carries its own attestation:
-
-```sh
-gh attestation verify oci://ghcr.io/copilotkit/openbot:v0.1.0 -R CopilotKit/OpenBot
-gh attestation verify oci://ghcr.io/copilotkit/openbot-supervisor:v0.1.0 -R CopilotKit/OpenBot
-```
 

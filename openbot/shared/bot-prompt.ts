@@ -90,9 +90,6 @@ export const PROVENANCE_GUIDANCE = PROVENANCE_GUIDANCE_LINES.reduce<string[]>(
  * it. "Nothing happened" would leave it repeating the request, and a fake success would have it
  * report work it never did.
  *
- * Shared because both Bots in this repo have to say the same thing. The first fix for this landed in
- * `agent-langgraph` alone, and `agent-bot` — the Bot that ships in the box, and the one behind the
- * Browser Bot — went on failing in exactly the same way until somebody drove it.
  */
 export const NO_ANSWER_CAME =
   "No result. The person did not answer this, and the run it belonged to has ended. " +

@@ -35,11 +35,15 @@ The runtime has four modules:
 
 `server/src/index.ts` assembles the selected model and all application tools once per phase. `toolkit/src/headless-tools.ts` owns server execution of browser, Bot, connector, mail, host and component tools. Native and LangGraph adapters produce model segments and tool-call batches; they do not call a second `/api/agent-tools/call` executor. Unknown, unoffered calls fail rather than silently finish.
 
-The Helm API Deployment has one replica and uses `Recreate`. Horizontal scaling and overlapping API owners are not supported by this execution model. An update therefore interrupts API availability while the process changes.
+The API has one process owner. Horizontal scaling and overlapping API owners are not supported by this execution model.
 
 ## Bots, authors and model history
 
 The left menu lists visible profiles and switches to their conversations. With no selected Bot, the UI asks the person to select or create one. New native Bots require a real role description; remote Bots require an explicit endpoint. No stock Bot or automatic introduction is selected as a fallback.
+
+The web create flow offers Native and a generic AG-UI URL. The TypeScript `agent-langgraph` endpoint remains in the local stack; the framework installer catalogue and extra framework packages have been removed. Existing `remote_mastra` profiles and tenant definitions retain their server bridge.
+
+Claude and ChatGPT subscriptions retain their existing model bridges, selected from the desktop's model credential: `agent-claude-sdk` serves Native model requests at `/model`, and `agent-langgraph-agui` uses Codex OAuth and token refresh. They are internal model providers, rather than independently installable Bot choices. Their credentials, provider calls and tool-result continuation remain with the existing integrations.
 
 `agents/bot-tools.ts` supplies `list_bots`, `message_bot` and `ask_person`. Visibility comes from `profiles.list(actor)`. Real account visibility, connector grants and filesystem containment remain at their owning boundaries.
 
@@ -69,7 +73,7 @@ Public snapshots read root messages, the event cursor and the root's actual run/
 
 `agent-computer` owns Playwright/Chromium and the native persistent profile. Browser-owned restore state preserves sessions; application cookie JSON copies and restore timers have been removed. This source change does not delete profile, cookie or workspace data.
 
-The live screen and computer REST routes share the profile store's computer-access predicate: owner, administrator or public Bot. A private Team Bot publication permits work through the Bot, without handing its audience direct control of the signed-in browser. Sign-in form actions use the same predicate. Computer stop, reset and update require the owner or an administrator. Opening the screen does not wait for recording or a screenshot database write. Taking control cancels the in-flight Bot action and blocks new Bot input, producing a real waiting tool. Release or private input answers that saved call through the common execution flow.
+The live screen and computer REST routes share the profile store's computer-access predicate: owner, administrator or public Bot. A private Team Bot publication permits work through the Bot, without handing its audience direct control of the signed-in browser. Sign-in form actions use the same predicate. Computer stop and reset require the owner or an administrator. Opening the screen does not wait for recording or a screenshot database write. Taking control cancels the in-flight Bot action and blocks new Bot input, producing a real waiting tool. Release or private input answers that saved call through the common execution flow.
 
 Cancellation reaches provider lookup, HTTP and supported Playwright operations. It preserves the page/profile rather than closing the browser to imitate cancellation. Profile and workspace operations retain containment and Bot isolation at the filesystem owner. SPIRE interception, browser eviction quotas and automatic recording are no longer on this path.
 

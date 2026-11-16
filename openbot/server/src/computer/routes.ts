@@ -205,11 +205,6 @@ export function createComputerRoutes(
     act(context, (botId) => gateway.resetComputer(botId)),
   );
 
-  
-  routes.post("/:botId/computers/update", requireManagement, (context) =>
-    act(context, (botId) => gateway.updateComputer(botId)),
-  );
-
   routes.post("/:botId/control/take", requireControl, (context) =>
     act(context, (botId, body, signal) =>
       gateway.takeControl(botId, body?.requestId as string | undefined, signal),

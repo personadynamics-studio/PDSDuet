@@ -12,8 +12,7 @@ Start with the [PDSDuet README](../../README.md) at the repository root, then us
   - [Google Drive](plugins/google-drive.md)
   - [Gmail and Google Calendar](plugins/google-workspace.md)
   - [Notion](plugins/notion.md)
-- [Deployment](deployment.md): the container, what is in the image, minimum sizes, and the platform notes. Build and supply this project's own image; the deployment does not download an upstream OpenBot release.
-- [Kubernetes](../charts/openbot/README.md): the Helm chart, what a cluster needs before it, and the values that differ per cloud. Its default image is also plain OpenBot.
+- [Deployment](deployment.md): source and Compose startup, the API image, database initialization and persistent computer data.
 - [Releasing](releasing.md): desktop version tooling and deploying published images.
 - [Windows desktop signing](windows-signing.md): the remaining signing scripts and desktop configuration.
 - [Desktop provider OAuth](../desktop/PROVIDER_OAUTH.md): what a distributor configures to offer Google and xAI sign-in in a desktop build.

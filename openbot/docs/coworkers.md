@@ -57,7 +57,7 @@ visibility predicate as the roster; the publication candidates are the owner's o
 Direct computer access (REST, live WebSocket screen and sign-in form actions) is available to the
 owner, administrators and users of a public Bot. A private Team Bot's audience may ask it to work,
 but cannot directly take over its signed-in browser. A public Bot keeps its shared-browser behavior.
-Stopping, resetting or updating a Bot's computer requires the owner or an administrator.
+Stopping or resetting a Bot's computer requires the owner or an administrator.
 
 A Team Bot reaches a Personal app through its **owner's own account** when the owner has connected
 it — for everyone it is published to — and otherwise through the asker's own
@@ -77,22 +77,14 @@ Deleting is soft. The coworker stops running, but existing channels remain reada
 
 Hiding and pinning are personal roster state. Hiding removes the coworker from one user's list without disabling the coworker for anyone else; pinning moves it into the **Pinned** section at the top of `/bots` for that user only. A Team Bot an administrator assigned to a group is always pinned for its members.
 
-## Default endpoint
+## Runtime endpoint
 
-Product-created coworkers use:
+A product-created Bot without an explicit remote endpoint runs through the API's Native factory
+using its standing role. A remote Bot stores its own endpoint and optional encrypted credential.
+Package-provided agents use their own `agents.yaml` configuration.
 
-```dotenv
-MANAGED_AGENT_AG_UI_URL=http://localhost:4201/ag-ui
-```
-
-That is `agent-langgraph`, which runs a real framework and its own tool loop. The proof-of-concept on
-`4200` hand-writes the protocol and leaves the loop to whatever is watching, so it is a reference
-rather than something to build a deployment on.
-
-The URL is optional. Set it with `MANAGED_AGENT_TOKEN`, or leave it unset: product-created coworkers
-then need their own endpoint, and a package agent whose endpoint expands to nothing is omitted
-rather than registered against a missing host. A leftover token with no URL is ignored.
-Package-provided agents otherwise use their own `agents.yaml` configuration.
+The retained TypeScript `agent-langgraph` service listens on `http://localhost:4201/ag-ui` in the
+local stack. Register that address explicitly in a remote Bot or a tenant package when using it.
 
 ## Register an external AG-UI agent
 

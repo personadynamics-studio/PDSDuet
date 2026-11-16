@@ -26,25 +26,9 @@ export type SharedComputerConfig = {
   baseUrl: string;
 };
 
-/**
- * A computer each, created by the cluster.
- *
- * The namespace is the whole scope: the service account this runs under may manage Sandboxes there
- * and nowhere else, which is a smaller blast radius than the Docker supervisor's, since that one
- * holds a socket that is root-equivalent on its host.
- */
-export type SandboxComputerConfig = {
-  provider: "sandbox";
-  namespace: string;
-  idleAfterMs: number;
-  /** Where the chart mounted the shape of a computer. */
-  templateFile: string;
-};
-
 export type ComputerConfig =
   | DockerComputerConfig
-  | SharedComputerConfig
-  | SandboxComputerConfig;
+  | SharedComputerConfig;
 
 /**
  * Who a deployment lets in, and through which front door.
@@ -96,18 +80,6 @@ export function configuredAuthProviders(
   return providers;
 }
 
-export type ManagedAgentConfig = {
-  /** The bundled Bot, absent when this deployment's provider cannot run it. */
-  endpoint?: URL;
-  /**
-   * The harness picked during setup, when there is one.
-   *
-   * The endpoint of the installed harness.
-   */
-  alsoRun?: URL;
-};
-
-
 export type DeploymentConfig = {
   /** Audio configuration is independent of agent model providers. */
   transcription?: TranscriptionConfig;
@@ -121,13 +93,6 @@ export type DeploymentConfig = {
   listen: ListenHost[];
   databaseUrl: string;
   keyEncryptionKey: string;
-  /**
-   * Endpoints for the bundled Bot and/or the installed picked harness.
-   *
-   * The bundled endpoint is optional: plan credentials can run a picked harness without it.
-   * Its presence, not this auth configuration, determines whether a bundled Bot is available.
-   */
-  managedAgent?: ManagedAgentConfig;
   /**
    * The name used to scope locally minted conversation identifiers.
    *
@@ -311,47 +276,6 @@ function url(environment: Environment, name: string): string | undefined {
   return value;
 }
 
-function optionalHttpUrl(
-  environment: Environment,
-  name: string,
-): URL | undefined {
-  const value = optional(environment, name);
-  if (!value) {
-    return undefined;
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error(`${name} must be a valid HTTP(S) URL`);
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`${name} must be a valid HTTP(S) URL`);
-  }
-
-  return parsed;
-}
-
-/** Endpoints of the bundled Bot and installed harness. */
-function managedAgentConfig(
-  environment: Environment,
-): ManagedAgentConfig | undefined {
-  const endpoint = optionalHttpUrl(environment, "MANAGED_AGENT_AG_UI_URL");
-  // An installed harness has its own endpoint.
-  const alsoRun = optional(environment, "PICKED_HARNESS_IMAGE")
-    ? optionalHttpUrl(environment, "PICKED_HARNESS_URL")
-    : undefined;
-  if (!endpoint && !alsoRun) {
-    return undefined;
-  }
-  return {
-    ...(endpoint ? { endpoint } : {}),
-    ...(alsoRun ? { alsoRun } : {}),
-  };
-}
-
 function oauthClient(
   environment: Environment,
   provider: "GOOGLE" | "MICROSOFT" | "OKTA",
@@ -474,58 +398,11 @@ function oktaAuth(
   return { ...client, issuer };
 }
 
-/**
- * A duration a person would write, as milliseconds.
- *
- * `30m` rather than `1800000`, because this one is read and edited by whoever is deciding how long a
- * computer may sit idle, and a wrong number of zeroes there is either a computer that never sleeps
- * or one that vanishes mid-task. Plain digits are still milliseconds, so anything already set keeps
- * its meaning.
- */
-export function durationMs(value: string): number {
-  const match = /^(\d+)\s*(ms|s|m|h)?$/i.exec(value.trim());
-  if (!match) {
-    throw new Error(
-      `"${value}" is not a duration. Write it as 30s, 30m, 2h, or a plain number of milliseconds.`,
-    );
-  }
-  const amount = Number(match[1]);
-  switch (match[2]?.toLowerCase()) {
-    case "h":
-      return amount * 3_600_000;
-    case "m":
-      return amount * 60_000;
-    case "s":
-      return amount * 1_000;
-    default:
-      return amount;
-  }
-}
-
 function computerConfig(environment: Environment): ComputerConfig | undefined {
   const supervisorAddress = optional(environment, "COMPUTER_SUPERVISOR_URL");
   const sharedAddress = optional(environment, "AGENT_COMPUTER_URL");
-  const sandboxNamespace = optional(environment, "COMPUTER_SANDBOX_NAMESPACE");
-  if (!supervisorAddress && !sharedAddress && !sandboxNamespace) {
+  if (!supervisorAddress && !sharedAddress) {
     return undefined;
-  }
-
-  /*
-   * Checked before the other two, because a deployment that named a namespace means the cluster to
-   * make the computers, and a stray `AGENT_COMPUTER_URL` left in an environment would otherwise
-   * quietly put every Bot back on one shared browser.
-   */
-  if (sandboxNamespace) {
-    return {
-      provider: "sandbox",
-      namespace: sandboxNamespace,
-      idleAfterMs: durationMs(
-        optional(environment, "COMPUTER_SANDBOX_IDLE_AFTER") ?? "30m",
-      ),
-      templateFile:
-        optional(environment, "COMPUTER_SANDBOX_TEMPLATE_FILE") ??
-        "/etc/openbot/sandbox-template.json",
-    };
   }
 
   const supervisorUrl = url(environment, "COMPUTER_SUPERVISOR_URL");
@@ -578,7 +455,6 @@ export function loadConfig(
 ): DeploymentConfig {
   const google = oauthClient(environment, "GOOGLE");
   const auth = authConfig(environment, google);
-  const managedAgent = managedAgentConfig(environment);
   const githubApp = githubAppConfig(environment);
   const publicUrl = (
     optional(environment, "OPENBOT_PUBLIC_URL") ?? auth?.baseUrl
@@ -598,7 +474,6 @@ export function loadConfig(
     voice: voiceConfig(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: deploymentKey,
-    ...(managedAgent ? { managedAgent } : {}),
     ...(githubApp ? { githubApp } : {}),
     deploymentId: optional(environment, "DEPLOYMENT_ID"),
     composioApiKey: optional(environment, "COMPOSIO_API_KEY"),
