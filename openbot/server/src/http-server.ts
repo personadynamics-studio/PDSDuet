@@ -2,6 +2,7 @@ import { DICTATION_HTTP_IDLE_SECONDS } from "@openbot/shared/dictation";
 import { listenAddress } from "@openbot/shared/listen-host";
 import { serve } from "bun";
 import type { OpenBotRole } from "./auth/roles";
+import type { ResolveRequestActor } from "./auth/guards";
 import { websocket as channelSocket } from "./channels/socket";
 import type { ComputerGateway } from "./computer/gateway";
 import { streamPathBotId } from "./computer/stream-path";
@@ -35,9 +36,7 @@ type SocketData = StreamData | ChannelSocket["data"];
 export function startHttpServer(deps: {
   port: number;
   config: DeploymentConfig;
-  resolveRequestActor: (
-    request: Request,
-  ) => Promise<{ id: string; name: string; role: OpenBotRole }>;
+  resolveRequestActor: ResolveRequestActor;
   computerGateway: ComputerGateway | undefined;
   canUseComputer(actor: {id:string;role:OpenBotRole}, botId:string):Promise<boolean>;
   app: {

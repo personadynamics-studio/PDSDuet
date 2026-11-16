@@ -175,12 +175,11 @@ bash scripts/stop.sh --keep-computers
 
 ### 3. 手機安全接入與多人登入 / Phone Access & Multi-User Sign-In (Tailscale + OAuth)
 
-`openbot/.env.example` 預設啟用 `OPENBOT_SINGLE_USER=true`，僅在本機位址（`127.0.0.1` / `::1`）監聽，方便單機試用。若要從手機經 Tailscale 連線，或開放給團隊以 Google / Microsoft / Okta 登入（Remove `OPENBOT_SINGLE_USER` before exposing beyond localhost）：
+未配置登入 provider 時，所有可達請求共用 `DEV_ACTOR` 的管理員身份；配置 Google / Microsoft / Okta 後，請求改用登入帳戶。監聽位址由 `OPENBOT_HOST` 決定，與登入設定分開。從手機經 Tailscale 連線或多人共用時，請配置登入 provider：
 
-1. 從 `openbot/.env` 移除 `OPENBOT_SINGLE_USER=true`。
-2. 產生正式金鑰並設定 `KEY_ENCRYPTION_KEY` 與 `BETTER_AUTH_SECRET`（各 32 bytes：`openssl rand -base64 32`）。
-3. 設定 OAuth Provider（如 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET`、`INITIAL_ADMIN_EMAILS`）及 `BETTER_AUTH_URL`、`OPENBOT_PUBLIC_URL`、`TRUSTED_ORIGINS`。
-4. 參考 [scripts/tailscale-serve.json](scripts/tailscale-serve.json) 將 Tailscale HTTPS 流量轉發至 `http://127.0.0.1:3010`。
+1. 設定 `KEY_ENCRYPTION_KEY` 與 `BETTER_AUTH_SECRET`（`openssl rand -base64 32`）。
+2. 設定 OAuth Provider（例如 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET`），以及 `BETTER_AUTH_URL`、`OPENBOT_PUBLIC_URL` 和所需的 `TRUSTED_ORIGINS`。`INITIAL_ADMIN_EMAILS` 可留空；列入的地址保留管理員權限，其餘帳戶的角色由 People 管理，新帳戶預設一般用戶。
+3. 參考 [scripts/tailscale-serve.json](scripts/tailscale-serve.json) 將 Tailscale HTTPS 流量轉發至 `http://127.0.0.1:3010`。
 
 ---
 

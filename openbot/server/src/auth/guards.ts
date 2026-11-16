@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { roleForEmail, type OpenBotRole } from "./roles";
+import type { OpenBotRole } from "./roles";
 
 export type AuthenticatedActor = {
   id: string;
@@ -29,28 +29,21 @@ export type AppVariables = {
   actor: AuthenticatedActor;
 };
 
+export type ResolveRequestActor = (
+  request: Request,
+) => Promise<AuthenticatedActor | null>;
+
 export function createRequireUser(
-  auth: AuthService,
-  initialAdminEmails: readonly string[],
+  resolveRequestActor: ResolveRequestActor,
 ): MiddlewareHandler<{ Variables: AppVariables }> {
   return async (context, next) => {
-    const session = await auth.api.getSession({
-      headers: context.req.raw.headers,
-    });
+    const actor = await resolveRequestActor(context.req.raw);
 
-    if (!session) {
+    if (!actor) {
       return context.json({ error: "Authentication required." }, 401);
     }
 
-    const role = roleForEmail(session.user.email, initialAdminEmails);
-
-    context.set("actor", {
-      id: session.user.id,
-      email: session.user.email,
-      name: session.user.name,
-      image: session.user.image,
-      role,
-    });
+    context.set("actor", actor);
     await next();
   };
 }

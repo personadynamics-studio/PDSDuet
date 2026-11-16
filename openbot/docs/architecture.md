@@ -1,6 +1,6 @@
 # Browser and Bot execution core
 
-This describes the source extraction of 2026-11-14. Build and operation results belong in `tasks/todo.md`; source publication alone does not establish runtime success.
+This describes the current browser and Bot execution sources. Historical build and operation results belong in `tasks/todo.md`; source publication alone does not establish runtime success.
 
 ## Execution and settlement
 
@@ -61,7 +61,7 @@ Stop aborts actual live resources before waiting on database cancellation. It fo
 
 Settlement saves human input and its transcript events in one transaction. Streamed output is saved through the same writer. Final output, waiting/terminal status and the terminal event commit together. Model or storage failures are not reported as successful delivery. Screens, notifications, recording and acknowledgements are not prerequisites for settlement.
 
-Raw SQL binds serialized JSON through `::text::jsonb`. Bun otherwise encodes a string bound directly as JSONB as a JSON string, leaving messages and events in the wrong shape. Startup repairs those earlier JSON-string values in the canonical runtime columns; consumers continue to read one normal object/array representation. See [Bun's JSON parameter rules](https://bun.com/docs/runtime/sql#sql-json).
+Raw SQL binds serialized JSON through `::text::jsonb`. Bun otherwise encodes a string bound directly as JSONB as a JSON string, leaving messages and events in the wrong shape. Consumers read one normal object/array representation. See [Bun's JSON parameter rules](https://bun.com/docs/runtime/sql#sql-json).
 
 Public snapshots read root messages, the event cursor and the root's actual run/waiting state together. Child model output and model-state snapshots stay internal; root tool records remain inspectable through their disclosures. Necessary human questions use the real waiting leaf call ID. A content-free root update refreshes waiting state when a child resumes or waits again. SSE filters child events before pagination, replays public events after `Last-Event-ID`, and follows PostgreSQL notifications. Both the API and frontend proxy disable the thread stream's idle timeout. An initial SSE comment opens the connection immediately; a single cleaned-up 15-second keepalive keeps it open without database polling. Closing a view does not cancel execution; explicit Stop does. Browser screen reconnection uses its native WebSocket independently.
 
@@ -75,11 +75,14 @@ Cancellation reaches provider lookup, HTTP and supported Playwright operations. 
 
 ## Startup and retained capabilities
 
-`settlement.initialize()` creates or updates the canonical runtime tables. It retires unfinished runs belonging to the removed executor as interrupted, removes obsolete lease/executor columns, and copies historical public group messages with original IDs and recorded authors. Historical group storage is not a second live transcript. New-runtime waiting records survive a process restart; runs left executing by a dead process become interrupted instead of being automatically replayed.
+HTTP requests and computer WebSocket upgrades share the same session-to-person resolver. People stores the effective role policy: addresses in `INITIAL_ADMIN_EMAILS` are protected administrators; other people use their stored `user_roles` assignments. Resumed runs and shared-account decisions use that same person projection. Reading a role never rewrites its assignments, and changing a stored role takes effect on the next request without a new login. With no identity provider, the existing single-user `DEV_ACTOR` remains the administrator. This consolidation does not change the existing route admission policy.
+
+`server/schema.sql` owns the complete fresh database schema, including `local_threads`, `local_runs`, `local_messages`, `local_events` and `thread_channel_mappings`. The existing explicit `server/scripts/initialize.ts` step applies it to an empty database in one transaction; existing databases are left unchanged. Normal API startup does not create or alter tables, convert historical JSON, copy legacy group messages or rebuild old sidebar previews.
+
+`index.ts` calls `settlement.recoverInterruptedRuns()` for runs left `pending` or `running` by the previous API process. It records their real `interrupted` outcome and terminal events, with thread notifications in the same transaction. Waiting records and their tool IDs remain available to the existing resume flow. This relies on the documented single API owner. Older databases missing current runtime columns, or still holding JSON strings or legacy-only conversation records, need an explicit data-upgrade decision; startup no longer attempts those conversions and this source change performs none.
 
 Manual mail/calendar, granted connectors, uploaded documents, saved pages, settings and genuine shared-account consent remain. The old routine/scheduling engine, Task intake, proactive research, Responsibility, generic approvals, delivery routing and their workers are not assembled. No working daily-schedule capability is claimed by this extraction.
 
-Existing tests and checker files have not been changed. Test suites, lint and type checking remain excluded. The user's latest authorization removed the two-round cap for MessageSchema and similar runtime blockers; it did not authorize a wider refactor. Earlier attempt results remain in `tasks/todo.md`.
 
 On 2026-11-14, the API and existing frontend started after importing `MessageSchema` from `@ag-ui/core/schemas`. An actual conversation then exposed the JSON binding issue above and a stopped remote LangGraph service at the insurance Bot's configured endpoint. After repairing the bindings/data and loading that service's current image with its existing model settings, the insurance Bot returned a complete Traditional Chinese answer through the application. The prior frontend build was reused; the LangGraph image was rebuilt. Browser/computer actions, Bot delegation and schedule operation were not exercised by this conversation.
 

@@ -301,10 +301,6 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
 - name: SIGNIN_ALLOWED_EMAIL_DOMAINS
   value: {{ .Values.config.allowedEmailDomains | quote }}
 {{- end }}
-{{- if .Values.config.singleUser }}
-- name: OPENBOT_SINGLE_USER
-  value: "true"
-{{- end }}
 {{- if .Values.config.logLevel }}
 - name: LOG_LEVEL
   value: {{ .Values.config.logLevel | quote }}

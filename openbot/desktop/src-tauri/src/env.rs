@@ -447,10 +447,6 @@ pub fn compose(
         ),
     );
 
-    // Which package the deployment runs. Without it the server falls back rather than using the one
-    // that came with the deployment, and the Bots somebody was given are not the Bots they get.
-    env.insert("TENANT_PACKAGE_DIR".into(), "../examples/fintech".into());
-
     // The default actor of this desktop installation.
     env.insert("INITIAL_ADMIN_EMAILS".into(), "dev@openbot.local".into());
 

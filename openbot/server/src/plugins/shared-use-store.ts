@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { AuditInitiator } from "../audit";
 import { type AuditStore, recordAuditEvent } from "../audit";
+import type { OpenBotRole } from "../auth/roles";
 import type { Database } from "../db/client";
 import {
   agentProfiles,
@@ -15,7 +16,6 @@ import {
   teamBotAudience,
   teamBotPublications,
   users,
-  userRoles,
 } from "../db/schema";
 import { BROKERED_PROFILE, type BrokerProvider, toolkitOfFor } from "./access";
 import {
@@ -93,6 +93,7 @@ const schemeOf = (provider: BrokerProvider) =>
 export function createSharedUseStore(
   database: Database,
   provider: BrokerProvider,
+  actorFor: (actorId: string) => Promise<{ role: OpenBotRole }>,
 ) {
   const scheme = schemeOf(provider);
   const appOfUrl = (url: string) => toolkitOfFor(provider, url);
@@ -341,14 +342,10 @@ export function createSharedUseStore(
       .from(users)
       .where(eq(users.id, actorId))
       .limit(1);
-    const held = await database
-      .select({ role: userRoles.role })
-      .from(userRoles)
-      .where(eq(userRoles.userId, actorId))
-      .catch(() => []);
+    const actor = await actorFor(actorId);
     return {
       actorId,
-      isAdmin: held.some((record) => record.role === "admin"),
+      isAdmin: actor.role === "admin",
       groups: row?.groups ?? [],
     };
   }

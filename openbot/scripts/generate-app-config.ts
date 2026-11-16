@@ -1,17 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   createApplicationConfiguration,
   loadTenantPackage,
 } from "../server/src/tenant-package";
 
 const projectRoot = resolve(import.meta.dir, "..");
-const configuredTenantPackageDirectory = process.env.TENANT_PACKAGE_DIR;
-const tenantPackageDirectory = configuredTenantPackageDirectory
-  ? isAbsolute(configuredTenantPackageDirectory)
-    ? configuredTenantPackageDirectory
-    : resolve(projectRoot, "server", configuredTenantPackageDirectory)
-  : resolve(projectRoot, "examples/openduet");
+const tenantPackageDirectory = resolve(
+  projectRoot,
+  "server",
+  process.env.TENANT_PACKAGE_DIR?.trim() || "../examples/openduet",
+);
 const tenantPackage = await loadTenantPackage(tenantPackageDirectory);
 const applicationConfiguration = createApplicationConfiguration(tenantPackage);
 const outputPath = resolve(

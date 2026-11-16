@@ -104,7 +104,7 @@ initialization:
 config:
   # Where people reach this deployment. Sets the OAuth callback and the trusted origin.
   publicUrl: ""
-  # Administrators by email address, comma-separated. Required unless singleUser is on.
+  # Protected administrator addresses, comma-separated. This chart requires a list with a provider.
   initialAdminEmails: ""
   # Email domains admitted at sign-in, comma-separated. Empty admits everybody, which is what the
   # providers below already do on their own: the Entra tenant is `common` unless you set it, which
@@ -117,12 +117,11 @@ config:
   # Matched exactly, no wildcards: `example.com` admits neither `sub.example.com` nor
   # `evil-example.com`. Name every domain your staff use.
   allowedEmailDomains: ""
-  # Every request is one fixed administrator. Local trials only; the deployment refuses to start
-  # with no identity provider unless this says somebody meant it.
+  # Chart install option for local use without a provider. The API derives its shared
+  # DEV_ACTOR identity from the absence of providers, rather than from a runtime flag.
   singleUser: false
 
-  # How people sign in. One of these, or `singleUser` above, and nothing else will do: the server
-  # refuses to start rather than serve a deployment where every visitor is an administrator.
+  # How people sign in. This chart requires a provider or the local `singleUser` install option.
   #
   # Client secrets go under `secrets` below. Only the public halves belong here.
   auth:

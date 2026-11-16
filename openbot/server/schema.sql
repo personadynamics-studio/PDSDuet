@@ -134,6 +134,47 @@ CREATE TABLE "thread_channel_mappings" (
   CONSTRAINT "thread_channel_mappings_user_id_channel_id_pk" PRIMARY KEY ("user_id", "channel_id")
 );
 
+CREATE TABLE "local_threads" (
+  "id" text PRIMARY KEY NOT NULL,
+  "user_id" text NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE "local_runs" (
+  "id" text PRIMARY KEY NOT NULL,
+  "thread_id" text NOT NULL,
+  "user_id" text NOT NULL,
+  "bot_ids" jsonb,
+  "bot_index" integer DEFAULT 0 NOT NULL,
+  "status" text NOT NULL,
+  "stop_requested" boolean DEFAULT false NOT NULL,
+  "error" text,
+  "waiting" jsonb,
+  "parent_run_id" text,
+  "instruction" text,
+  "initiator" jsonb,
+  "model_states" jsonb DEFAULT '{}'::jsonb NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE "local_messages" (
+  "position" bigserial NOT NULL,
+  "thread_id" text NOT NULL,
+  "id" text NOT NULL,
+  "run_id" text,
+  "body" jsonb NOT NULL,
+  CONSTRAINT "local_messages_thread_id_id_pk" PRIMARY KEY ("thread_id", "id")
+);
+
+CREATE TABLE "local_events" (
+  "seq" bigserial PRIMARY KEY NOT NULL,
+  "thread_id" text NOT NULL,
+  "run_id" text NOT NULL,
+  "body" jsonb NOT NULL
+);
+
 CREATE TABLE "revoked_access" (
   "email" text PRIMARY KEY NOT NULL,
   "revoked_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -1241,6 +1282,24 @@ ALTER TABLE "thread_channel_mappings" ADD CONSTRAINT "thread_channel_mappings_us
 ALTER TABLE "thread_channel_mappings" ADD CONSTRAINT "thread_channel_mappings_channel_id_channels_id_fk" FOREIGN KEY ("channel_id") REFERENCES "public"."channels" ("id") ON DELETE cascade ON UPDATE no action;
 
 CREATE UNIQUE INDEX "thread_channel_mappings_thread_idx" ON "thread_channel_mappings" USING btree ("thread_id" ASC NULLS LAST);
+
+ALTER TABLE "local_threads" ADD CONSTRAINT "local_threads_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id") ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE "local_runs" ADD CONSTRAINT "local_runs_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "public"."local_threads" ("id") ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE "local_runs" ADD CONSTRAINT "local_runs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id") ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE "local_messages" ADD CONSTRAINT "local_messages_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "public"."local_threads" ("id") ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE "local_events" ADD CONSTRAINT "local_events_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "public"."local_threads" ("id") ON DELETE cascade ON UPDATE no action;
+
+ALTER TABLE "local_events" ADD CONSTRAINT "local_events_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "public"."local_runs" ("id") ON DELETE cascade ON UPDATE no action;
+
+CREATE INDEX "local_events_thread_idx" ON "local_events" USING btree ("thread_id", "seq");
+
+CREATE INDEX "local_runs_thread_idx" ON "local_runs" USING btree ("thread_id", "updated_at" DESC);
+
+CREATE INDEX "local_messages_run_idx" ON "local_messages" USING btree ("run_id", "position");
 
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id") ON DELETE cascade ON UPDATE no action;
 

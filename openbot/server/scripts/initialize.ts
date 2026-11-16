@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import postgres from "postgres";
 
-/** Initialize the current application schema in an empty database. */
+/** Initialize an empty database from schema.sql; existing databases are not migrated here. */
 export async function initializeDatabase(databaseUrl: string): Promise<void> {
   const schema = await readFile(join(import.meta.dir, "..", "schema.sql"), "utf8");
   const client = postgres(databaseUrl, { max: 1, onnotice: () => {} });
@@ -23,5 +23,5 @@ if (import.meta.main) {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl?.trim()) throw new Error("DATABASE_URL is required to initialize the database.");
   await initializeDatabase(databaseUrl);
-  console.info("PDSDuet database schema is initialized.");
+  console.info("PDSDuet schema initialization finished; existing databases were left unchanged.");
 }

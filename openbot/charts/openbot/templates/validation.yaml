@@ -30,10 +30,8 @@ This template renders nothing.
 {{- /*
   Nobody can get in, which is two separate mistakes rather than one.
 
-  Naming administrators does not create a way to sign in, and configuring sign-in does not make
-  anybody an administrator: the server refuses to start without a provider, and grants the role to
-  nobody without the addresses. An earlier version of this check accepted admin emails alone, which
-  passed the install and then crash-looped on the first boot, so both are checked and named apart.
+  These are chart installation requirements. The API itself uses DEV_ACTOR without a provider;
+  with a provider, People combines the configured administrator floor with stored role assignments.
 */}}
 {{- $provider := or .Values.config.auth.google.clientId .Values.config.auth.microsoft.clientId .Values.config.auth.okta.clientId -}}
 {{- if and (not .Values.config.singleUser) (not $provider) }}
@@ -41,7 +39,7 @@ This template renders nothing.
 {{- end }}
 
 {{- if and $provider (not .Values.config.initialAdminEmails) }}
-{{- fail "Nobody would be an administrator. config.initialAdminEmails is what grants the role; nothing else does." }}
+{{- fail "This chart requires config.initialAdminEmails when a provider is configured." }}
 {{- end }}
 
 {{- if and $provider (not .Values.config.publicUrl) }}

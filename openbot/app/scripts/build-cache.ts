@@ -116,9 +116,7 @@ async function collectFiles(
 }
 
 function tenantPackageDir(rootDir: string, env: BuildCacheEnv): string {
-  const configured = env.TENANT_PACKAGE_DIR;
-  if (!configured) return join(rootDir, "examples", "fintech");
-  return resolve(rootDir, "server", configured);
+  return resolve(rootDir, "server", env.TENANT_PACKAGE_DIR?.trim() || "../examples/openduet");
 }
 
 function viteEnvironment(env: BuildCacheEnv): Record<string, string> {

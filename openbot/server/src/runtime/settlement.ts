@@ -295,78 +295,15 @@ export function createSettlement(database: Database, options: { actorFor(id: str
       await connection.listen(UPDATES, threadId => { for (const changed of viewers.get(threadId) ?? []) changed(); });
     },
     async close() { viewers.clear(); await connection?.end(); },
-    async initialize() {
-      await database.execute(sql`create table if not exists thread_channel_mappings(user_id text not null references users(id) on delete cascade,channel_id text not null references channels(id) on delete cascade,thread_id text not null unique,created_at timestamptz not null default now(),updated_at timestamptz not null default now(),primary key(user_id,channel_id))`);
-      await database.execute(sql`create table if not exists local_threads(id text primary key,user_id text not null references users(id) on delete cascade,created_at timestamptz not null default now(),updated_at timestamptz not null default now())`);
-      await database.execute(sql`create table if not exists local_runs(id text primary key,thread_id text not null references local_threads(id) on delete cascade,user_id text not null references users(id) on delete cascade,bot_ids jsonb,bot_index integer not null default 0,status text not null,stop_requested boolean not null default false,error text,waiting jsonb,parent_run_id text,instruction text,initiator jsonb,model_states jsonb not null default '{}',created_at timestamptz not null default now(),updated_at timestamptz not null default now())`);
-      await database.execute(sql`alter table local_runs add column if not exists bot_ids jsonb,add column if not exists bot_index integer not null default 0,
-        add column if not exists instruction text,add column if not exists initiator jsonb,add column if not exists model_states jsonb not null default '{}',
-        add column if not exists error text,add column if not exists waiting jsonb,add column if not exists parent_run_id text,
-        add column if not exists stop_requested boolean not null default false`);
-      await database.execute(sql`create table if not exists local_messages(position bigserial,thread_id text not null references local_threads(id) on delete cascade,id text not null,run_id text,body jsonb not null,primary key(thread_id,id))`);
-      await database.execute(sql`alter table local_messages add column if not exists run_id text`);
-      await database.execute(sql`create table if not exists local_events(seq bigserial primary key,thread_id text not null references local_threads(id) on delete cascade,run_id text not null references local_runs(id) on delete cascade,body jsonb not null)`);
-      // Bind serialized values as text before casting: Bun otherwise JSON-encodes the string again.
-      await database.transaction(async tx => {
-        await tx.execute(sql`update local_messages set body=(body #>> '{}')::jsonb where jsonb_typeof(body)='string'`);
-        await tx.execute(sql`update local_events set body=(body #>> '{}')::jsonb where jsonb_typeof(body)='string'`);
-        await tx.execute(sql`update local_runs set
-          bot_ids=case when jsonb_typeof(bot_ids)='string' then (bot_ids #>> '{}')::jsonb else bot_ids end,
-          waiting=case when jsonb_typeof(waiting)='string' then (waiting #>> '{}')::jsonb else waiting end,
-          initiator=case when jsonb_typeof(initiator)='string' then (initiator #>> '{}')::jsonb else initiator end,
-          model_states=case when jsonb_typeof(model_states)='string' then (model_states #>> '{}')::jsonb else model_states end
-          where jsonb_typeof(bot_ids)='string' or jsonb_typeof(waiting)='string'
-            or jsonb_typeof(initiator)='string' or jsonb_typeof(model_states)='string'`);
-      });
-      await database.execute(sql`create index if not exists local_events_thread_idx on local_events(thread_id,seq)`);
-      await database.execute(sql`update local_events e set body=e.body||'{"internal":true}'::jsonb
-        where e.body->>'internal' is distinct from 'true' and (
-          e.body->>'type' in('MESSAGES_SNAPSHOT','STATE_SNAPSHOT','STATE_DELTA')
-          or (e.body->>'type'='CUSTOM' and e.body->>'name'='openbot.headless.waiting' and e.body->'value'->>'kind'='bot_wait')
-        )`);
-      await database.execute(sql`update local_events set body=body-'internal' where body->>'internal'='true' and (
-        body->>'type' in('TOOL_CALL_START','TOOL_CALL_ARGS','TOOL_CALL_END','TOOL_CALL_RESULT')
-        or (body->>'type'='CUSTOM' and body->>'name'='thread.message')
-      )`);
-      await database.execute(sql`create index if not exists local_runs_thread_idx on local_runs(thread_id,updated_at desc)`);
-      await database.execute(sql`create index if not exists local_messages_run_idx on local_messages(run_id,position)`);
-      await database.execute(sql`do $$ begin if exists(select 1 from information_schema.columns where table_name='local_runs' and column_name='agent_id') then
-        update local_runs set bot_ids=jsonb_build_array(agent_id) where bot_ids is null;
-        with retired as(update local_runs set status='interrupted',error='The previous execution runtime was retired.',waiting='[]'::jsonb,updated_at=now()
-          where status in('pending','running','waiting') returning id,thread_id)
-          insert into local_events(thread_id,run_id,body) select thread_id,id,jsonb_build_object('type','RUN_FINISHED','threadId',thread_id,'runId',id,'status','interrupted','error','The previous execution runtime was retired.') from retired;
-        alter table local_runs drop column agent_id; end if; end $$`);
-      await database.execute(sql`alter table local_threads drop column if exists agent_id,drop column if exists active_run_id,drop column if exists lease_until,drop column if exists state`);
-      await database.execute(sql`alter table local_runs drop column if exists executor_token`);
-      await database.execute(sql`update local_messages m set run_id=e.run_id from (
-        select distinct on(thread_id,body->>'messageId') thread_id,body->>'messageId' as message_id,run_id from local_events
-        where body ? 'messageId' order by thread_id,body->>'messageId',seq
-      ) e where m.run_id is null and m.thread_id=e.thread_id and m.id=e.message_id`);
-      await database.execute(sql`do $$ begin if to_regclass('public.group_messages') is not null then
-        insert into local_threads(id,user_id) select distinct on(m.channel_id) m.thread_id,m.user_id from thread_channel_mappings m
-          join group_messages g on g.channel_id=m.channel_id order by m.channel_id,m.created_at,m.user_id on conflict(id) do nothing;
-        insert into local_messages(thread_id,id,body)
-          select m.thread_id,g.id,jsonb_strip_nulls(jsonb_build_object('id',g.id,'role',case when g.agent_id is null then 'user' else 'assistant' end,
-            'content',g.text,'senderUserId',case when g.agent_id is null then g.owner_user_id else null end,
-            'senderBotId',case when g.agent_id is not null and jsonb_typeof(g.details->'answeredBy')='string' and g.details->>'answeredBy'<>'' then g.details->>'answeredBy' else g.agent_id end,
-            'createdAt',g.created_at))
-          from group_messages g join lateral(select thread_id from thread_channel_mappings where channel_id=g.channel_id order by created_at,user_id limit 1)m on true
-          where g.text<>'' and (g.agent_id is null or g.status='completed') order by g.created_at,g.id on conflict(thread_id,id) do nothing;
-      end if; end $$`);
+    async recoverInterruptedRuns() {
       await database.transaction(async tx => {
         const interrupted = await tx.execute<{ id: string; threadId: string }>(sql`update local_runs set status='interrupted',error='The previous process ended before settlement.',updated_at=now()
           where status in('pending','running') returning id,thread_id as "threadId"`);
-        for (const record of interrupted) { await event(tx, record.threadId, record.id, { type: "RUN_FINISHED", threadId: record.threadId, runId: record.id, status: "interrupted", error: "The previous process ended before settlement." } as ThreadEvent); await notify(tx, record.threadId); }
+        for (const record of interrupted) {
+          await event(tx, record.threadId, record.id, { type: "RUN_FINISHED", threadId: record.threadId, runId: record.id, status: "interrupted", error: "The previous process ended before settlement." } as ThreadEvent);
+          await notify(tx, record.threadId);
+        }
       });
-      // Replace old child-authored sidebar previews with the last genuinely public message.
-      const delegatedThreads = await database.execute<{ threadId: string }>(sql`select distinct thread_id as "threadId" from local_runs where parent_run_id is not null`);
-      for (const { threadId } of delegatedThreads) {
-        const last = (await context(threadId)).messages.findLast(message =>
-          (message.role === "user" || message.role === "assistant") && typeof message.content === "string" && message.content.length > 0);
-        await database.execute(sql`update channels set last_message=${last ? Array.from(String(last.content)).slice(0, 200).join("") : null},
-          last_message_agent_id=${last?.senderBotId ?? null},last_message_at=coalesce(${last?.createdAt ?? null}::timestamptz,last_message_at)
-          where id in(select channel_id from thread_channel_mappings where thread_id=${threadId})`);
-      }
     },
   };
 }

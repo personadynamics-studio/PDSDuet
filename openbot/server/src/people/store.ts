@@ -241,20 +241,23 @@ export function createPeopleStore(
     const last = page.at(-1);
 
     return {
-      people: page.map((row) => ({
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        image: row.image,
-        // `admin` wins, the same way the request guard reads it. Anything else is a plain user.
-        role: row.roles.includes("admin") ? "admin" : "user",
-        providers: row.providers,
-        lastSignedInAt: row.lastSignedInAt
-          ? new Date(row.lastSignedInAt).toISOString()
-          : null,
-        revoked: row.revoked === true,
-        configuredAdmin: isConfiguredAdmin(row.email, initialAdminEmails),
-      })),
+      people: page.map((row): Person => {
+        const configuredAdmin = isConfiguredAdmin(row.email, initialAdminEmails);
+        return {
+          id: row.id,
+          email: row.email,
+          name: row.name,
+          image: row.image,
+          // HTTP, WebSocket and resumed runs all use this role; reads never rewrite assignments.
+          role: configuredAdmin || row.roles.includes("admin") ? "admin" : "user",
+          providers: row.providers,
+          lastSignedInAt: row.lastSignedInAt
+            ? new Date(row.lastSignedInAt).toISOString()
+            : null,
+          revoked: row.revoked === true,
+          configuredAdmin,
+        };
+      }),
       nextCursor:
         rows.length > limit && last
           ? encodeCursor({

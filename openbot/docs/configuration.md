@@ -21,18 +21,12 @@ bash scripts/start.sh
 | `DATABASE_URL`                | PostgreSQL connection string.                                                                         |
 | `KEY_ENCRYPTION_KEY`          | Base64-encoded 32-byte key for encrypted stored credentials. Generate with `openssl rand -base64 32`. |
 
-`MANAGED_AGENT_AG_UI_URL` names the Bot in the box: the default endpoint for coworkers created in
-the product. It needs `MANAGED_AGENT_TOKEN` beside it, or the server refuses to start. Unset, the
-server starts without a managed Bot, the shipped Risk Analyst coworker is omitted, and creating a
-coworker without its own endpoint is refused. A leftover token with no URL is ignored. The
-one-container image has no Bot process, so leave the URL unset there. `scripts/start.sh` points it
-at `agent-langgraph` on a laptop.
+`MANAGED_AGENT_AG_UI_URL` and `MANAGED_AGENT_TOKEN` are optional managed-agent settings. When the URL is configured, its token is required. They do not replace the endpoints declared by a tenant package or saved on an individual Bot.
 
-When starting the local API directly rather than through `scripts/start.sh`, set
-`MANAGED_AGENT_AG_UI_URL=http://localhost:4201/ag-ui` explicitly in the local `.env`.
-The script exports that default only for its own child processes. Without the URL, an existing
-managed coworker still points at its saved endpoint, but the API does not attach the managed
-token and the agent returns HTTP 401. Restart the API after changing this setting.
+The default `examples/openduet/agents.yaml` declares the insurance PDF Bot at
+`http://localhost:4201/ag-ui` and a built-in search Bot. The local start script starts the LangGraph
+service for that endpoint. A deployment using another address should declare it in its own tenant
+package; built-in Bots do not need a remote endpoint.
 
 ## General variables
 
@@ -44,8 +38,8 @@ There is no environment, tenant, harness or first-row fallback, and opening Chat
 | -------------------- | ---------------------------------- | ------------------------------------------------------------------- |
 | `PORT`               | `3001`                             | API server port. `SERVER_PORT` names the same port; set either, or both to the same value, or the server refuses to start. |
 | `OPENBOT_HOST`       | this machine with no sign-in; every interface with sign-in | Where the API server and the app's dev, preview and installed servers listen. A comma-separated list of addresses; `0.0.0.0`, `::` or `*` is every interface. See [Where it listens](#where-it-listens). |
-| `NODE_ENV`           | unset                              | `production` refuses the example `KEY_ENCRYPTION_KEY`. It does not decide whether sign-in is required; see `OPENBOT_SINGLE_USER`. |
-| `TENANT_PACKAGE_DIR` | `../examples/fintech`              | Tenant package directory, resolved from `server/`.                  |
+| `NODE_ENV`           | unset                              | `production` refuses the example `KEY_ENCRYPTION_KEY`. Sign-in is enabled by the configured identity providers. |
+| `TENANT_PACKAGE_DIR` | `../examples/openduet`             | Tenant package directory, resolved from `server/`; an absolute path is also accepted. |
 | `DEPLOYMENT_ID`      | the tenant package's id            | Names this local deployment and prefixes the identity a Shared app's account is held under at the vendor. That identity is fixed when the app is made Shared, so changing this later does not move it. |
 | `OPENAI_API_KEY`     | unset                              | Default model key for built-in agents and both shipped Bots.        |
 | `OPENAI_BASE_URL`    | unset                              | OpenAI-compatible endpoint that key is spent against. See below.    |
@@ -262,9 +256,12 @@ policies apply. See [OpenAI WebRTC](https://developers.openai.com/api/docs/guide
 
 ## Authentication
 
+A configured provider enables sign-in. With no provider, requests share the existing `DEV_ACTOR`
+administrator identity. Listening addresses and public URLs do not change that identity policy.
+For shared access, configure a provider.
+
 | Variable                     | Meaning                                                                                |
 | ---------------------------- | -------------------------------------------------------------------------------------- |
-| `OPENBOT_SINGLE_USER`        | One fixed administrator and no sign-in. **Required** when no identity provider is configured, or the deployment refuses to start. Refused on a public address. Ignored when a provider is configured. |
 | `GOOGLE_OAUTH_CLIENT_ID`     | Google OAuth client id.                                                                |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth client secret.                                                            |
 | `MICROSOFT_OAUTH_CLIENT_ID`  | Microsoft Entra ID application id.                                                     |
@@ -276,14 +273,14 @@ policies apply. See [OpenAI WebRTC](https://developers.openai.com/api/docs/guide
 | `BETTER_AUTH_SECRET`         | At least 32 characters. Required with any provider.                                    |
 | `BETTER_AUTH_URL`            | Public API server base URL, where OAuth callbacks return. Required with any provider.  |
 | `TRUSTED_ORIGINS`            | Comma-separated app origins accepted by the API, plus every host in a registered OIDC provider's discovery document. |
-| `INITIAL_ADMIN_EMAILS`       | Comma-separated administrators. **Required** with any provider.                        |
+| `INITIAL_ADMIN_EMAILS`       | Optional comma-separated protected administrators. Other accounts use their stored roles from People. |
 | `OPENBOT_PUBLIC_URL`         | Public address of this API. Defaults to `BETTER_AUTH_URL`.                              |
 | `OPENBOT_APP_URL`            | Where the browser app is served. Defaults to the first `TRUSTED_ORIGINS` entry.          |
 
 ### PDSDuet Google sign-in
 
-Set `OPENBOT_SINGLE_USER=false` and configure Google sign-in, `BETTER_AUTH_SECRET`,
-`BETTER_AUTH_URL` and `INITIAL_ADMIN_EMAILS`. Use the same HTTPS origin for
+Configure Google sign-in, `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`. `INITIAL_ADMIN_EMAILS` is
+optional and protects any listed addresses as administrators. Use the same HTTPS origin for
 `BETTER_AUTH_URL` and `OPENBOT_APP_URL`, and register
 `<origin>/api/auth/callback/google` on the Google Web application client. Google
 sign-in requests only `openid`, `email` and `profile`; Gmail, Calendar and Drive
@@ -306,7 +303,7 @@ Google account. Do not disable that requirement globally. Keep existing connecto
 credentials and grants attached to their original owner.
 
 The local start script persists the selected computer provider URL and both
-computer-service credentials. Direct API and worker starts therefore read the same
+computer-service credentials. Direct API starts therefore read the same
 settings as Compose. Restart existing API processes after changing those settings.
 
 **Some variables belong to the desktop app, not to you.** A desktop installation writes these into
@@ -319,28 +316,19 @@ desktop also points `OPENAI_BASE_URL` at OpenBot's own loopback route and sets `
 local proxy credential rather than a provider key, so those two do not mean what the table above says
 in that mode. A server you configure yourself is unaffected by all of this.
 
-**With no provider at all, `OPENBOT_SINGLE_USER=true` is required.** A deployment that configures
-nothing to sign anybody in and does not say that was deliberate refuses to start, naming what to
-configure, because a public URL where every visitor is an administrator fails silently. `NODE_ENV`
-does not enter into it. `.env.example` ships the line switched on, so a clone runs with no
-configuration at all. `OPENBOT_DEV_NO_AUTH=true`, the flag's former name, is still honoured.
-
-**But not on a public address.** The flag says you meant an open deployment; it does not say who can
-reach it. If `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or any `TRUSTED_ORIGINS` entry is an address
-the public internet routes to, the deployment refuses to start and names it. Loopback is silent. A
-private address is allowed and warned about once at boot, because a home server, a Tailnet, a VPN
-address and a `.local` name are what this flag is mostly used for, and anybody on that network is
-the administrator. A value that cannot be parsed as a URL counts as public, because nobody checked
-it.
+**With no provider, all requests use `DEV_ACTOR` as administrator.** No separate single-user flag
+is required. Setting a public URL does not enable sign-in or cause an automatic refusal; configure
+an identity provider before sharing access with other people.
 
 **Any one provider turns sign-in on**, and several may be configured at once. Each provider's id and
 secret must be set together, Okta additionally needs its issuer, and any of them requires
 `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`. Every incomplete combination is
 refused at start-up rather than at somebody's first attempt to sign in.
 
-`INITIAL_ADMIN_EMAILS` optionally assigns administrators when new accounts are created.
-Other Google accounts start as ordinary users. Sign-in does not require this list and does
-not reapply it on every session.
+People is the single effective-role policy. Addresses in `INITIAL_ADMIN_EMAILS` are protected
+administrators; other accounts use their stored `user_roles` assignment. The list may be empty.
+`seedRole` assigns a new account's initial role once; later sign-ins do not rewrite roles. Role
+changes made through People take effect on subsequent requests without requiring another sign-in.
 
 SAML and OpenID Connect providers are not configured here. They are registered while the deployment
 runs, under Admin → Identity providers, and routed by email domain.
@@ -370,20 +358,13 @@ A [Composio](plugins/composio.md) app needs `OPENBOT_APP_URL` and nothing else o
 
 ### Where it listens
 
-**With no sign-in, only this machine can reach it.** `OPENBOT_SINGLE_USER` makes whoever reaches
-the port the administrator, so the API server listens on 127.0.0.1 and ::1, and the app's dev,
-preview and installed servers, which pass `/api` on to it, do the same. On Linux the server also
-listens on Docker's bridge address (`docker0`), which is where the Bots' containers reach this
-machine at `host.docker.internal`; Docker Desktop carries that to loopback itself. With a sign-in
-provider the server listens on every interface, as it always has, because every route asks who is
-calling.
+`OPENBOT_HOST` selects the API and frontend listening addresses. When it is unset, the platform's
+normal listener default applies; configuring a provider does not change the bind setting. Set a
+loopback address for local-only access, or an appropriate address/list for the deployment.
 
-`OPENBOT_HOST` changes that for both. Set it to `0.0.0.0` to listen on every interface, or to a
-comma-separated list of addresses. With no sign-in, everybody who can reach those addresses is the
-administrator, and the server says so at every boot. The container image sets `0.0.0.0`, because a
-container's loopback is its own and a published port reaches only what listens beyond it; who can
-reach the container is then what `docker run -p` publishes it on. `scripts/start.sh` hands the
-setting from `.env` to the app, which reads only its own environment.
+The container image sets `OPENBOT_HOST=0.0.0.0`; its published host address is controlled separately
+by `docker run -p`. Without a provider, every reachable request still uses the same `DEV_ACTOR`
+administrator identity. A listening address is not a sign-in setting.
 
 **Only this deployment's own pages may change anything.** Every state-changing `/api` request and
 every WebSocket must come from one of this deployment's origins (`OPENBOT_PUBLIC_URL` or
@@ -818,10 +799,14 @@ Set `OPENBOT_ONE_COMPUTER_EACH=false` when using `start.sh` to run all Bots agai
 
 ## Tenant package
 
-The tenant package contains five required YAML files, and two optional:
+The default tenant package is `examples/openduet`. Set `TENANT_PACKAGE_DIR` to use an external or custom package; relative paths are resolved from `server/`. Desktop Start preserves an explicitly configured value instead of rewriting it.
+
+For an older Desktop installation, an existing `.env` may explicitly contain `TENANT_PACKAGE_DIR=../examples/fintech`. That bundled example has been retired. Change the value to `../examples/openduet` or a valid custom package path. This change does not rewrite existing `.env` files or convert saved data.
+
+The package contains five required YAML files. `skills.yaml`, `agents/`, and `theme.css` are optional:
 
 ```text
-examples/fintech/
+examples/openduet/
 ├── brand.yaml
 ├── agents.yaml
 ├── channels.yaml
@@ -829,16 +814,15 @@ examples/fintech/
 ├── knowledge.yaml
 ├── skills.yaml      (optional)
 ├── agents/          (optional, one coworker per file)
-└── catalog/         (not loaded: coworkers to copy into agents/)
-    └── expense-review.yaml
+└── theme.css        (optional)
 ```
 
 ### `brand.yaml`
 
 ```yaml
 tenant:
-  id: openbot
-  product_name: OpenBot
+  id: openduet
+  product_name: OpenDuet
 ```
 
 Optional theme:
@@ -852,27 +836,7 @@ Theme CSS may define only `:root` and `.dark` blocks, approved theme variables, 
 
 ### `agents.yaml`
 
-```yaml
-agents:
-  - id: knowledge
-    name: Knowledge
-    title: Company Knowledge
-    role_description: Answer company knowledge questions and cite sources.
-    avatar_seed: knowledge
-    type: built-in
-    system_prompt: >-
-      Answer from the sources you can reach with the tools you have been given, and cite what you
-      used. If you have no tool for a source, or a tool tells you it is not connected or reports an
-      error, say that plainly. Never answer from your own memory as though it came from a source, and
-      never claim you lack access to something a tool has just returned.
-
-  - id: risk-analyst
-    name: Risk Analyst
-    title: Risk & Compliance
-    role_description: Investigate policies and controls.
-    type: remote-ag-ui
-    endpoint: ${MANAGED_AGENT_AG_UI_URL:-}
-```
+The shipped file defines 保險 PDF 文案總監 as a remote AG-UI Bot on the local LangGraph endpoint and 搜索機器人 as a built-in Bot using Google AI Mode. Their complete instructions remain in `examples/openduet/agents.yaml`.
 
 Each agent requires `id`, `name`, `title`, `role_description`, and `type`.
 
@@ -883,8 +847,8 @@ Each agent requires `id`, `name`, `title`, `role_description`, and `type`.
 | `remote-mastra` | `endpoint`, and optionally `remote_agent_id` to pick one agent on that Mastra server |
 
 A remote agent whose `endpoint` resolves to an empty string is left out rather than refused, and it
-is dropped from every channel's `permitted_agents` too. That is how the example package carries a row
-for a Bot that only exists once something is configured.
+is dropped from every channel's `permitted_agents` too. Custom packages can use this for optional
+remote Bots.
 
 An agent may list `skills:`, slugs of skills this package ships in `skills.yaml`. A slug the package
 does not ship, or the same slug twice, stops the server. Two agents with the same `id` in
@@ -902,8 +866,7 @@ the next one somebody adds.
 
 Any `${NAME}` in a package file is replaced with that environment variable, so one package works
 against a local stack, a staging one and production. `${NAME:-fallback}` uses the fallback when the
-name is unset or empty, which is how the example package points at the Bot in the box without
-requiring any configuration. A name with neither a value nor a fallback stops the server with a
+name is unset or empty, allowing a custom package to declare an optional remote endpoint. A name with neither a value nor a fallback stops the server with a
 message saying which file wanted it, rather than leaving a Bot pointed at an address nobody meant.
 
 ### `agents/`
@@ -911,24 +874,9 @@ message saying which file wanted it, rather than leaving a Bot pointed at an add
 A coworker may also be one file of its own, in an `agents/` directory beside `agents.yaml`. Both are
 read, and a package that keeps every coworker in `agents.yaml` is unchanged.
 
-The shipped package starts with two coworkers, General Assistant and Knowledge, both in `agents.yaml`.
-Its other two entries, Risk Analyst and the picked harness, register only when their endpoints are
-configured. Ten more are in `catalog/`, which is not read. Copy one into `agents/` to add it:
+Place each custom coworker's fields in its own `.yaml` or `.yml` file. No optional `agents/` directory is shipped by default.
 
-```yaml
-# examples/fintech/agents/expense-review.yaml, copied from catalog/
-id: expense-review
-name: Expense Review
-title: Finance Operations
-role_description: Check one expense claim at a time against the policy as it is written.
-avatar_seed: expense-review
-type: built-in
-system_prompt: Quote the clause you relied on, and leave the decision to a person.
-skills:
-  - find-a-document
-```
-
-The file holds the coworker on its own, as above, or a list under `agents:` the way `agents.yaml`
+The file holds the coworker on its own, or a list under `agents:` the way `agents.yaml`
 does. Only `.yaml` and `.yml` are read, so a README beside them is left alone. Files are read in
 filename order, and every check that applies to a row in `agents.yaml` applies here too: a refusal
 names the file it came from.
@@ -949,12 +897,7 @@ automatically. Retire one that is gone from the package by setting `deleted_at` 
 ### `channels.yaml`
 
 ```yaml
-channels:
-  - id: risk-and-compliance
-    name: Risk & Compliance
-    description: Investigate policies and controls.
-    permitted_agents: [knowledge, risk-analyst]
-    allowed_groups: [risk, compliance]
+channels: []
 ```
 
 Each channel requires `id`, `name`, `description`, `permitted_agents`, and `allowed_groups`. Every `permitted_agents` entry must match an agent id. A channel `id` declared twice, or an agent listed twice in one channel, stops the server.
@@ -987,14 +930,10 @@ At start-up the server asks OpenAI or Anthropic, once, whether the configured ke
 ### `knowledge.yaml`
 
 ```yaml
-sources:
-  - type: google-drive
-    roots: [Policies, Compliance]
-  - type: microsoft-onedrive
-    roots: [Risk, Operations]
+sources: []
 ```
 
-Supported source types are `google-drive` and `microsoft-onedrive`.
+The shipped package declares no knowledge sources. Custom packages can declare `google-drive` or `microsoft-onedrive` sources.
 
 ### `skills.yaml` (optional)
 

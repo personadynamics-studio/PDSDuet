@@ -11,8 +11,7 @@ import { createApp } from "./app";
 import { auditSink, createAuditReader, createAuditStore, PERSON_INITIATOR } from "./audit";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
-import type { OpenBotRole } from "./auth/roles";
-import { roleForEmail } from "./auth/roles";
+import type { AuthenticatedActor } from "./auth/guards";
 import { createIdentityProviderStore } from "./auth/identity-provider-store";
 import { loadAttachmentForTurn, markAttachmentsSent } from "./channels/attachments";
 import { createChannelEventHub, startChannelActivityListener } from "./channels/events";
@@ -92,11 +91,13 @@ async function actorFor(id: string): Promise<AgentActor> {
   if (!person || person.revoked) throw new Error("This person no longer has access.");
   return { id, role: person.role };
 }
-async function resolveRequestActor(request: Request): Promise<{ id: string; name: string; role: OpenBotRole }> {
-  if (config.singleUser) return { id: DEV_ACTOR.id, name: DEV_ACTOR.email, role: DEV_ACTOR.role };
+async function resolveRequestActor(request: Request): Promise<AuthenticatedActor | null> {
+  if (config.singleUser) return DEV_ACTOR;
   const session = await auth?.api.getSession({ headers: request.headers });
-  if (!session?.user) throw new Error("Sign in first.");
-  return { id: session.user.id, name: session.user.name ?? session.user.email, role: roleForEmail(session.user.email, config.auth?.initialAdminEmails ?? []) };
+  if (!session?.user) return null;
+  const person = await people.find(session.user.id);
+  if (!person || person.revoked) return null;
+  return { id: person.id, email: person.email, name: person.name, image: person.image, role: person.role };
 }
 
 const componentStore = createComponentStore(database);
@@ -118,7 +119,7 @@ useComposioClient(provider?.install.composio ?? null);
 useArcadeClient(provider?.install.arcade ?? null);
 const composio = provider?.provider && provider.broker ? { broker: provider.broker, provider: provider.provider } : undefined;
 const brokerProvider = storedProvider(providerDecision(config), (await database.selectDistinct({ provider: brokeredConnections.provider }).from(brokeredConnections)).map(row => row.provider));
-const sharedUse = createSharedUseStore(database, brokerProvider);
+const sharedUse = createSharedUseStore(database, brokerProvider, actorFor);
 const policy = createPolicyStore(DEFAULT_ACTION_POLICY, database);
 await policy.load();
 const plugins = createPluginStore({
@@ -152,7 +153,7 @@ const modelKey = () => resolveModelApiKey({
 const complete = createModelCompleter({ model, resolveApiKey: modelKey });
 
 const settlement = createSettlement(database, { actorFor });
-await settlement.initialize();
+await settlement.recoverInterruptedRuns();
 await settlement.listen(config.databaseUrl);
 const resolver = createActorAgentResolver({
   loadAgents, model, resolveModelApiKey: modelKey,
@@ -205,6 +206,7 @@ const githubCallback = config.githubApp && config.publicUrl ? githubCallbackRout
 }) : undefined;
 
 const app = createApp(config, {
+  resolveRequestActor,
   auth, auditReader: createAuditReader(database),
   credentialService: createCredentialAdminService(config.keyEncryptionKey, credentials, audit),
   packageStatusReader: createPackageStatusReader(database),

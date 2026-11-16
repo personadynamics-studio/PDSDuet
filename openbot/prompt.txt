@@ -13,7 +13,7 @@ RUNTIME
 CONFIGURATION
 Start from `.env.example`. Configure DATABASE_URL, KEY_ENCRYPTION_KEY, the selected model credential and application sign-in. The OpenAI API path uses OPENAI_API_KEY. The existing model picker can use its supported API-key, subscription or compatible-endpoint path.
 
-For shared access, configure the existing Google/Microsoft/Okta application sign-in settings and INITIAL_ADMIN_EMAILS. OPENBOT_SINGLE_USER=true gives every visitor one administrator identity and is only suitable for the explicitly chosen local mode.
+For shared access, configure the existing Google/Microsoft/Okta application sign-in settings. With a provider, requests use the signed-in account; without one, every request shares the DEV_ACTOR administrator identity. INITIAL_ADMIN_EMAILS may be empty. Configured addresses form the protected administrator floor; People reads the stored roles for other accounts. New-account roles are seeded once, and sign-in does not rewrite them.
 
 LOCAL SOURCE ENTRY POINTS
 The application is in `openbot/`. The root scripts delegate to its local start and stop scripts. A desktop bundle must already include the application source, docker-compose.yml and a container-images.json naming the images provided by that bundle. Missing bundle files are reported instead of downloading an upstream release.

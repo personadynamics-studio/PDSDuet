@@ -22,20 +22,11 @@ export function isConfiguredAdmin(
   );
 }
 
-export function roleForEmail(
-  email: string,
-  initialAdminEmails: readonly string[],
-): OpenBotRole {
-  return isConfiguredAdmin(email, initialAdminEmails) ? "admin" : "user";
-}
-
 /**
  * Give somebody exactly one role.
  *
- * `user_roles` is a set with a `(user_id, role)` primary key and the guard takes `admin` if any row
- * says so, so setting a role means removing the rows that should not be there rather than only
- * inserting one. Both statements inside one transaction: between them a request arriving on another
- * process would find no role at all and be refused with a 403 that reads as a permissions bug.
+ * `user_roles` is a set with a `(user_id, role)` primary key. Setting a role removes the other
+ * assignment in the same transaction, so readers see the whole change at once.
  */
 export async function setRole(
   database: Database,
@@ -64,6 +55,10 @@ export async function seedRole(
   email: string,
   initialAdminEmails: readonly string[],
 ): Promise<OpenBotRole> {
-  return setRole(database, userId, roleForEmail(email, initialAdminEmails));
+  return setRole(
+    database,
+    userId,
+    isConfiguredAdmin(email, initialAdminEmails) ? "admin" : "user",
+  );
 }
 

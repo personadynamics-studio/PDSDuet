@@ -17,10 +17,10 @@ import {
   readAuditExportRows,
   recordAuditEvent,
 } from "./audit";
-import { createDevRequireUser } from "./auth/dev-actor";
 import {
   type AppVariables,
   type AuthService,
+  type ResolveRequestActor,
   createRequireUser,
 } from "./auth/guards";
 import type { IdentityProviderStore } from "./auth/identity-provider-store";
@@ -140,6 +140,7 @@ async function recordPersonEvent(
 export function createApp(
   config: DeploymentConfig,
   services: {
+  resolveRequestActor: ResolveRequestActor,
   auth?: AuthService,
   auditReader?: AuditReader,
   credentialService?: CredentialAdminService,
@@ -179,7 +180,7 @@ export function createApp(
   identityGithubCallback?: Hono<{ Variables: AppVariables }>,
   },
 ) {
-  const {auth,auditReader,credentialService,packageStatusReader,execution,settlement,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,peopleStore,identityProviders,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,coworker,identity,identityGithubCallback} = services;
+  const {resolveRequestActor,auth,auditReader,credentialService,packageStatusReader,execution,settlement,computerGateway,agentProfileStore,channelStore,channelEvents,auditStore,componentStore,pluginStore,peopleStore,identityProviders,userInstructions,attachmentDatabase,hostAccessBroker,desktopHostToken,composio,modelProviderProxy,userPreferences,coworker,identity,identityGithubCallback} = services;
   const app = new Hono<{ Variables: AppVariables }>();
   mountDesktopConnectionFailure(app, desktopHostToken);
   mountProviderOAuthProxy(app, modelProviderProxy);
@@ -219,17 +220,7 @@ export function createApp(
     ? auth.handler(context.req.raw)
     : context.json({ error: "No identity provider is configured." }, 503));
 
-  const authenticationUnavailable: MiddlewareHandler<{
-    Variables: AppVariables;
-  }> = async (context) =>
-    context.json({ error: "No identity provider is configured." }, 503);
-  // One administrator, when nothing is configured to sign anybody in. Checked first, and only ever
-  // true when there is no provider, so a configured deployment cannot fall back to it.
-  const requireUser = config.singleUser
-    ? createDevRequireUser()
-    : auth
-      ? createRequireUser(auth, config.auth?.initialAdminEmails ?? [])
-      : authenticationUnavailable;
+  const requireUser = createRequireUser(resolveRequestActor);
   const requireComputer: MiddlewareHandler<{ Variables: AppVariables }> = async (context, next) =>
     requireUser(context, async () => {
       const botId = context.req.param("botId");
@@ -525,9 +516,8 @@ export function createApp(
     /*
      * The configured floor wins over the screen.
      *
-     * Somebody named in INITIAL_ADMIN_EMAILS is promoted again at their next sign-in whatever this
-     * route writes, so allowing the demotion would produce a screen that lies until they come back.
-     * Refusing says the real thing: change the deployment's configuration.
+     * People resolves the configured floor alongside stored role assignments. Demoting a protected
+     * address here would not change its effective role; change the configuration instead.
      */
     if (person.configuredAdmin && role !== "admin") {
       return context.json(
@@ -588,8 +578,7 @@ export function createApp(
       return context.json({ error: "That person is not here." }, 404);
     }
 
-    // The same floor, for the same reason: removing somebody the configuration names would last
-    // until their next sign-in and no longer.
+    // Configured administrators remain the protected way back into the deployment.
     if (person.configuredAdmin && revoked) {
       return context.json(
         {

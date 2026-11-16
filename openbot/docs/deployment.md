@@ -11,7 +11,7 @@ docker build -t pdsduet .
 docker run -p 127.0.0.1:3001:3001 --env-file .env pdsduet
 ```
 
-**With `OPENBOT_SINGLE_USER=true`, publish on loopback: `-p 127.0.0.1:3001:3001`.** The image
+**With no identity provider, publish on loopback: `-p 127.0.0.1:3001:3001`.** The image
 listens on every interface inside the container (`OPENBOT_HOST=0.0.0.0`), so what decides who can
 reach it is the address `-p` publishes on, and `-p 3001:3001` publishes on every address this
 machine has. With no sign-in, everybody who reaches that port is the administrator.
@@ -95,7 +95,7 @@ and the fix would not be available.
 | Variable | |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL. Not needed with `EMBEDDED_POSTGRES=on` |
-| an identity provider | `GOOGLE_OAUTH_*`, `MICROSOFT_OAUTH_*` or `OKTA_OAUTH_*`, with `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET` and `INITIAL_ADMIN_EMAILS`. See the README |
+| an identity provider for shared access | `GOOGLE_OAUTH_*`, `MICROSOFT_OAUTH_*` or `OKTA_OAUTH_*`, with `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET`. `INITIAL_ADMIN_EMAILS` is optional. See the README |
 | `EMBEDDED_POSTGRES` | `on` to run the database inside the container. Off by default |
 | `KEY_ENCRYPTION_KEY` | base64 32 bytes. `openssl rand -base64 32`. The example key is refused in production |
 | a model key | `OPENAI_API_KEY`, or the provider you configured |
@@ -103,24 +103,20 @@ and the fix would not be available.
 `COMPUTER_TOKEN` is generated at start if you do not set one. Both processes that need it are inside
 the container, so there is nothing to share it with.
 
-`MANAGED_AGENT_AG_UI_URL` is not required here. The image does not carry `agent-langgraph` or
-`agent-bot`. Leave it unset and the shipped Risk Analyst coworker is omitted rather than registered
-against a host that is not there. Set it, with `MANAGED_AGENT_TOKEN`, only when a Bot is actually
-reachable from this container. Unset it if your `.env` still has the laptop default
-`http://localhost:4201/ag-ui`.
+The image does not carry `agent-langgraph` or `agent-bot`. The default openduet package's insurance
+Bot points to `http://localhost:4201/ag-ui`; provide that LangGraph service or use an explicitly
+configured tenant package whose remote endpoint is reachable from the container. The built-in search
+Bot runs in the API process. `MANAGED_AGENT_AG_UI_URL` does not rewrite a tenant's explicit endpoint.
 
-**Authentication is required.** With no identity provider configured, the deployment refuses to start,
-because a public URL where every visitor is an administrator fails silently: it looks like it works.
-Configure Google, Microsoft or Okta, or set `OPENBOT_SINGLE_USER=true` to say you meant an open
-deployment. `NODE_ENV` does not affect this.
+An older Desktop `.env` that explicitly selects `../examples/fintech` keeps that value, but the bundled fintech example is retired. Set `TENANT_PACKAGE_DIR` to `../examples/openduet` or a valid custom package path before using that installation. No existing `.env` or saved data is converted automatically.
 
-That flag does not cover a public address. `OPENBOT_SINGLE_USER=true` alongside an
-`OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL` or `TRUSTED_ORIGINS` entry that the public internet routes
-to now refuses to start and names the address, because an open deployment on a public address is
-one where every visitor is the administrator. A private address is a different thing and still
-runs: a home LAN, a Tailscale or VPN address, or a `.local` name is allowed, with a warning at boot
-saying anybody on that network is that administrator. If you want it open on a public address,
-put a sign-in provider in front of it.
+**Configure sign-in for shared access.** Google, Microsoft or Okta enables account-based requests.
+Without a provider, the API serves requests as the shared `DEV_ACTOR` administrator; there is no
+separate single-user switch or automatic refusal based on a public address.
+
+`INITIAL_ADMIN_EMAILS` may be empty. Listed addresses form a protected administrator floor; other
+accounts use the roles managed through People. New-account seeding sets the initial role, and
+subsequent sign-ins do not rewrite it.
 
 **Put TLS in front of it.** Not only for the cookies. A page served from `http://<address>` is not a
 secure context, which removes a set of browser APIs that are present on `http://localhost` and so

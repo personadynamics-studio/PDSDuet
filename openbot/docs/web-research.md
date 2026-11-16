@@ -14,7 +14,7 @@ OpenBot ships three public-web research providers in the plugin catalogue: **Par
 ## Enable research
 
 1. As an administrator, open **Plugins** at `/admin/plugins`, choose a provider from the table above, and turn on **Enable for this deployment**. For the keyed entries, enter the provider's API key in **Access token**; it is stored in the server-side credential vault.
-2. Press **Refresh tools**, then **Grant tools…** to grant that provider's search and fetch tools to the Bots that should research the public web. A separate research Bot without mail or private-document tools is the safer starting point. The shipped fintech package calls this Bot **Research Desk**. Read [Controls and data](#controls-and-data) before combining research and private-account tools on one Bot.
+2. Press **Refresh tools**, then **Grant tools…** to grant that provider's search and fetch tools to the Bots that should research the public web. A separate research Bot without mail or private-document tools is the safer starting point. Read [Controls and data](#controls-and-data) before combining research and private-account tools on one Bot.
 3. Ask the Bot to research a topic. It searches, reads selected sources and cites their URLs. Run `/research-public-web` to select the example skill explicitly if your deployment has many tools.
 
 For production or higher limits, use a keyed entry and remove the grants on the free one. If a Bot holds a vendor's free and keyed entries, it is told about the keyed one.
@@ -47,7 +47,7 @@ The provider receives model-selected objectives, search queries, requested publi
 
 **A read tool can send data out.** Research reads do not pause for **Allow once**, and the shipped action policy allows calls unless an administrator adds restrictions. If the same Bot can read mail or private documents, a malicious instruction in that content could cause it to send private text in a search query or a fetched URL. Fetching an attacker-controlled URL can send text in its path or query to that site's operator through the provider. The instruction to treat outside content as information helps, but it is not an enforced data boundary.
 
-For a safer setup, use a separate research Bot with only public-web tools, like the fintech package's **Research Desk**. Do not grant it mail, calendar or private-document tools, and do not pass private content to it in requests or handoffs.
+For a safer setup, use a separate research Bot with only public-web tools. Do not grant it mail, calendar or private-document tools, and do not pass private content to it in requests or handoffs.
 
 Existing action policies and per-Bot grants still apply to research requests.
 
